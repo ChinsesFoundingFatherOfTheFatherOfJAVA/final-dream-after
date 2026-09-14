@@ -1,0 +1,106 @@
+package jack.digityhuman.speechtraining.controller;
+
+import jack.digityhuman.speechtraining.common.ApiResponse;
+import jack.digityhuman.speechtraining.common.FileStorageService;
+import jack.digityhuman.speechtraining.common.PageResult;
+import jack.digityhuman.speechtraining.common.ProjectFormParser;
+import jack.digityhuman.speechtraining.dto.req.FlowSaveReq;
+import jack.digityhuman.speechtraining.dto.req.ProjectQueryParam;
+import jack.digityhuman.speechtraining.dto.req.ProjectSaveReq;
+import jack.digityhuman.speechtraining.dto.resp.FlowDataResp;
+import jack.digityhuman.speechtraining.dto.resp.ProjectDetailResp;
+import jack.digityhuman.speechtraining.dto.resp.ProjectListResp;
+import jack.digityhuman.speechtraining.service.TrainingProjectService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.multipart.MultipartHttpServletRequest;
+
+@RestController
+@RequestMapping("/api/admin/training-project")
+@RequiredArgsConstructor
+public class AdminProjectController {
+
+    private final TrainingProjectService projectService;
+    private final FileStorageService fileStorageService;
+    private final ProjectFormParser projectFormParser;
+
+    @GetMapping("/list")
+    public ApiResponse<PageResult<ProjectListResp>> list(ProjectQueryParam param) {
+        return ApiResponse.success(projectService.listProjects(param));
+    }
+
+    @GetMapping("/{id}")
+    public ApiResponse<ProjectDetailResp> detail(@PathVariable Long id) {
+        return ApiResponse.success(projectService.getProjectDetail(id));
+    }
+
+    /** 创建项目（JSON 方式） */
+    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ApiResponse<Long> create(@RequestBody ProjectSaveReq req) {
+        return ApiResponse.success(projectService.createProject(req));
+    }
+
+    /**
+     * 创建项目（FormData 方式，支持上传封面图片）
+     * 封面图片保存到服务器 /coverImage 目录，cover_image 字段存访问路径
+     */
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<Long> createWithCover(MultipartHttpServletRequest request) {
+        ProjectSaveReq req = projectFormParser.parse(request);
+        MultipartFile file = projectFormParser.extractFile(request);
+        if (file != null) {
+            req.setCoverImage(fileStorageService.saveCoverImage(file));
+        }
+        return ApiResponse.success(projectService.createProject(req));
+    }
+
+    /** 更新项目（JSON 方式） */
+    @PutMapping(value = "/{id}", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ApiResponse<Void> update(@PathVariable Long id, @RequestBody ProjectSaveReq req) {
+        projectService.updateProject(id, req);
+        return ApiResponse.success();
+    }
+
+    /** 更新项目（FormData 方式，支持上传封面图片） */
+    @PutMapping(value = "/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<Void> updateWithCover(@PathVariable Long id, MultipartHttpServletRequest request) {
+        ProjectSaveReq req = projectFormParser.parse(request);
+        MultipartFile file = projectFormParser.extractFile(request);
+        if (file != null) {
+            req.setCoverImage(fileStorageService.saveCoverImage(file));
+        }
+        projectService.updateProject(id, req);
+        return ApiResponse.success();
+    }
+
+    @PostMapping("/{id}/publish")
+    public ApiResponse<Void> publish(@PathVariable Long id) {
+        projectService.publishProject(id);
+        return ApiResponse.success();
+    }
+
+    @PostMapping("/{id}/withdraw")
+    public ApiResponse<Void> withdraw(@PathVariable Long id) {
+        projectService.withdrawProject(id);
+        return ApiResponse.success();
+    }
+
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> delete(@PathVariable Long id) {
+        projectService.deleteProject(id);
+        return ApiResponse.success();
+    }
+
+    @GetMapping("/{id}/nodes")
+    public ApiResponse<FlowDataResp> getNodes(@PathVariable Long id) {
+        return ApiResponse.success(projectService.getFlowData(id));
+    }
+
+    @PostMapping("/{id}/nodes")
+    public ApiResponse<Void> saveNodes(@PathVariable Long id, @RequestBody FlowSaveReq req) {
+        projectService.saveFlow(id, req);
+        return ApiResponse.success();
+    }
+}

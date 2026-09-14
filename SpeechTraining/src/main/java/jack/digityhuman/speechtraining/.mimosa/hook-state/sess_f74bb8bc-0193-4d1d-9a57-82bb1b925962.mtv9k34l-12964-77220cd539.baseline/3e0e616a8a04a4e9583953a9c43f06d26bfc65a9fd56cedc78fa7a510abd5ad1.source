@@ -1,0 +1,13 @@
+package jack.digityhuman.speechtraining;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class SpeechTrainingApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(SpeechTrainingApplication.class, args);
+    }
+
+}
