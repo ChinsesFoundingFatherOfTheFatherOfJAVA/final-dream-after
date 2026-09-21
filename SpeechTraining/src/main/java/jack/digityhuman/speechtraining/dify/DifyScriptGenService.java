@@ -24,11 +24,15 @@ public class DifyScriptGenService {
 
     /**
      * 调用Dify话术生成智能体，根据场景和轮次生成对话流程
+     *
+     * @param firstSpeaker 先说话的一方：trainer=陪练者先说（默认），student=学员先说
      */
-    public AiScriptGenResp generateScript(String description, Integer rounds) {
+    public AiScriptGenResp generateScript(String description, Integer rounds, String firstSpeaker) {
         Map<String, Object> inputs = new HashMap<>();
         inputs.put("description", description);
         inputs.put("rounds", rounds);
+        // 未指定时默认为陪练者先说
+        inputs.put("first_speaker", firstSpeaker == null || firstSpeaker.isBlank() ? "trainer" : firstSpeaker);
 
         Map<String, Object> outputs = difyWorkflowSupport.runWorkflow("script-gen", inputs);
 
@@ -47,6 +51,7 @@ public class DifyScriptGenService {
                 AiScriptGenResp.NodeItem item = new AiScriptGenResp.NodeItem();
                 item.setNodeType(toInt(nodeMap.get("nodeType")));
                 item.setNodeName((String) nodeMap.get("nodeName"));
+                item.setTrainerQuestion((String) nodeMap.get("trainerQuestion"));
                 item.setStandardScript((String) nodeMap.get("standardScript"));
                 item.setAnalysis((String) nodeMap.get("analysis"));
                 if (nodeMap.get("positionX") != null) {
@@ -112,14 +117,16 @@ public class DifyScriptGenService {
 
     /**
      * 上传文件生成话术：提取文件文本内容，拼接到描述中，再调用Dify生成
+     *
+     * @param firstSpeaker 先说话的一方：trainer=陪练者先说（默认），student=学员先说
      */
-    public AiScriptGenResp generateScriptWithFile(String description, MultipartFile file) {
+    public AiScriptGenResp generateScriptWithFile(String description, MultipartFile file, String firstSpeaker) {
         String fileText = extractText(file);
         String fullDescription = description;
         if (fileText != null && !fileText.isBlank()) {
             fullDescription = description + "\n\n参考资料内容：\n" + fileText;
         }
-        return generateScript(fullDescription, 5);
+        return generateScript(fullDescription, 5, firstSpeaker);
     }
 
     private String extractText(MultipartFile file) {

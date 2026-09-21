@@ -15,6 +15,8 @@ public class VirtualTrainer {
     private Long id;
     private Long projectId;
     private String trainerName;
+    /** 陪练者形象图片 URL（v1.1，AI 生成或上传；空则学员端显示默认占位图） */
+    private String avatarImage;
     private String language;
     private String voiceId;
     private Integer speed;

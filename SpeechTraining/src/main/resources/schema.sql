@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS virtual_trainer (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   project_id BIGINT NOT NULL COMMENT '项目ID',
   trainer_name VARCHAR(20) COMMENT '陪练者名称',
+  avatar_image VARCHAR(500) NULL COMMENT '陪练者形象图片URL(AI生成或上传, 空则学员端显示默认占位图)',
   language VARCHAR(20) DEFAULT 'mandarin' COMMENT '陪练者朗读语言: mandarin=普通话, cantonese=粤语',
   voice_id VARCHAR(100) COMMENT '声音角色ID',
   speed INT DEFAULT 30 COMMENT '语速(0-60)',
@@ -175,6 +176,9 @@ CREATE TABLE IF NOT EXISTS training_session_message (
   like_count INT DEFAULT 0 COMMENT '点赞数',
   seq INT NOT NULL COMMENT '会话内序号',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  audio_url VARCHAR(500) NULL COMMENT '音频URL(学员录音)',
+  audio_duration_ms INT NULL COMMENT '音频时长(毫秒)',
+  input_mode TINYINT DEFAULT 1 COMMENT '输入方式: 1=文字, 2=语音',
   INDEX idx_session (session_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话消息表';
 

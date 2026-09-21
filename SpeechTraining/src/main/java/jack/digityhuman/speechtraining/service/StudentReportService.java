@@ -222,7 +222,7 @@ public class StudentReportService {
         }).toList();
     }
 
-    /** 实体 → 响应 */
+    /** 实体 → 响应（v1.1 附带音频字段） */
     private MessageResp toMessageResp(TrainingSessionMessage msg) {
         MessageResp resp = new MessageResp();
         resp.setMessageId(msg.getId());
@@ -232,6 +232,9 @@ public class StudentReportService {
         resp.setPassed(msg.getPassed());
         resp.setWithdrawn(msg.getWithdrawn());
         resp.setLikeCount(msg.getLikeCount());
+        resp.setAudioUrl(msg.getAudioUrl());
+        resp.setAudioDurationMs(msg.getAudioDurationMs());
+        resp.setInputMode(msg.getInputMode() == null ? 1 : msg.getInputMode());
         return resp;
     }
 

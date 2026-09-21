@@ -280,13 +280,15 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
         for (FlowSaveReq.NodeItemReq nodeReq : req.getNodes()) {
             TrainingNode node = new TrainingNode();
             BeanUtils.copyProperties(nodeReq, node, "keyPoints", "passConditionPoints");
+            // 前端传的 id 只是临时ID（用于连线引用），不能作为主键插入，否则会与已有节点主键冲突
+            node.setId(null);
             node.setKeyPoints(serializeKeyPoints(nodeReq.getKeyPoints()));
             node.setPassConditionPoints(toJsonArray(nodeReq.getPassConditionPoints()));
             node.setProjectId(projectId);
-            nodeMapper.insert(node); // insert 后 node.getId() 即为数据库自增ID
+            nodeMapper.insert(node); // 主键交由自增生成，insert 后 node.getId() 即为真实ID
 
             // 将前端传来的临时ID映射为数据库生成的真实ID
-            if (nodeReq.getId() != null && nodeReq.getId() != node.getId()) {
+            if (nodeReq.getId() != null) {
                 idMapping.put(nodeReq.getId(), node.getId());
             }
         }

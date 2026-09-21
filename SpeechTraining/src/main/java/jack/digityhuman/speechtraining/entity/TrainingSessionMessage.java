@@ -34,5 +34,11 @@ public class TrainingSessionMessage {
     private Integer likeCount;
     /** 会话内序号（从 0 起，按发送顺序递增） */
     private Integer seq;
+    /** 学员录音 URL（v1.1，仅语音消息有值，如 /audio/asr/{messageId}.wav） */
+    private String audioUrl;
+    /** 音频时长（毫秒，v1.1，仅语音消息有值） */
+    private Integer audioDurationMs;
+    /** 输入方式：1=文字（默认），2=语音（v1.1） */
+    private Integer inputMode;
     private LocalDateTime createdAt;
 }

@@ -8,6 +8,7 @@ import jack.digityhuman.speechtraining.dto.resp.MessageResp;
 import jack.digityhuman.speechtraining.dto.resp.SendMessageResp;
 import jack.digityhuman.speechtraining.dto.resp.SessionDetailResp;
 import jack.digityhuman.speechtraining.dto.resp.StartSessionResp;
+import jack.digityhuman.speechtraining.dto.resp.VoiceMessageResp;
 import jack.digityhuman.speechtraining.dify.DifyScoringService;
 import jack.digityhuman.speechtraining.entity.*;
 import jack.digityhuman.speechtraining.mapper.*;
@@ -45,6 +46,7 @@ public class FlowEngineService {
     private final DifyScoringService difyScoringService;
     private final UserContext userContext;
     private final ReportGenerationService reportGenerationService;
+    private final jack.digityhuman.speechtraining.common.FileStorageService fileStorageService;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -120,14 +122,17 @@ public class FlowEngineService {
         session.setStartTime(now);
         sessionMapper.insert(session);
 
-        // 4. 落库首个陪练者问（seq=0）
+        // 4. 落库首个陪练者问（seq=0，属于第 1 轮）
         TrainingSessionMessage firstMessage = insertMessage(session.getId(), firstRoundNode, ROLE_TRAINER,
-                firstRoundNode.getTrainerQuestion(), null, null, null, 0, 1);
+                firstRoundNode.getTrainerQuestion(), 1, null, null, 0, 0, null);
 
-        // 5. 组装响应
+        // 5. 组装响应（v1.1 增加 dialogueMode/trainerAvatar）
+        VirtualTrainer trainer = trainerOf(projectId);
         StartSessionResp resp = new StartSessionResp();
         resp.setSessionId(session.getId());
-        resp.setTrainerName(trainerName(projectId));
+        resp.setTrainerName(trainer == null ? null : trainer.getTrainerName());
+        resp.setTrainerAvatar(trainer == null ? null : trainer.getAvatarImage());
+        resp.setDialogueMode(project.getDialogueMode() == null ? 0 : project.getDialogueMode());
         resp.setTotalRounds(session.getTotalRounds());
         resp.setFinishedRounds(0);
         resp.setMessages(List.of(toMessageResp(firstMessage)));
@@ -135,7 +140,7 @@ public class FlowEngineService {
     }
 
     /**
-     * 发送消息：Dify 要点命中判定 → 流转条件复核 → 权重路由（FP-12/20）
+     * 发送消息（文字模式）：Dify 要点命中判定 → 流转条件复核 → 权重路由（FP-12/20）
      */
     @Transactional
     public SendMessageResp sendMessage(Long sessionId, String content) {
@@ -148,55 +153,56 @@ public class FlowEngineService {
             throw new BizException("消息长度不能超过2000字");
         }
         TrainingSession session = requireOngoing(sessionId);
-        TrainingNode currentNode = nodeMapper.selectById(session.getCurrentNodeId());
-        if (currentNode == null || !isRoundNode(currentNode)) {
-            throw new BizException("流程拓扑异常：当前节点不是有效的学员节点");
-        }
-
-        // 2. 解析要点与流转条件
-        List<KeyPointsUtil.KeyPoint> keyPoints = KeyPointsUtil.parse(currentNode.getKeyPoints());
-        List<String> keyPointContents = keyPoints.stream().map(KeyPointsUtil.KeyPoint::content).toList();
-
-        // 3. 调 Dify 话术评分器判定要点命中（复用已有智能体）
-        AiHitResult ai = callScoringAgent(currentNode, keyPoints, text);
-
-        // 4. 后端按流转条件独立复核（不信任 LLM 自评 passed）
-        boolean passed = judgePass(currentNode, keyPoints, ai.hitPoints());
-        int roundNo = session.getFinishedRounds() + 1;
-        int nextSeq = nextSeq(sessionId);
-
-        // 5.1 未通过：撤回消息（withdrawn=1 留存），返回要点提示
-        if (!passed) {
-            insertMessage(sessionId, currentNode, ROLE_STUDENT, text, roundNo, ai.hitPointsJson(), 0, 1, nextSeq);
-            return SendMessageResp.withdrawn(keyPointContents, session.getFinishedRounds(), session.getTotalRounds());
-        }
-
-        // 5.2 通过：消息保留，轮次+1
-        insertMessage(sessionId, currentNode, ROLE_STUDENT, text, roundNo, ai.hitPointsJson(), 1, 0, nextSeq);
-        session.setFinishedRounds(session.getFinishedRounds() + 1);
-
-        // 6. 按出边权重随机路由
-        TrainingNode next = routeByWeight(session.getProjectId(), currentNode.getId());
-        if (next.getNodeType() != null && next.getNodeType() == NODE_END) {
-            // 6.1 流程结束：置完成 + 同步落报告行（生成中）+ 事务提交后异步生成
-            finishSession(session);
-            return SendMessageResp.finished(keyPointContents, session.getFinishedRounds(), session.getTotalRounds());
-        }
-        if (!isRoundNode(next)) {
-            throw new BizException("流程拓扑异常：下游节点类型不合法");
-        }
-        // 6.2 流转到下一个大节点：current_node_id 前进 + 落库陪练者问
-        session.setCurrentNodeId(next.getId());
-        sessionMapper.updateById(session);
-        TrainingSessionMessage trainerMessage = insertMessage(sessionId, next, ROLE_TRAINER,
-                next.getTrainerQuestion(), null, null, null, nextSeq + 1, session.getFinishedRounds() + 1);
-
-        MessageResp nextMsg = toMessageResp(trainerMessage);
-        return SendMessageResp.passed(keyPointContents, nextMsg, session.getFinishedRounds(), session.getTotalRounds());
+        requireCurrentRoundNode(session);
+        // 2. 共用流转判定（文字：无语音字段）
+        return doJudgeAndRoute(session, text, null).resp();
     }
 
     /**
-     * 获取会话详情（训练页刷新恢复，FP-19）
+     * 发送语音消息（v1.1，FP-24/28）：ASR 识别文本 → 与文字模式完全相同的流转判定。
+     * 识别文本长度 &lt; 2 时直接按"未通过"处理（撤回+要点提示），不调 Dify。
+     *
+     * @param recognizedText ASR 识别文本（可为 null/空）
+     * @param wav            学员录音原始字节（WAV），落盘为 /audio/asr/{messageId}.wav
+     * @param durationMs     音频时长（毫秒，来自 ASR）
+     * @return 语音消息响应（识别文本 + 音频信息 + 判定结果）
+     */
+    @Transactional
+    public VoiceMessageResp sendVoiceMessage(Long sessionId, String recognizedText, byte[] wav, Long durationMs) {
+        // 1. 会话校验（语音模式校验）
+        TrainingSession session = requireOngoing(sessionId);
+        TrainingProject project = projectMapper.selectById(session.getProjectId());
+        if (project == null || project.getDialogueMode() == null || project.getDialogueMode() != 0) {
+            throw new BizException("该项目为文字对话模式");
+        }
+        TrainingNode currentNode = requireCurrentRoundNode(session);
+
+        String text = recognizedText == null ? "" : recognizedText.trim();
+        int roundNo = session.getFinishedRounds() + 1;
+        int nextSeq = nextSeq(sessionId);
+        List<String> keyPointContents = KeyPointsUtil.parse(currentNode.getKeyPoints())
+                .stream().map(KeyPointsUtil.KeyPoint::content).toList();
+
+        // 2. ASR 短路：识别文本长度 < 2 直接按未通过处理，不调 Dify（风险清单 v1.1 对策）
+        VoiceFields voice = new VoiceFields(durationMs == null ? null : durationMs.intValue());
+        if (text.length() < 2) {
+            TrainingSessionMessage msg = insertMessage(sessionId, currentNode, ROLE_STUDENT, text,
+                    roundNo, "[]", 0, 1, nextSeq, voice);
+            persistAudio(msg, wav);
+            SendMessageResp withdrawn = SendMessageResp.withdrawn(keyPointContents,
+                    session.getFinishedRounds(), session.getTotalRounds());
+            return VoiceMessageResp.of(withdrawn, text, msg);
+        }
+
+        // 3. 共用流转判定（与文字模式同一实现）
+        SendOutcome outcome = doJudgeAndRoute(session, text, voice);
+        TrainingSessionMessage studentMessage = outcome.studentMessage();
+        persistAudio(studentMessage, wav);
+        return VoiceMessageResp.of(outcome.resp(), text, studentMessage);
+    }
+
+    /**
+     * 获取会话详情（训练页刷新恢复，FP-19；v1.1 增加 dialogueMode/trainerAvatar）
      */
     public SessionDetailResp getSessionDetail(Long sessionId) {
         TrainingSession session = sessionMapper.selectById(sessionId);
@@ -204,13 +210,16 @@ public class FlowEngineService {
             throw new BizException("会话不存在");
         }
         TrainingProject project = projectMapper.selectById(session.getProjectId());
+        VirtualTrainer trainer = trainerOf(session.getProjectId());
 
         SessionDetailResp resp = new SessionDetailResp();
         resp.setSessionId(session.getId());
         resp.setProjectId(session.getProjectId());
         resp.setProjectName(project == null ? null : project.getName());
         resp.setStatus(session.getStatus());
-        resp.setTrainerName(trainerName(session.getProjectId()));
+        resp.setDialogueMode(project == null || project.getDialogueMode() == null ? 0 : project.getDialogueMode());
+        resp.setTrainerName(trainer == null ? null : trainer.getTrainerName());
+        resp.setTrainerAvatar(trainer == null ? null : trainer.getAvatarImage());
         resp.setTotalRounds(session.getTotalRounds());
         resp.setFinishedRounds(session.getFinishedRounds());
         resp.setMessages(listMessages(sessionId).stream().map(this::toMessageResp).toList());
@@ -237,6 +246,95 @@ public class FlowEngineService {
     }
 
     // ==================== 内部方法 ====================
+
+    /** 学员消息的语音上下文（文字消息为 null） */
+    private record VoiceFields(Integer audioDurationMs) {
+    }
+
+    /** 共用判定结果：流转判定响应 + 学员消息实体（语音模式用于回填 audio_url） */
+    private record SendOutcome(SendMessageResp resp, TrainingSessionMessage studentMessage) {
+    }
+
+    /**
+     * 落盘学员录音并回填消息 audio_url：文件名 = 消息ID（/audio/asr/{messageId}.wav）
+     */
+    private void persistAudio(TrainingSessionMessage studentMessage, byte[] wav) {
+        if (wav == null || wav.length == 0) {
+            return;
+        }
+        String url = fileStorageService.saveAsrAudio(studentMessage.getId(), wav);
+        studentMessage.setAudioUrl(url);
+        messageMapper.updateById(studentMessage);
+    }
+
+    /**
+     * 校验会话当前节点为有效学员节点，返回该节点
+     */
+    private TrainingNode requireCurrentRoundNode(TrainingSession session) {
+        TrainingNode currentNode = nodeMapper.selectById(session.getCurrentNodeId());
+        if (currentNode == null || !isRoundNode(currentNode)) {
+            throw new BizException("流程拓扑异常：当前节点不是有效的学员节点");
+        }
+        return currentNode;
+    }
+
+    /**
+     * 流转判定与路由（文字/语音共用核心，v1.0 行为不变）：
+     * Dify 要点命中判定 → 后端流转条件复核 → 未通过撤回 / 通过权重路由（陪练者问或结束）
+     *
+     * @param voice 语音上下文（null=文字消息）
+     */
+    private SendOutcome doJudgeAndRoute(TrainingSession session, String text, VoiceFields voice) {
+        Long sessionId = session.getId();
+        TrainingNode currentNode = requireCurrentRoundNode(session);
+
+        // 1. 解析要点与流转条件
+        List<KeyPointsUtil.KeyPoint> keyPoints = KeyPointsUtil.parse(currentNode.getKeyPoints());
+        List<String> keyPointContents = keyPoints.stream().map(KeyPointsUtil.KeyPoint::content).toList();
+
+        // 2. 调 Dify 话术评分器判定要点命中（复用已有智能体）
+        AiHitResult ai = callScoringAgent(currentNode, keyPoints, text);
+
+        // 3. 后端按流转条件独立复核（不信任 LLM 自评 passed）
+        boolean passed = judgePass(currentNode, keyPoints, ai.hitPoints());
+        int roundNo = session.getFinishedRounds() + 1;
+        int nextSeq = nextSeq(sessionId);
+
+        // 4.1 未通过：撤回消息（withdrawn=1 留存），返回要点提示
+        if (!passed) {
+            TrainingSessionMessage msg = insertMessage(sessionId, currentNode, ROLE_STUDENT, text,
+                    roundNo, ai.hitPointsJson(), 0, 1, nextSeq, voice);
+            return new SendOutcome(SendMessageResp.withdrawn(keyPointContents,
+                    session.getFinishedRounds(), session.getTotalRounds()), msg);
+        }
+
+        // 4.2 通过：消息保留，轮次+1
+        TrainingSessionMessage studentMessage = insertMessage(sessionId, currentNode, ROLE_STUDENT, text,
+                roundNo, ai.hitPointsJson(), 1, 0, nextSeq, voice);
+        session.setFinishedRounds(session.getFinishedRounds() + 1);
+
+        // 5. 按出边权重随机路由
+        TrainingNode next = routeByWeight(session.getProjectId(), currentNode.getId());
+        if (next.getNodeType() != null && next.getNodeType() == NODE_END) {
+            // 5.1 流程结束：置完成 + 同步落报告行（生成中）+ 事务提交后异步生成
+            finishSession(session);
+            return new SendOutcome(SendMessageResp.finished(keyPointContents,
+                    session.getFinishedRounds(), session.getTotalRounds()), studentMessage);
+        }
+        if (!isRoundNode(next)) {
+            throw new BizException("流程拓扑异常：下游节点类型不合法");
+        }
+        // 5.2 流转到下一个大节点：current_node_id 前进 + 落库陪练者问
+        //（roundNo=即将进行的轮次 finishedRounds+1；withdrawn=0；seq=nextSeq+1）
+        session.setCurrentNodeId(next.getId());
+        sessionMapper.updateById(session);
+        TrainingSessionMessage trainerMessage = insertMessage(sessionId, next, ROLE_TRAINER,
+                next.getTrainerQuestion(), session.getFinishedRounds() + 1, null, null, 0, nextSeq + 1, null);
+
+        MessageResp nextMsg = toMessageResp(trainerMessage);
+        return new SendOutcome(SendMessageResp.passed(keyPointContents, nextMsg,
+                session.getFinishedRounds(), session.getTotalRounds()), studentMessage);
+    }
 
     /** Dify 话术评分器调用结果 */
     private record AiHitResult(List<String> hitPoints, String hitPointsJson) {
@@ -408,10 +506,15 @@ public class FlowEngineService {
         return nodes.stream().filter(n -> n.getId().equals(id)).findFirst().orElse(null);
     }
 
+    /** 陪练者设置（含名称与形象） */
+    private VirtualTrainer trainerOf(Long projectId) {
+        return virtualTrainerMapper.selectOne(
+                new LambdaQueryWrapper<VirtualTrainer>().eq(VirtualTrainer::getProjectId, projectId));
+    }
+
     /** 陪练者名称 */
     private String trainerName(Long projectId) {
-        VirtualTrainer trainer = virtualTrainerMapper.selectOne(
-                new LambdaQueryWrapper<VirtualTrainer>().eq(VirtualTrainer::getProjectId, projectId));
+        VirtualTrainer trainer = trainerOf(projectId);
         return trainer == null ? null : trainer.getTrainerName();
     }
 
@@ -430,10 +533,14 @@ public class FlowEngineService {
                 .max().orElse(-1) + 1;
     }
 
-    /** 落库一条消息 */
+    /**
+     * 落库一条消息
+     *
+     * @param voice 语音上下文（null=文字消息，inputMode=1；非 null=语音消息，inputMode=2）
+     */
     private TrainingSessionMessage insertMessage(Long sessionId, TrainingNode node, int role, String content,
                                                  Integer roundNo, String hitPointsJson, Integer passed,
-                                                 Integer withdrawn, int seq) {
+                                                 Integer withdrawn, int seq, VoiceFields voice) {
         TrainingSessionMessage msg = new TrainingSessionMessage();
         msg.setSessionId(sessionId);
         msg.setNodeId(node == null ? null : node.getId());
@@ -445,11 +552,16 @@ public class FlowEngineService {
         msg.setWithdrawn(withdrawn);
         msg.setLikeCount(0);
         msg.setSeq(seq);
+        // v1.1 语音字段：语音消息带时长，audio_url 由 persistAudio 落盘后回填
+        msg.setInputMode(voice == null ? 1 : 2);
+        if (voice != null) {
+            msg.setAudioDurationMs(voice.audioDurationMs());
+        }
         messageMapper.insert(msg);
         return msg;
     }
 
-    /** 实体 → 响应 */
+    /** 实体 → 响应（v1.1 附带音频字段） */
     private MessageResp toMessageResp(TrainingSessionMessage msg) {
         MessageResp resp = new MessageResp();
         resp.setMessageId(msg.getId());
@@ -459,6 +571,9 @@ public class FlowEngineService {
         resp.setPassed(msg.getPassed());
         resp.setWithdrawn(msg.getWithdrawn());
         resp.setLikeCount(msg.getLikeCount());
+        resp.setAudioUrl(msg.getAudioUrl());
+        resp.setAudioDurationMs(msg.getAudioDurationMs());
+        resp.setInputMode(msg.getInputMode() == null ? 1 : msg.getInputMode());
         return resp;
     }
 

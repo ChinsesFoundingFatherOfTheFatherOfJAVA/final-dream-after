@@ -1,6 +1,5 @@
 package jack.digityhuman.speechtraining.dto.req;
 
-import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -15,9 +14,8 @@ public class ProjectSaveReq {
     private Integer assignType;
     private String code;
 
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    /** 日期格式由 JacksonConfig 全局配置：兼容 ISO(T分隔)、空格分隔与仅日期 */
     private LocalDateTime startTime;
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime endTime;
     private Integer completionStandard;
     private Integer passScore;
@@ -65,6 +63,8 @@ public class ProjectSaveReq {
     @Data
     public static class VirtualTrainerReq {
         private String trainerName;
+        /** 陪练者形象图片 URL（v1.1，AI 生成或上传；空=学员端显示默认占位图） */
+        private String avatarImage;
         private String language;
         private String voiceId;
         private Integer speed;

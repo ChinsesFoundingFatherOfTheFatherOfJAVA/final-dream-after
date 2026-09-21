@@ -14,6 +14,9 @@ public class AiScriptGenResp {
     public static class NodeItem {
         private Integer nodeType;
         private String nodeName;
+        /** 陪练者问（大节点中陪练者一侧的话术） */
+        private String trainerQuestion;
+        /** 学员说（大节点中学员一侧的标准话术） */
         private String standardScript;
         private List<KeyPoint> keyPoints;
         private String analysis;

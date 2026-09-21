@@ -102,6 +102,12 @@
             <artifactId>poi-ooxml</artifactId>
             <version>5.3.0</version>
         </dependency>
+        <!--  v1.1 语音对话：阿里云百炼 TTS(CosyVoice) / ASR(Paraformer)  -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>dashscope-sdk-java</artifactId>
+            <version>2.20.6</version>
+        </dependency>
     </dependencies>
     <build>
         <plugins>

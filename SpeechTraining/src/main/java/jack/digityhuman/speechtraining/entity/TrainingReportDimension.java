@@ -6,10 +6,10 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 
 /**
  * 报告维度明细实体（学员端话术训练）
+ * 注：表中无 created_at 列（维度行随报告一起写入，无需独立时间戳）
  */
 @Data
 @TableName("training_report_dimension")
@@ -29,5 +29,4 @@ public class TrainingReportDimension {
     /** 待改进点与建议（JSON 数组字符串） */
     private String improvements;
     private Integer sortOrder;
-    private LocalDateTime createdAt;
 }

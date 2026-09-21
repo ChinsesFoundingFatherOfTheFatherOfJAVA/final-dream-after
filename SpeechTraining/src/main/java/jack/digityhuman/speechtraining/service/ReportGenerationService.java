@@ -35,10 +35,13 @@ public class ReportGenerationService {
     private final VirtualTrainerMapper virtualTrainerMapper;
     private final ForbiddenWordChecker forbiddenWordChecker;
     private final DifyReportScoringService difyReportScoringService;
+    private final SpeechSpeedCalculator speechSpeedCalculator;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     /** 违禁词维度名（后端规则判定覆盖 Dify 输出） */
     private static final String FORBIDDEN_DIMENSION_NAME = "违禁词";
+    /** 语速适中维度名（v1.1，后端公式计算覆盖 Dify 输出） */
+    private static final String SPEED_DIMENSION_NAME = "语速适中";
 
     /**
      * 重试前的同步重置：校验 + 删除旧维度明细 + 状态置回"生成中"
@@ -117,6 +120,14 @@ public class ReportGenerationService {
                 rounds.stream().map(m -> String.valueOf(m.get("student_answer"))).toList(),
                 trainer == null ? null : trainer.getForbiddenWords());
 
+        // 2.5 v1.1 语音特征（FP-25）：仅语音轮（input_mode=2）参与；纯文字会话 speeds 为空，行为与 v1.0 一致
+        List<Integer> roundSpeeds = rounds.stream()
+                .filter(m -> m.get("speech_speed") != null)
+                .map(m -> (Integer) m.get("speech_speed"))
+                .toList();
+        Integer speedDimensionScore = roundSpeeds.isEmpty() ? null
+                : speechSpeedCalculator.calcDimensionScore(roundSpeeds);
+
         // 3. 项目启用的评分维度
         List<ScoringDimension> dimensions = scoringDimensionMapper.selectList(
                 new LambdaQueryWrapper<ScoringDimension>()
@@ -127,11 +138,12 @@ public class ReportGenerationService {
             throw new BizException("项目未配置启用的评分维度，无法生成报告");
         }
 
-        // 4. 调 Dify 报告评分智能体
+        // 4. 调 Dify 报告评分智能体（v1.1：语速事实追加到"语速适中"维度 rule，Dify 仅写评语）
         DifyReportScoringService.ReportAgentOutput agentOutput = difyReportScoringService.score(
-                toJson(rounds), toDimensionsJson(dimensions), forbiddenResult.factText());
+                toJson(rounds), toDimensionsJson(dimensions, roundSpeeds, speedDimensionScore),
+                forbiddenResult.factText());
 
-        // 5. 组装维度明细（按项目维度顺序；违禁词维度以后端结果覆盖）
+        // 5. 组装维度明细（按项目维度顺序；违禁词/语速适中维度以后端结果覆盖）
         Map<String, DifyReportScoringService.AgentDimension> agentMap = agentOutput.getDimensions().stream()
                 .filter(d -> d.getName() != null)
                 .collect(Collectors.toMap(DifyReportScoringService.AgentDimension::getName, d -> d, (a, b) -> a));
@@ -142,7 +154,7 @@ public class ReportGenerationService {
         int order = 1;
         for (ScoringDimension dim : dimensions) {
             TrainingReportDimension row = buildDimensionRow(report.getId(), dim, agentMap.get(dim.getDimensionName()),
-                    forbiddenResult, order++);
+                    forbiddenResult, speedDimensionScore, roundSpeeds, order++);
             dimensionRows.add(row);
             int weight = dim.getWeight() == null ? 0 : dim.getWeight();
             weightSum += weight;
@@ -184,7 +196,8 @@ public class ReportGenerationService {
 
     /**
      * 按消息序还原逐轮对话：每个通过的学员消息与其前紧邻的陪练者问组成一轮
-     * 输出结构：[{seq, trainer_question, student_answer, key_points, standard_script}]
+     * 输出结构：[{seq, trainer_question, student_answer, key_points, standard_script}]；
+     * v1.1：input_mode=2 的语音轮额外附加 {audio_duration_ms, char_count, speech_speed}
      */
     private List<Map<String, Object>> buildRounds(List<TrainingSessionMessage> messages) {
         List<Map<String, Object>> rounds = new ArrayList<>();
@@ -211,6 +224,15 @@ public class ReportGenerationService {
                 round.put("key_points", node == null ? List.of()
                         : KeyPointsUtil.parse(node.getKeyPoints()).stream().map(KeyPointsUtil.KeyPoint::content).toList());
                 round.put("standard_script", node == null ? null : node.getStandardScript());
+                // v1.1 语音特征：charCount=识别文本去标点长度，speechSpeed=字数÷时长×60（四舍五入）
+                if (msg.getInputMode() != null && msg.getInputMode() == 2) {
+                    int charCount = speechSpeedCalculator.countChars(msg.getContent());
+                    round.put("audio_duration_ms", msg.getAudioDurationMs());
+                    round.put("char_count", charCount);
+                    if (msg.getAudioDurationMs() != null && msg.getAudioDurationMs() > 0) {
+                        round.put("speech_speed", speechSpeedCalculator.calcSpeed(charCount, msg.getAudioDurationMs()));
+                    }
+                }
                 rounds.add(round);
             }
         }
@@ -218,11 +240,13 @@ public class ReportGenerationService {
     }
 
     /**
-     * 组装单个维度明细行；Dify 未返回该维度时得分 0 兜底；违禁词维度以后端判定覆盖
+     * 组装单个维度明细行；Dify 未返回该维度时得分 0 兜底；
+     * 违禁词维度以后端判定覆盖；v1.1 语速适中维度以后端公式计算覆盖（仅语音会话）
      */
     private TrainingReportDimension buildDimensionRow(Long reportId, ScoringDimension dim,
                                                       DifyReportScoringService.AgentDimension agent,
                                                       ForbiddenWordChecker.ForbiddenResult forbiddenResult,
+                                                      Integer speedDimensionScore, List<Integer> roundSpeeds,
                                                       int sortOrder) {
         TrainingReportDimension row = new TrainingReportDimension();
         row.setReportId(reportId);
@@ -239,6 +263,20 @@ public class ReportGenerationService {
             row.setGoodPoints(toJsonString(forbiddenResult.hasHit() ? List.of() : List.of("全程未踩中任何违禁词")));
             row.setImprovements(toJsonString(forbiddenResult.hasHit()
                     ? List.of("注意避免使用违禁词：" + String.join("、", forbiddenResult.hitWords().keySet()))
+                    : List.of()));
+            return row;
+        }
+
+        // v1.1 语速适中维度（FP-25）：语音会话时以后端公式计算为准（同违禁词模式）；
+        // 纯文字会话 speedDimensionScore=null，走 Dify 输出，行为与 v1.0 一致
+        if (SPEED_DIMENSION_NAME.equals(dim.getDimensionName()) && speedDimensionScore != null) {
+            row.setScore(BigDecimal.valueOf(speedDimensionScore));
+            row.setComment("按各轮语速（字/分钟：" + roundSpeeds.stream().map(String::valueOf)
+                    .collect(Collectors.joining("、")) + "）与 150-250 字/分钟满分区间公式计算，得分 "
+                    + speedDimensionScore + " 分。");
+            row.setGoodPoints(toJsonString(speedDimensionScore >= 80 ? List.of("语速整体处于理想区间") : List.of()));
+            row.setImprovements(toJsonString(speedDimensionScore < 80
+                    ? List.of("建议将语速调整至 150-250 字/分钟的区间内，可通过录音回放自我校准。")
                     : List.of()));
             return row;
         }
@@ -345,13 +383,25 @@ public class ReportGenerationService {
         }
     }
 
-    /** 维度输入 JSON：[{name, weight, rule}] */
-    private String toDimensionsJson(List<ScoringDimension> dimensions) {
+    /**
+     * 维度输入 JSON：[{name, weight, rule}]
+     * v1.1：语音会话时"语速适中"维度的 rule 追加后端已计算的语速事实（同违禁词模式，Dify 须采用该分数）
+     */
+    private String toDimensionsJson(List<ScoringDimension> dimensions, List<Integer> roundSpeeds,
+                                    Integer speedDimensionScore) {
         List<Map<String, Object>> list = dimensions.stream().map(d -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name", d.getDimensionName());
             m.put("weight", d.getWeight());
-            m.put("rule", d.getScoringRule());
+            String rule = d.getScoringRule();
+            if (SPEED_DIMENSION_NAME.equals(d.getDimensionName()) && speedDimensionScore != null) {
+                String fact = "（后端已判定：各轮语速为 "
+                        + roundSpeeds.stream().map(String::valueOf).collect(Collectors.joining("、"))
+                        + " 字/分钟，按 150-250 字/分钟满分区间公式计算，该维度得分为 " + speedDimensionScore
+                        + " 分，必须采用该分数，你只需据此写评语）";
+                rule = (rule == null ? "" : rule) + fact;
+            }
+            m.put("rule", rule);
             return m;
         }).collect(Collectors.toList());
         return toJson(list);

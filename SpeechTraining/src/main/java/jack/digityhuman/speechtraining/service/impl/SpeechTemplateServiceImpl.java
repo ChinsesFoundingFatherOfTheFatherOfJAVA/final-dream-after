@@ -156,12 +156,14 @@ public class SpeechTemplateServiceImpl extends ServiceImpl<SpeechTemplateMapper,
         for (FlowSaveReq.NodeItemReq nodeReq : req.getNodes()) {
             TemplateNode node = new TemplateNode();
             BeanUtils.copyProperties(nodeReq, node, "keyPoints", "passConditionPoints");
+            // 前端传的 id 只是临时ID（用于连线引用），不能作为主键插入，否则会与已有节点主键冲突
+            node.setId(null);
             node.setKeyPoints(serializeKeyPoints(nodeReq.getKeyPoints()));
             node.setPassConditionPoints(toJsonArray(nodeReq.getPassConditionPoints()));
             node.setTemplateId(templateId);
-            templateNodeMapper.insert(node); // insert 后 node.getId() 即为数据库自增ID
+            templateNodeMapper.insert(node); // 主键交由自增生成，insert 后 node.getId() 即为真实ID
 
-            if (nodeReq.getId() != null && nodeReq.getId() != node.getId()) {
+            if (nodeReq.getId() != null) {
                 idMapping.put(nodeReq.getId(), node.getId());
             }
         }
