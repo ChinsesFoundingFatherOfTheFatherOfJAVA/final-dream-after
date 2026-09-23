@@ -1,28 +1,30 @@
 package jack.digityhuman.speechtraining.service;
 
-import com.alibaba.dashscope.audio.asr.recognition.Recognition;
-import com.alibaba.dashscope.audio.asr.recognition.RecognitionParam;
 import com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisAudioFormat;
 import com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisParam;
 import com.alibaba.dashscope.audio.ttsv2.SpeechSynthesizer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.speechtraining.common.Mp3Duration;
+import jack.digityhuman.speechtraining.common.WavHeader;
+import jack.digityhuman.speechtraining.doubao.DoubaoSaucClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.ByteBuffer;
-import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 语音服务（v1.1，FP-24/28）：阿里云百炼 DashScope
- * - TTS：CosyVoice v2 同步合成，"文本+声音+语速"哈希缓存
- * - ASR：Paraformer 录音识别（WAV 16kHz 单声道；粤语走 paraformer-cantonese）
+ * 语音服务（v1.1，FP-24/28）
+ * - TTS：阿里云百炼 CosyVoice v2 同步合成，"文本+声音+语速"哈希缓存
+ * - ASR：v1.2 起改用豆包流式语音识别（SAUC 协议，见 {@link DoubaoSaucClient}），百炼 Paraformer 已下线
  */
 @Slf4j
 @Service
@@ -31,6 +33,7 @@ public class SpeechService {
 
     private final TtsCacheService ttsCacheService;
     private final VoiceMapProperties voiceMapProperties;
+    private final DoubaoSaucClient doubaoSaucClient;
 
     @Value("${dashscope.api-key:}")
     private String apiKey;
@@ -41,18 +44,13 @@ public class SpeechService {
     @Value("${speech.tts.default-voice:longwan_v2}")
     private String defaultVoice;
 
-    @Value("${speech.asr.model:paraformer-v2}")
-    private String asrModel;
-
-    @Value("${speech.asr.cantonese-model:paraformer-cantonese}")
-    private String asrCantoneseModel;
-
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /** 合成中的缓存键 → 结果future；键在合成结束时按身份移除，不随请求量增长 */
+    private final ConcurrentHashMap<String, CompletableFuture<TtsResult>> synthesisInFlight = new ConcurrentHashMap<>();
 
     /** 录音时长上限（秒） */
     private static final int MAX_AUDIO_SECONDS = 60;
-    /** TTS 输出格式对应码率（MP3 22050Hz 256kbps = 32000 字节/秒），用于时长估算 */
-    private static final int TTS_BYTES_PER_SECOND = 32_000;
 
     /**
      * TTS 合成结果
@@ -62,8 +60,44 @@ public class SpeechService {
 
     /**
      * ASR 识别结果
+     *
+     * @param text       整段识别文本
+     * @param durationMs 语音时长（毫秒，分句首尾跨度；无分句时为录音自身时长）
+     * @param acoustic   该轮录音的客观声学特征（豆包分句时间戳汇总），恒不为 null
      */
-    public record AsrResult(String text, long durationMs) {
+    public record AsrResult(String text, long durationMs, Acoustic acoustic) {
+    }
+
+    /**
+     * 一轮录音的客观声学特征。
+     * <p><b>本轮只留存、不参与评分</b>：语气/流利度等语音维度目前无任何客观依据可评
+     * （报告智能体的提示词根本没读这些字段），先把特征落库攒样本，口径怎么定留待产品确认。
+     * <p>口径：录音时长来自 WAV 头，发声时长来自豆包分句时间戳，两者的差额即停顿。
+     *
+     * @param audioMs        录音时长（毫秒，含静音）
+     * @param speechMs       净发声时长（毫秒，各分句首尾跨度之和）
+     * @param utteranceCount 分句数
+     * @param pauseCount     停顿次数（相邻分句间隔 ≥ 300ms 才计）
+     * @param pauseTotalMs   上述停顿的总时长（毫秒）
+     * @param maxPauseMs     最长一次分句间隔（毫秒，不设阈值）
+     * @param textLength     识别文本长度（含标点）
+     * @param lidLang        豆包检出语种（粤语为 speech_dia_cant；未检出为空串）
+     * @param definite       末个分句是否为终结结果：1=是，0=否，null=无分句
+     * @param wordsJson      豆包逐字时间戳原文（跨分句拼接的 JSON 数组；无则 null）
+     * @param serverAudioMs  豆包回传的音频时长（{@code audio_info.duration}，毫秒；未回传为 null）。
+     *                       与本端 {@link #audioMs} 不一致即说明 WAV 封装头有问题，语速数字也就不可信了
+     */
+    public record Acoustic(int audioMs, int speechMs, int utteranceCount, int pauseCount,
+                           int pauseTotalMs, int maxPauseMs, int textLength, String lidLang,
+                           Integer definite, String wordsJson, Integer serverAudioMs) {
+
+        /** 分句间隔达到该毫秒数才算一次"停顿"：小于此值多为词间正常停顿与时间戳抖动 */
+        private static final int PAUSE_MIN_MS = 300;
+
+        /** 无分句（纯静音等）：只有录音时长，发声时长与停顿均为 0 */
+        static Acoustic silent(int audioMs) {
+            return new Acoustic(audioMs, 0, 0, 0, 0, 0, 0, "", null, null, null);
+        }
     }
 
     /**
@@ -87,12 +121,41 @@ public class SpeechService {
             return new TtsResult("/audio/tts/" + filename, estimateDurationMs(cached), true);
         }
 
-        // 2. 调百炼 CosyVoice 同步合成
-        byte[] audio = doSynthesize(text, voice, normalizedSpeed);
+        // 2. 同一缓存键的并发请求只合成一次：后到者等首个结果
+        //    （开局时 N 个学员会对同一句陪练者问题同时发 TTS，不做去重就是 N 次百炼调用）
+        CompletableFuture<TtsResult> future = new CompletableFuture<>();
+        CompletableFuture<TtsResult> running = synthesisInFlight.putIfAbsent(filename, future);
+        if (running != null) {
+            return awaitRunningSynthesis(running);
+        }
 
-        // 3. 落盘缓存并返回 URL
-        String url = ttsCacheService.put(filename, audio);
-        return new TtsResult(url, estimateDurationMs(audio), false);
+        try {
+            // 3. 调百炼 CosyVoice 同步合成
+            byte[] audio = doSynthesize(text, voice, normalizedSpeed);
+
+            // 4. 落盘缓存并返回 URL
+            TtsResult result = new TtsResult(ttsCacheService.put(filename, audio), estimateDurationMs(audio), false);
+            future.complete(result);
+            return result;
+        } catch (RuntimeException | Error e) {
+            future.completeExceptionally(e);
+            throw e;
+        } finally {
+            synthesisInFlight.remove(filename, future);
+        }
+    }
+
+    /** 等待同键首次合成的结果；失败原因按主调线程自己的一次调用还原 */
+    private TtsResult awaitRunningSynthesis(CompletableFuture<TtsResult> running) {
+        try {
+            return running.join();
+        } catch (CompletionException e) {
+            if (e.getCause() instanceof BizException biz) {
+                throw biz;
+            }
+            log.error("等待同键 TTS 合成结果失败", e);
+            throw new BizException("语音合成失败，请重试");
+        }
     }
 
     /**
@@ -130,13 +193,15 @@ public class SpeechService {
     }
 
     /**
-     * ASR：学员录音识别（WAV 16kHz 单声道，≤60s）
+     * ASR：学员录音识别（WAV 16bit PCM，≤60s）
      *
      * @param wav      录音字节
-     * @param language 识别语言（mandarin/cantonese；粤语走 paraformer-cantonese）
+     * @param language 陪练者配置语言（mandarin/cantonese）。豆包 bigmodel 为单模型多语种，
+     *                 官方文档称 language 缺省时即覆盖中英+粤语+川陕等方言，故此处不再据此切换模型，
+     *                 仅落日志并借 enable_lid 返回的 lid_lang 校验实际识别语种。
      */
     public AsrResult asr(byte[] wav, String language) {
-        // 1. 基础校验：WAV 格式与时长
+        // 1. 基础校验：WAV 格式与时长（豆包按帧头申报采样率，非法 WAV 直接识别失败）
         long durationMs = wavDurationMs(wav);
         if (durationMs <= 0) {
             throw new BizException("录音文件无效或超长（≤60s）");
@@ -145,114 +210,101 @@ public class SpeechService {
             throw new BizException("录音文件无效或超长（≤60s）");
         }
 
-        // 2. 写临时文件（DashScope SDK 文件识别入口接收 File）
-        File tempFile = null;
-        try {
-            tempFile = Files.createTempFile("st-asr-", ".wav").toFile();
-            Files.write(tempFile.toPath(), wav);
-
-            String model = "cantonese".equalsIgnoreCase(language) ? asrCantoneseModel : asrModel;
-            RecognitionParam param = RecognitionParam.builder()
-                    .apiKey(apiKey)
-                    .model(model)
-                    .format("wav")
-                    .sampleRate(16_000)
-                    .build();
-            Recognition recognizer = new Recognition();
-            // call(param, file) 阻塞至识别完成，返回 {"sentences":[{begin_time,end_time,text},...]} JSON
-            String resultJson = recognizer.call(param, tempFile);
-            return parseAsrResult(resultJson, durationMs);
-        } catch (BizException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("百炼ASR识别失败", e);
-            throw new BizException("语音识别失败，请重试");
-        } finally {
-            if (tempFile != null && !tempFile.delete()) {
-                tempFile.deleteOnExit();
-            }
-        }
+        // 2. 走 SAUC 流式协议识别（内部建连→灌包→等负包），返回最后一包的 JSON 负载
+        return parseAsrResult(doubaoSaucClient.recognize(wav), durationMs, language);
     }
 
     /**
-     * 解析 ASR 返回 JSON：拼接句子文本 + 首尾时间差为时长
+     * 解析豆包识别结果：result.text 为整段文本，result.utterances[] 携带分句首尾时间与逐字时间戳。
+     * <p>语音时长取"末句结束-首句起始"（含分句之间的停顿，与语速口径一致），无分句时回落到音频自身时长；
+     * 分句时间戳同时汇总成 {@link Acoustic} 落库留存。
+     *
+     * @param payload              SAUC 最后一包 JSON，纯静音等无文本场景为 null
+     * @param fallbackDurationMs   WAV 头算出的时长
+     * @param configuredLanguage   陪练者配置语言，仅用于日志比对 lid_lang
      */
-    private AsrResult parseAsrResult(String resultJson, long fallbackDurationMs) {
+    private AsrResult parseAsrResult(String payload, long fallbackDurationMs, String configuredLanguage) {
+        int audioMs = (int) fallbackDurationMs;
+        if (payload == null) {
+            log.info("豆包ASR未产出文本: 配置语言={}, 音频={}ms", configuredLanguage, fallbackDurationMs);
+            return new AsrResult("", fallbackDurationMs, Acoustic.silent(audioMs));
+        }
         try {
-            JsonNode root = MAPPER.readTree(resultJson);
-            JsonNode sentences = root.get("sentences");
-            StringBuilder text = new StringBuilder();
+            JsonNode root = MAPPER.readTree(payload);
+            JsonNode result = root.path("result");
+            String text = result.path("text").asText("");
             long begin = Long.MAX_VALUE;
             long end = 0;
-            if (sentences != null && sentences.isArray()) {
-                for (JsonNode s : sentences) {
-                    JsonNode t = s.get("text");
-                    if (t != null && !t.asText().isEmpty()) {
-                        text.append(t.asText());
-                    }
-                    JsonNode b = s.get("begin_time");
-                    JsonNode e = s.get("end_time");
-                    if (b != null && b.isNumber()) {
-                        begin = Math.min(begin, b.asLong());
-                    }
-                    if (e != null && e.isNumber()) {
-                        end = Math.max(end, e.asLong());
+            long speechMs = 0;
+            int pauseCount = 0;
+            int pauseTotalMs = 0;
+            int maxPauseMs = 0;
+            int utteranceCount = 0;
+            Integer definite = null;
+            ArrayNode words = MAPPER.createArrayNode();
+            long previousEnd = -1;
+            for (JsonNode utterance : result.path("utterances")) {
+                utteranceCount++;
+                long start = utterance.path("start_time").asLong(-1);
+                long finish = utterance.path("end_time").asLong(-1);
+                // 相邻分句之间的间隔即"说话中途的停顿"
+                if (previousEnd >= 0 && start > previousEnd) {
+                    int gap = (int) (start - previousEnd);
+                    maxPauseMs = Math.max(maxPauseMs, gap);
+                    if (gap >= Acoustic.PAUSE_MIN_MS) {
+                        pauseCount++;
+                        pauseTotalMs += gap;
                     }
                 }
+                if (finish > start) {
+                    speechMs += finish - start;
+                }
+                if (start >= 0) {
+                    begin = Math.min(begin, start);
+                }
+                if (finish >= 0) {
+                    end = Math.max(end, finish);
+                }
+                if (utterance.has("definite")) {
+                    definite = utterance.path("definite").asBoolean() ? 1 : 0;
+                }
+                for (JsonNode word : utterance.path("words")) {
+                    words.add(word);
+                }
+                previousEnd = Math.max(previousEnd, finish);
             }
             long durationMs = (end > begin) ? (end - begin) : fallbackDurationMs;
-            return new AsrResult(text.toString(), durationMs);
+            // lid_lang 是核验"粤语等多语种是否真被识别"的唯一线索，必须落日志
+            String lidLang = result.path("utterances").path(0).path("additions").path("lid_lang").asText("");
+            // audio_info.duration 缺省时返回 -1，归一为 null，避免库里出现"豆包说这段音频 -1 毫秒"
+            long serverAudioMs = root.path("audio_info").path("duration").asLong(-1);
+            Acoustic acoustic = new Acoustic(audioMs, (int) speechMs, utteranceCount, pauseCount,
+                    pauseTotalMs, maxPauseMs, text.length(), lidLang, definite,
+                    words.isEmpty() ? null : words.toString(),
+                    serverAudioMs < 0 ? null : (int) serverAudioMs);
+            log.info("豆包ASR完成: 配置语言={}, 检出语种={}, 文本长度={}, 语音={}ms, 发声={}ms, 停顿={}次/{}ms",
+                    configuredLanguage, lidLang, text.length(), durationMs, speechMs, pauseCount, pauseTotalMs);
+            return new AsrResult(text, durationMs, acoustic);
         } catch (IOException e) {
-            log.error("解析ASR结果失败: {}", resultJson, e);
+            log.error("解析ASR结果失败: {}", payload, e);
             throw new BizException("语音识别失败，请重试");
         }
     }
 
     /**
-     * 解析 WAV 头估算时长（毫秒）：读取 fmt 块 byteRate 与 data 块大小；
-     * 非法 WAV（无 RIFF 头/无 data 块）返回 -1
+     * 解析 WAV 头估算时长（毫秒）；非 RIFF、缺 fmt/data 块等非法输入返回 -1
      */
     static long wavDurationMs(byte[] wav) {
-        if (wav == null || wav.length < 44
-                || wav[0] != 'R' || wav[1] != 'I' || wav[2] != 'F' || wav[3] != 'F') {
-            return -1;
-        }
-        // 从偏移 12 起遍历 RIFF 子块，定位 fmt（byteRate）与 data（大小）
-        int byteRate = 32_000; // 默认按 16kHz 单声道 16bit 兜底
-        long dataSize = -1;
-        int offset = 12;
-        while (offset + 8 <= wav.length) {
-            String chunkId = new String(wav, offset, 4, java.nio.charset.StandardCharsets.US_ASCII);
-            long chunkSize = readUnsignedIntLE(wav, offset + 4);
-            if ("fmt ".equals(chunkId) && offset + 24 <= wav.length) {
-                byteRate = (int) readUnsignedIntLE(wav, offset + 16);
-            } else if ("data".equals(chunkId)) {
-                dataSize = Math.min(chunkSize, wav.length - (offset + 8));
-                break;
-            }
-            offset += 8 + (int) chunkSize;
-            if (chunkSize <= 0) break;
-        }
-        if (dataSize <= 0 || byteRate <= 0) {
-            return -1;
-        }
-        return dataSize * 1000L / byteRate;
+        WavHeader header = WavHeader.parse(wav);
+        return header == null ? -1 : header.durationMs();
     }
 
-    /** 小端无符号 4 字节 */
-    private static long readUnsignedIntLE(byte[] bytes, int offset) {
-        return (bytes[offset] & 0xFFL)
-                | ((bytes[offset + 1] & 0xFFL) << 8)
-                | ((bytes[offset + 2] & 0xFFL) << 16)
-                | ((bytes[offset + 3] & 0xFFL) << 24);
-    }
-
-    /** 按 TTS 输出码率估算音频时长（毫秒） */
+    /**
+     * TTS 音频时长（毫秒）：逐帧读 MP3 实际码率/采样率。
+     * 解析不出有效帧时返回 0——宁可让上层看到"没有时长"，也不要一个看着合理却差一倍的估算值
+     */
     private int estimateDurationMs(byte[] audio) {
-        if (audio == null || audio.length == 0) {
-            return 0;
-        }
-        return (int) Math.round(audio.length / (double) TTS_BYTES_PER_SECOND * 1000);
+        return (int) Mp3Duration.durationMs(audio);
     }
 
     /**

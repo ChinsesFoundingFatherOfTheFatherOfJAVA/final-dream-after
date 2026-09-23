@@ -6,7 +6,7 @@ import lombok.EqualsAndHashCode;
 
 /**
  * 学员语音消息响应（接口文档 5.2，v1.1）
- * 判定字段（withdrawn/keyPoints/passed/finished/...）语义与 2.3 完全一致，
+ * 判定字段（withdrawn/keyPoints/passed/finished/...）语义与文字作答接口完全一致，
  * 区别仅消息来源为录音（inputMode=2，落库带 audio_url/audio_duration_ms）
  */
 @Data
@@ -29,6 +29,7 @@ public class VoiceMessageResp extends SendMessageResp {
                                       TrainingSessionMessage studentMessage) {
         VoiceMessageResp resp = new VoiceMessageResp();
         resp.setWithdrawn(base.getWithdrawn());
+        resp.setNoSpeech(base.getNoSpeech());
         resp.setKeyPoints(base.getKeyPoints());
         resp.setPassed(base.getPassed());
         resp.setFinished(base.getFinished());

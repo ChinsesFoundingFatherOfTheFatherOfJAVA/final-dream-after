@@ -1,0 +1,4 @@
+# Dubbo 序列化安全白名单。
+# Dubbo 3.2+ 默认开启序列化检查，反序列化不在白名单里的类会告警乃至拒绝。
+# 本包下全是跨进程传输的 DTO 契约类，消费方引入本 jar 即视为可信。
+jack.digityhuman.staffmanagement.api

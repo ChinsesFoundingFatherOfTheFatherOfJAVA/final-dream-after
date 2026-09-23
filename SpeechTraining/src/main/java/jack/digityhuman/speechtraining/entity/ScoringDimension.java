@@ -19,6 +19,10 @@ public class ScoringDimension {
     private Integer enabled;
     private Integer ruleType;
     private String scoringRule;
+    /** 评分依据：1=文字，2=语音，3=文字+语音 */
+    private Integer evidenceType;
+    /** 量化指标配置 JSON；为空表示该维度由 AI 评分 */
+    private String metricConfig;
     private Integer isCustom;
     private Integer sortOrder;
     private LocalDateTime createdAt;

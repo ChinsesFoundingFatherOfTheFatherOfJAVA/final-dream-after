@@ -37,9 +37,9 @@ public class AvatarGenService {
         if (text.length() < 2 || text.length() > 200) {
             throw new BizException("请输入形象提示词（2~200字）");
         }
-        // 构图约束：生图插件固定输出 1024x1024 方图，学员端形象卡为 4:5 竖版（object-fit:cover 左右裁剪），
-        // 追加构图要求保证人物主体居中、上下留边，裁剪后不切头肩
-        String fullPrompt = text + "，人物半身居中构图，头顶与画面顶部保留适当留白，左右两侧留出背景余量，适合竖版头像卡片裁剪展示";
+        // 构图约束：生图插件固定输出 1024x1024 方图，学员端形象卡同为 1:1 方形（展示时不裁剪），
+        // 追加构图要求保证人物主体居中、四周留边，避免头肩贴边出框
+        String fullPrompt = text + "，人物半身居中构图，头顶与画面顶部保留适当留白，左右两侧留出背景余量";
 
         // 2. 调 Dify 生图工作流：输入 prompt，输出 image_url
         Map<String, Object> outputs;

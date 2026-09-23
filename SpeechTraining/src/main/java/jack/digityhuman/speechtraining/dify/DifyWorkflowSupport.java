@@ -1,5 +1,6 @@
 package jack.digityhuman.speechtraining.dify;
 
+import jack.digityhuman.speechtraining.common.BizException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
@@ -49,17 +50,29 @@ public class DifyWorkflowSupport {
         );
 
         if (response.getBody() == null) {
-            throw new RuntimeException("Dify工作流返回空响应");
+            throw new BizException("AI 服务无响应，请稍后重试");
         }
 
         @SuppressWarnings("unchecked")
         Map<String, Object> data = (Map<String, Object>) response.getBody().get("data");
         if (data == null) {
-            throw new RuntimeException("Dify工作流响应中缺少data字段");
+            throw new BizException("AI 服务响应格式异常，请稍后重试");
+        }
+
+        // blocking 模式下 data.status 为终态。工作流 failed 时 outputs 缺失是正常返回，
+        // 若不在此显式拦截，空 map 会一路回到 judgePass，被误判成"学员未命中要点"而静默撤回每条回答
+        Object status = data.get("status");
+        if (status != null && !"succeeded".equals(String.valueOf(status))) {
+            log.error("Dify工作流执行失败: agentType={}, status={}, error={}", agentType, status, data.get("error"));
+            throw new BizException("AI 服务执行失败，请稍后重试");
         }
 
         @SuppressWarnings("unchecked")
         Map<String, Object> outputs = (Map<String, Object>) data.get("outputs");
-        return outputs != null ? outputs : new HashMap<>();
+        if (outputs == null) {
+            log.error("Dify工作流无输出内容: agentType={}, status={}", agentType, status);
+            throw new BizException("AI 服务未返回结果，请稍后重试");
+        }
+        return outputs;
     }
 }

@@ -33,7 +33,9 @@ import java.util.UUID;
 /**
  * 材料解析服务实现（FP-42）
  * <p>
- * 解析在 generateExecutor 上异步执行（上传接口立即返回 fileId，不阻塞前端）；
+ * 解析在 parseExecutor 上异步执行（上传接口立即返回 fileId，不阻塞前端）；
+ * 该池与生成任务的 generateExecutor 分开——主题/案例生成单次要几百秒，
+ * 共用会把秒级的解析排到十几分钟后，前端「正在解析文件…」卡片因此长期转圈。
  * 事件用"独立成轮"方式推送（上传请求不在对话轮次内），两态事件携带同一 files[].id，
  * 前端据此把"解析中"卡片原地更新为"解析完成"。
  */
@@ -58,7 +60,7 @@ public class AssistantMaterialServiceImpl implements AssistantMaterialService {
     private final DocumentTextExtractor textExtractor;
     private final AssistantEventPublisher eventPublisher;
     private final AssistantProperties properties;
-    private final ThreadPoolTaskExecutor generateExecutor;
+    private final ThreadPoolTaskExecutor parseExecutor;
 
     public AssistantMaterialServiceImpl(AssistantSessionService sessionService,
                                         ActAiMaterialMapper materialMapper,
@@ -66,14 +68,14 @@ public class AssistantMaterialServiceImpl implements AssistantMaterialService {
                                         DocumentTextExtractor textExtractor,
                                         AssistantEventPublisher eventPublisher,
                                         AssistantProperties properties,
-                                        @Qualifier("generateExecutor") ThreadPoolTaskExecutor generateExecutor) {
+                                        @Qualifier("parseExecutor") ThreadPoolTaskExecutor parseExecutor) {
         this.sessionService = sessionService;
         this.materialMapper = materialMapper;
         this.artifactService = artifactService;
         this.textExtractor = textExtractor;
         this.eventPublisher = eventPublisher;
         this.properties = properties;
-        this.generateExecutor = generateExecutor;
+        this.parseExecutor = parseExecutor;
     }
 
     /**
@@ -85,7 +87,7 @@ public class AssistantMaterialServiceImpl implements AssistantMaterialService {
         String callId = UUID.randomUUID().toString().replace("-", "");
         pushParseEvent(sessionId, file, contextId, callId, 0,
                 "正在解析材料《" + file.getName() + "》……", null);
-        generateExecutor.execute(() -> runParse(sessionId, file, contextId, callId));
+        parseExecutor.execute(() -> runParse(sessionId, file, contextId, callId));
     }
 
     /** 异步解析主体：提取 → 摘要 → 落库/入 artifact → 推"解析完成/失败" */

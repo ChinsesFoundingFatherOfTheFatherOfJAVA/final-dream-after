@@ -1,10 +1,12 @@
 package jack.digityhuman.speechtraining.service;
 
+import jack.digityhuman.speechtraining.common.DimensionMetricConfig;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * 语速特征计算器单测（v1.1，FP-25 验收标准）
@@ -61,9 +63,23 @@ class SpeechSpeedCalculatorTest {
     }
 
     @Test
-    void 空列表_不扣分() {
-        assertEquals(100, calculator.calcDimensionScore(List.of()));
-        assertEquals(100, calculator.calcDimensionScore(null));
+    void 空列表_不参与评分而非满分() {
+        // 没有语音数据不等于语速满分：由调用方按评分依据把该维度剔除出总分（见 ReportGenerationService）
+        assertThrows(IllegalArgumentException.class, () -> calculator.calcDimensionScore(List.of()));
+        assertThrows(IllegalArgumentException.class, () -> calculator.calcDimensionScore(null));
+    }
+
+    @Test
+    void 指标参数_覆盖满分区间后按新区间扣分() {
+        DimensionMetricConfig metric = DimensionMetricConfig.parse(
+                "{\"metric\":\"speech_speed\",\"params\":{\"bestMin\":100,\"bestMax\":200}}");
+        // 120 在 100-200 区间内 → 满分；230 偏离 30 → 扣 15 分
+        assertEquals(100, calculator.calcRoundScore(120, metric));
+        assertEquals(85, calculator.calcRoundScore(230, metric));
+        // 同一语速用默认区间（150-250）判断则扣 15 分
+        assertEquals(85, calculator.calcRoundScore(120));
+        assertEquals(100, calculator.bestMin(metric));
+        assertEquals(200, calculator.bestMax(metric));
     }
 
     @Test

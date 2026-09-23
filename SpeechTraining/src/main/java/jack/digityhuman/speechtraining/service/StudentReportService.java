@@ -34,6 +34,7 @@ public class StudentReportService {
     private final TrainingSessionMessageMapper messageMapper;
     private final TrainingProjectMapper projectMapper;
     private final TrainingNodeMapper nodeMapper;
+    private final VirtualTrainerMapper virtualTrainerMapper;
     private final TrainingMessageLikeMapper messageLikeMapper;
     private final UserContext userContext;
 
@@ -64,6 +65,10 @@ public class StudentReportService {
         resp.setProjectName(project == null ? null : project.getName());
         resp.setProjectType(project == null ? null : project.getProjectType());
         resp.setStudentName(session == null ? null : session.getUserName());
+        // 形象与训练页左栏同源（virtual_trainer），报告页对话记录不再另画一张内置脸
+        VirtualTrainer trainer = report.getProjectId() == null ? null : virtualTrainerMapper.selectOne(
+                new LambdaQueryWrapper<VirtualTrainer>().eq(VirtualTrainer::getProjectId, report.getProjectId()));
+        resp.setTrainerAvatar(trainer == null ? null : trainer.getAvatarImage());
         resp.setTotalScore(report.getTotalScore());
         resp.setRankNo(report.getRankNo());
         resp.setExceedPercent(report.getExceedPercent());

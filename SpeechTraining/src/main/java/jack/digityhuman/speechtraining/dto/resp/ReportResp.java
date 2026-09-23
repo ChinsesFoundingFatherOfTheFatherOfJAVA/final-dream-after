@@ -19,6 +19,12 @@ public class ReportResp {
     private String projectName;
     private Integer projectType;
     private String studentName;
+    /**
+     * 陪练者形象图片相对路径（virtual_trainer.avatar_image）；null 时前端显示内置默认形象。
+     * <p>报告页对话记录的陪练者头像必须与训练页左栏同源，否则同一会话在两页出现两张脸，
+     * 故这里随报告一起返回，前端不再自行按 projectId 猜测。
+     */
+    private String trainerAvatar;
     private BigDecimal totalScore;
     private Integer rankNo;
     private Integer exceedPercent;

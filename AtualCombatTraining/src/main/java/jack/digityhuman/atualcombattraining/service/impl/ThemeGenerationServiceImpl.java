@@ -94,8 +94,9 @@ public class ThemeGenerationServiceImpl implements ThemeGenerationService {
             throw new BizException("goal 不能为空");
         }
         ActAiArtifact working = artifactService.ensureWorking(themeId);
-        // 1. 生成中先推（此刻仍在 Dify 工具调用的同步链路上，事件并入当前助手消息）
-        eventPublisher.push(sessionId, traceId, BizTypes.ARTIFACT_GENERATED,
+        // 1. 生成中先推（此刻仍在 Dify 工具调用的同步链路上，事件并入当前助手消息；
+        //    若该轮已经结束则只广播不落库——进度事件不配独占一条消息行，见 pushTransient）
+        eventPublisher.pushTransient(sessionId, traceId, BizTypes.ARTIFACT_GENERATED,
                 generatedParams(working, STATUS_IN_PROGRESS, null, null));
         // 2. 异步生成
         generateExecutor.execute(() -> runGeneration(session, traceId, req, working));
@@ -162,6 +163,7 @@ public class ThemeGenerationServiceImpl implements ThemeGenerationService {
     /**
      * 推 in_progress（携带"当前工作区已生成部分"的全量内容）：
      * 右面板据此渐次渲染已就绪的 Tab 数据，未生成的部分保持原样。
+     * 只广播不落库：一次生成有多个节点进度，逐条独立成轮会在消息流里堆出空气泡。
      */
     private void pushInProgress(String sessionId, String traceId, String themeId,
                                 ObjectNode nodeOutputs, String nodeTitle) {
@@ -173,7 +175,7 @@ public class ThemeGenerationServiceImpl implements ThemeGenerationService {
                 JsonSupport.plain(working.getContent()), null);
         // stage 便于前端/日志区分是哪一段就绪（scenes / profiles / final）
         params.put("stage", nodeTitle);
-        eventPublisher.push(sessionId, traceId, BizTypes.ARTIFACT_GENERATED, params);
+        eventPublisher.pushTransient(sessionId, traceId, BizTypes.ARTIFACT_GENERATED, params);
         log.info("主题生成中间产物已推送 themeId={} stage={} 字段={}",
                 themeId, nodeTitle, DifyWorkflowEventParser.keys(nodeOutputs));
     }

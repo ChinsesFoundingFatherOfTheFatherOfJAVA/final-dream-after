@@ -3,6 +3,7 @@ package jack.digityhuman.speechtraining.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.speechtraining.common.DimensionMetricConfig;
 import jack.digityhuman.speechtraining.common.KeyPointsUtil;
 import jack.digityhuman.speechtraining.dify.DifyReportScoringService;
 import jack.digityhuman.speechtraining.entity.*;
@@ -10,10 +11,12 @@ import jack.digityhuman.speechtraining.mapper.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -38,10 +41,17 @@ public class ReportGenerationService {
     private final SpeechSpeedCalculator speechSpeedCalculator;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    /** 违禁词维度名（后端规则判定覆盖 Dify 输出） */
-    private static final String FORBIDDEN_DIMENSION_NAME = "违禁词";
-    /** 语速适中维度名（v1.1，后端公式计算覆盖 Dify 输出） */
-    private static final String SPEED_DIMENSION_NAME = "语速适中";
+    /** "生成中"报告被判卡死的阈值（分钟） */
+    private static final int GENERATING_TIMEOUT_MINUTES = 15;
+    /** 卡死报告扫描间隔（毫秒） */
+    private static final long SWEEP_INTERVAL_MS = 60_000L;
+    /**
+     * 语音依据维度在本次没有语音数据时的不参与原因。
+     * 措辞刻意不说"全程文字作答"：判定口径是"可作为评分依据的语音轮次为空"，
+     * 学员说过话但每轮都被撤回/未通过时同样落到这里，说"全程文字作答"与事实不符。
+     */
+    private static final String NO_ACOUSTIC_REASON =
+            "本次没有可用于评分的语音作答，该维度以语音表现为评分依据，未参与本次评分";
 
     /**
      * 重试前的同步重置：校验 + 删除旧维度明细 + 状态置回"生成中"
@@ -95,6 +105,46 @@ public class ReportGenerationService {
     }
 
     /**
+     * 按会话置报告为"失败"：异步任务没能进入执行队列（如线程池饱和）时的兜底，
+     * 保证学员端拿得到重试入口而不是一直转"报告生成中"
+     */
+    public void markFailedBySession(Long sessionId) {
+        try {
+            TrainingReport report = reportMapper.selectOne(new LambdaQueryWrapper<TrainingReport>()
+                    .eq(TrainingReport::getSessionId, sessionId));
+            if (report != null) {
+                markFailed(report);
+            }
+        } catch (Exception e) {
+            log.error("按会话置报告失败态出错, sessionId={}", sessionId, e);
+        }
+    }
+
+    /**
+     * 卡死报告扫描：进程重启、任务被丢弃等场景会让报告永久停在"生成中"。
+     * 超过阈值未流转的一律置失败，交由学员端"重新生成"入口重试；
+     * 阈值远大于单次 Dify 调用读超时（120s），不会误伤正常生成中的报告。
+     */
+    @Scheduled(fixedDelay = SWEEP_INTERVAL_MS, initialDelay = SWEEP_INTERVAL_MS)
+    public void sweepStuckReports() {
+        try {
+            List<TrainingReport> stuck = reportMapper.selectList(new LambdaQueryWrapper<TrainingReport>()
+                    .eq(TrainingReport::getStatus, 1)
+                    // updated_at 由数据库 CURRENT_TIMESTAMP 写入，阈值同样取数据库时钟：
+                    // JVM 与 MySQL 时区不一致时（开发库为 UTC、应用为 +08），
+                    // 用 LocalDateTime.now() 算阈值会把刚建好的"生成中"报告误判成卡死。
+                    .apply("updated_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL {0} MINUTE)",
+                            GENERATING_TIMEOUT_MINUTES));
+            for (TrainingReport report : stuck) {
+                log.warn("报告 {} 生成中超时（最后更新 {}），置为失败等待重试", report.getId(), report.getUpdatedAt());
+                markFailed(report);
+            }
+        } catch (Exception e) {
+            log.error("卡死报告扫描执行失败", e);
+        }
+    }
+
+    /**
      * 报告生成主流程
      */
     private void generateInternal(TrainingReport report) {
@@ -113,20 +163,18 @@ public class ReportGenerationService {
             throw new BizException("会话无有效对话轮次，无法生成报告");
         }
 
-        // 2. 违禁词规则判定（后端事实，覆盖 Dify 输出）
+        // 2. 违禁词规则判定（后端事实，始终交给 Dify；配置了 forbidden_words 指标的维度以该事实定分）
         VirtualTrainer trainer = virtualTrainerMapper.selectOne(
                 new LambdaQueryWrapper<VirtualTrainer>().eq(VirtualTrainer::getProjectId, session.getProjectId()));
         ForbiddenWordChecker.ForbiddenResult forbiddenResult = forbiddenWordChecker.check(
                 rounds.stream().map(m -> String.valueOf(m.get("student_answer"))).toList(),
                 trainer == null ? null : trainer.getForbiddenWords());
 
-        // 2.5 v1.1 语音特征（FP-25）：仅语音轮（input_mode=2）参与；纯文字会话 speeds 为空，行为与 v1.0 一致
+        // 2.5 v1.1 语音特征（FP-25）：仅语音轮（input_mode=2）产出语速；纯文字会话 speeds 为空
         List<Integer> roundSpeeds = rounds.stream()
                 .filter(m -> m.get("speech_speed") != null)
                 .map(m -> (Integer) m.get("speech_speed"))
                 .toList();
-        Integer speedDimensionScore = roundSpeeds.isEmpty() ? null
-                : speechSpeedCalculator.calcDimensionScore(roundSpeeds);
 
         // 3. 项目启用的评分维度
         List<ScoringDimension> dimensions = scoringDimensionMapper.selectList(
@@ -138,12 +186,18 @@ public class ReportGenerationService {
             throw new BizException("项目未配置启用的评分维度，无法生成报告");
         }
 
-        // 4. 调 Dify 报告评分智能体（v1.1：语速事实追加到"语速适中"维度 rule，Dify 仅写评语）
-        DifyReportScoringService.ReportAgentOutput agentOutput = difyReportScoringService.score(
-                toJson(rounds), toDimensionsJson(dimensions, roundSpeeds, speedDimensionScore),
-                forbiddenResult.factText());
+        // 4. 逐个维度定档：是否参与本次评分、得分由后端指标算还是由 AI 评
+        List<DimensionPlan> plans = planDimensions(dimensions, roundSpeeds, forbiddenResult);
+        List<DimensionPlan> scoringPlans = plans.stream().filter(DimensionPlan::participates).toList();
+        if (scoringPlans.isEmpty()) {
+            throw new BizException("本次训练没有可参与评分的维度：" + plans.get(0).excludeReason());
+        }
 
-        // 5. 组装维度明细（按项目维度顺序；违禁词/语速适中维度以后端结果覆盖）
+        // 5. 调 Dify 报告评分智能体（只送参与评分的维度；后端已定分的维度把事实与得分追加进 rule，AI 只写评语）
+        DifyReportScoringService.ReportAgentOutput agentOutput = difyReportScoringService.score(
+                toJson(rounds), toDimensionsJson(scoringPlans), forbiddenResult.factText());
+
+        // 6. 组装维度明细（按项目维度顺序，含未参与维度，便于学员端说明原因）
         Map<String, DifyReportScoringService.AgentDimension> agentMap = agentOutput.getDimensions().stream()
                 .filter(d -> d.getName() != null)
                 .collect(Collectors.toMap(DifyReportScoringService.AgentDimension::getName, d -> d, (a, b) -> a));
@@ -152,26 +206,35 @@ public class ReportGenerationService {
         BigDecimal weightedSum = BigDecimal.ZERO;
         int weightSum = 0;
         int order = 1;
-        for (ScoringDimension dim : dimensions) {
-            TrainingReportDimension row = buildDimensionRow(report.getId(), dim, agentMap.get(dim.getDimensionName()),
-                    forbiddenResult, speedDimensionScore, roundSpeeds, order++);
+        for (DimensionPlan plan : plans) {
+            TrainingReportDimension row = buildDimensionRow(report.getId(), plan,
+                    agentMap.get(plan.dim().getDimensionName()), order++);
             dimensionRows.add(row);
-            int weight = dim.getWeight() == null ? 0 : dim.getWeight();
+            if (row.getScore() == null) {
+                continue;   // 未参与评分的维度既不给分，也不占总分归一的权重
+            }
+            int weight = plan.dim().getWeight() == null ? 0 : plan.dim().getWeight();
             weightSum += weight;
             weightedSum = weightedSum.add(row.getScore().multiply(BigDecimal.valueOf(weight)));
         }
 
-        // 6. 总分 = Σ(维度分×权重) / Σ权重（权重未配置时退化为简单平均）
+        // 7. 总分 = Σ(维度分×权重) / Σ参与评分维度的权重（权重未配置时退化为已评分维度的简单平均）
+        List<BigDecimal> scored = dimensionRows.stream()
+                .map(TrainingReportDimension::getScore)
+                .filter(Objects::nonNull)
+                .toList();
+        if (scored.isEmpty()) {
+            throw new BizException("AI 未返回任何维度评分，报告无法生成");
+        }
         BigDecimal totalScore;
         if (weightSum > 0) {
             totalScore = weightedSum.divide(BigDecimal.valueOf(weightSum), 1, RoundingMode.HALF_UP);
         } else {
-            totalScore = dimensionRows.stream().map(TrainingReportDimension::getScore)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add)
-                    .divide(BigDecimal.valueOf(dimensionRows.size()), 1, RoundingMode.HALF_UP);
+            totalScore = scored.stream().reduce(BigDecimal.ZERO, BigDecimal::add)
+                    .divide(BigDecimal.valueOf(scored.size()), 1, RoundingMode.HALF_UP);
         }
 
-        // 7. 排名 / 超过百分比 / 较上次变化（按项目内学员最高报告总分）
+        // 8. 排名 / 超过百分比 / 较上次变化（按项目内学员最高报告总分）
         RankResult rank = calcRank(session.getProjectId(), session.getUserId(), report.getId(), totalScore);
         BigDecimal scoreChange = calcScoreChange(session.getProjectId(), session.getUserId(), report.getId(), totalScore);
 
@@ -240,52 +303,108 @@ public class ReportGenerationService {
     }
 
     /**
-     * 组装单个维度明细行；Dify 未返回该维度时得分 0 兜底；
-     * 违禁词维度以后端判定覆盖；v1.1 语速适中维度以后端公式计算覆盖（仅语音会话）
+     * 逐个维度定档：先按评分依据（evidence_type）判断本次是否参与评分，
+     * 再对参与的维度尝试走后端量化指标（metric_config）。
+     * 语音依据维度在本次没有语音数据时不参与评分——既不按满分也不按 0 分计入总分。
      */
-    private TrainingReportDimension buildDimensionRow(Long reportId, ScoringDimension dim,
+    private List<DimensionPlan> planDimensions(List<ScoringDimension> dimensions, List<Integer> roundSpeeds,
+                                               ForbiddenWordChecker.ForbiddenResult forbiddenResult) {
+        List<DimensionPlan> plans = new ArrayList<>();
+        for (ScoringDimension dim : dimensions) {
+            DimensionMetricConfig metric = DimensionMetricConfig.parse(dim.getMetricConfig());
+            boolean needsAcoustic = dim.getEvidenceType() != null
+                    && dim.getEvidenceType() == DimensionMetricConfig.EVIDENCE_ACOUSTIC;
+            if (needsAcoustic && roundSpeeds.isEmpty()) {
+                plans.add(new DimensionPlan(dim, false, NO_ACOUSTIC_REASON, null));
+                continue;
+            }
+            plans.add(new DimensionPlan(dim, true, null, measure(metric, roundSpeeds, forbiddenResult)));
+        }
+        return plans;
+    }
+
+    /**
+     * 后端量化指标判定：按 metric_config.metric 路由，取代原先按维度名（"语速适中"/"违禁词"）硬编码的分支，
+     * 自定义维度只要在管理端选了对应指标就能享受同样的代码定分。
+     *
+     * @return null 表示该指标本次缺少数据（如混合依据维度遇上纯文字会话），该维度退回 AI 评分
+     */
+    private MetricOutcome measure(DimensionMetricConfig metric, List<Integer> roundSpeeds,
+                                  ForbiddenWordChecker.ForbiddenResult forbiddenResult) {
+        if (metric == null) {
+            return null;
+        }
+        return switch (metric.metric()) {
+            case DimensionMetricConfig.METRIC_SPEECH_SPEED -> measureSpeechSpeed(metric, roundSpeeds);
+            case DimensionMetricConfig.METRIC_FORBIDDEN_WORDS -> measureForbiddenWords(forbiddenResult);
+            default -> null;
+        };
+    }
+
+    /** 语速指标：各轮 字数/时长 算出字/分钟，再按满分区间公式取平均 */
+    private MetricOutcome measureSpeechSpeed(DimensionMetricConfig metric, List<Integer> roundSpeeds) {
+        if (roundSpeeds.isEmpty()) {
+            return null;
+        }
+        int score = speechSpeedCalculator.calcDimensionScore(roundSpeeds, metric);
+        String range = speechSpeedCalculator.bestMin(metric) + "-" + speechSpeedCalculator.bestMax(metric);
+        String fact = "各轮语速为 "
+                + roundSpeeds.stream().map(String::valueOf).collect(Collectors.joining("、"))
+                + " 字/分钟，按 " + range + " 字/分钟满分区间公式计算";
+        return new MetricOutcome(score, fact,
+                "按" + fact + "，得分 " + score + " 分。",
+                score >= 80 ? List.of("语速整体处于理想区间") : List.of(),
+                score < 80 ? List.of("建议将语速调整至 " + range + " 字/分钟的区间内，可通过录音回放自我校准。") : List.of());
+    }
+
+    /** 违禁词指标：完全以违禁词检查结果为准；事实文本已由专门入参交给 Dify，不再重复拼进 rule */
+    private MetricOutcome measureForbiddenWords(ForbiddenWordChecker.ForbiddenResult forbiddenResult) {
+        return new MetricOutcome(forbiddenResult.score(), null,
+                forbiddenResult.hasHit()
+                        ? "本次演练中踩中违禁词共 " + forbiddenResult.totalHits() + " 次，按规则扣分后得分 "
+                        + forbiddenResult.score() + " 分。"
+                        : "您在演练中没有踩中任何违禁词，很不错，继续保持！",
+                forbiddenResult.hasHit() ? List.of() : List.of("全程未踩中任何违禁词"),
+                forbiddenResult.hasHit()
+                        ? List.of("注意避免使用违禁词：" + String.join("、", forbiddenResult.hitWords().keySet()))
+                        : List.of());
+    }
+
+    /**
+     * 组装单个维度明细行。得分为 null 的两种情形都不计入总分：
+     * 该维度本次不参与评分（缺依据数据）、AI 未返回该维度（不给 0 分兜底，避免把模型抖动算成学员失分）
+     */
+    private TrainingReportDimension buildDimensionRow(Long reportId, DimensionPlan plan,
                                                       DifyReportScoringService.AgentDimension agent,
-                                                      ForbiddenWordChecker.ForbiddenResult forbiddenResult,
-                                                      Integer speedDimensionScore, List<Integer> roundSpeeds,
                                                       int sortOrder) {
+        ScoringDimension dim = plan.dim();
         TrainingReportDimension row = new TrainingReportDimension();
         row.setReportId(reportId);
         row.setDimensionName(dim.getDimensionName());
         row.setWeight(dim.getWeight());
         row.setSortOrder(sortOrder);
 
-        if (FORBIDDEN_DIMENSION_NAME.equals(dim.getDimensionName())) {
-            // 违禁词维度：完全以后端规则判定为准
-            row.setScore(BigDecimal.valueOf(forbiddenResult.score()));
-            row.setComment(forbiddenResult.hasHit()
-                    ? "本次演练中踩中违禁词共 " + forbiddenResult.totalHits() + " 次，按规则扣分后得分 " + forbiddenResult.score() + " 分。"
-                    : "您在演练中没有踩中任何违禁词，很不错，继续保持！");
-            row.setGoodPoints(toJsonString(forbiddenResult.hasHit() ? List.of() : List.of("全程未踩中任何违禁词")));
-            row.setImprovements(toJsonString(forbiddenResult.hasHit()
-                    ? List.of("注意避免使用违禁词：" + String.join("、", forbiddenResult.hitWords().keySet()))
-                    : List.of()));
+        if (!plan.participates()) {
+            row.setScore(null);
+            row.setComment(plan.excludeReason());
+            row.setGoodPoints(toJsonString(List.of()));
+            row.setImprovements(toJsonString(List.of()));
             return row;
         }
 
-        // v1.1 语速适中维度（FP-25）：语音会话时以后端公式计算为准（同违禁词模式）；
-        // 纯文字会话 speedDimensionScore=null，走 Dify 输出，行为与 v1.0 一致
-        if (SPEED_DIMENSION_NAME.equals(dim.getDimensionName()) && speedDimensionScore != null) {
-            row.setScore(BigDecimal.valueOf(speedDimensionScore));
-            row.setComment("按各轮语速（字/分钟：" + roundSpeeds.stream().map(String::valueOf)
-                    .collect(Collectors.joining("、")) + "）与 150-250 字/分钟满分区间公式计算，得分 "
-                    + speedDimensionScore + " 分。");
-            row.setGoodPoints(toJsonString(speedDimensionScore >= 80 ? List.of("语速整体处于理想区间") : List.of()));
-            row.setImprovements(toJsonString(speedDimensionScore < 80
-                    ? List.of("建议将语速调整至 150-250 字/分钟的区间内，可通过录音回放自我校准。")
-                    : List.of()));
+        if (plan.measured() != null) {
+            MetricOutcome measured = plan.measured();
+            row.setScore(BigDecimal.valueOf(measured.score()));
+            row.setComment(measured.comment());
+            row.setGoodPoints(toJsonString(measured.goodPoints()));
+            row.setImprovements(toJsonString(measured.improvements()));
             return row;
         }
 
         if (agent == null) {
-            // Dify 未返回该维度：0 分兜底
             log.warn("Dify报告评分缺少维度: {}", dim.getDimensionName());
-            row.setScore(BigDecimal.ZERO);
-            row.setComment("AI 未返回该维度评分");
+            row.setScore(null);
+            row.setComment("AI 未返回该维度评分，本次未计入总分");
             row.setGoodPoints(toJsonString(List.of()));
             row.setImprovements(toJsonString(List.of()));
             return row;
@@ -375,6 +494,24 @@ public class ReportGenerationService {
     private record RankResult(int rankNo, int exceedPercent) {
     }
 
+    /** 单个维度在本次报告里的定档结果 */
+    private record DimensionPlan(ScoringDimension dim, boolean participates, String excludeReason,
+                                 MetricOutcome measured) {
+    }
+
+    /**
+     * 后端量化指标的判定结果
+     *
+     * @param score       维度得分
+     * @param factText    追加进维度 rule 的事实文本；null 表示该事实已由专门入参交给 Dify
+     * @param comment     学员端维度总评
+     * @param goodPoints  做得好的点
+     * @param improvements 待改进点与建议
+     */
+    private record MetricOutcome(int score, String factText, String comment, List<String> goodPoints,
+                                 List<String> improvements) {
+    }
+
     private String toJson(Object o) {
         try {
             return MAPPER.writeValueAsString(o);
@@ -384,22 +521,19 @@ public class ReportGenerationService {
     }
 
     /**
-     * 维度输入 JSON：[{name, weight, rule}]
-     * v1.1：语音会话时"语速适中"维度的 rule 追加后端已计算的语速事实（同违禁词模式，Dify 须采用该分数）
+     * 维度输入 JSON：[{name, weight, rule}]，只送本次参与评分的维度
+     * 后端已定分的维度把事实与得分追加进 rule，要求 Dify 采用该分数、只写评语
      */
-    private String toDimensionsJson(List<ScoringDimension> dimensions, List<Integer> roundSpeeds,
-                                    Integer speedDimensionScore) {
-        List<Map<String, Object>> list = dimensions.stream().map(d -> {
+    private String toDimensionsJson(List<DimensionPlan> scoringPlans) {
+        List<Map<String, Object>> list = scoringPlans.stream().map(p -> {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("name", d.getDimensionName());
-            m.put("weight", d.getWeight());
-            String rule = d.getScoringRule();
-            if (SPEED_DIMENSION_NAME.equals(d.getDimensionName()) && speedDimensionScore != null) {
-                String fact = "（后端已判定：各轮语速为 "
-                        + roundSpeeds.stream().map(String::valueOf).collect(Collectors.joining("、"))
-                        + " 字/分钟，按 150-250 字/分钟满分区间公式计算，该维度得分为 " + speedDimensionScore
-                        + " 分，必须采用该分数，你只需据此写评语）";
-                rule = (rule == null ? "" : rule) + fact;
+            m.put("name", p.dim().getDimensionName());
+            m.put("weight", p.dim().getWeight());
+            String rule = p.dim().getScoringRule();
+            MetricOutcome measured = p.measured();
+            if (measured != null && measured.factText() != null) {
+                rule = (rule == null ? "" : rule) + "（后端已判定：" + measured.factText()
+                        + "，该维度得分为 " + measured.score() + " 分，必须采用该分数，你只需据此写评语）";
             }
             m.put("rule", rule);
             return m;

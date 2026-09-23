@@ -355,7 +355,10 @@ public class AssistantChatServiceImpl implements AssistantChatService {
                 context.startAssistantMessage(AssistantIdentity.AGENT_ID, dbId,
                         WsFrameEncoder.nowText(), null, null);
             }
-            context.addText("抱歉，本次回复出现异常：" + (error == null ? "未知错误" : error) + "。请重试。");
+            // 原因里已带"请重试"（如超时文案）时不再叠加兜底提示，否则输出"…请重试。请重试。"
+            String reason = error == null ? "未知错误" : error;
+            context.addText("抱歉，本次回复出现异常：" + reason
+                    + (reason.contains("重试") ? "" : "。请重试") + "。");
             context.finish();
             if (context.blockCount() > 0) {
                 sessionService.appendAssistantMessage(sessionId, context.assistantMessageId(),

@@ -101,15 +101,18 @@ public class StudentSessionController {
     }
 
     /**
-     * FP-24/28 学员语音消息（v1.1，接口文档 5.2）
-     * 上传录音 → 百炼 Paraformer ASR 转文字 → 与文字模式完全相同的流转判定。
-     * 识别文本长度 < 2 时直接按未通过处理（撤回+要点提示），不调 Dify。
+     * FP-24/28 学员语音消息（v1.1，接口文档 5.2；v1.2 双输入改造）
+     * 上传录音 → ASR 转文字 → 与文字模式完全相同的流转判定。
+     * 识别不出任何文本时按"没听到"撤回（不弹要点提示），单字等短回答照常送 Dify 判定。
+     * <p>v1.2：不再校验对话方式——语音对话与文字对话项目的学员都可用录音输入，
+     * 仅"陪练者消息 TTS 合成"（{@link #tts}）仍限语音对话项目。
+     * <p>v1.2：ASR 分句时间戳汇总出的声学特征随消息落 training_round_acoustic（只留存，不参与判定与评分）。
      */
     @PostMapping("/{sessionId}/voice-messages")
     public ApiResponse<VoiceMessageResp> voiceMessage(
             @PathVariable Long sessionId,
             @RequestParam("audio") MultipartFile audio) {
-        // 1. 会话存在且进行中（错误口径与 2.3 一致）
+        // 1. 会话存在且进行中（错误口径与文字作答接口一致）
         TrainingSession session = sessionMapper.selectById(sessionId);
         if (session == null) {
             throw new BizException("会话不存在");
@@ -127,11 +130,7 @@ public class StudentSessionController {
         } catch (IOException e) {
             throw new BizException("录音文件无效或超长（≤60s）");
         }
-        // 3. 项目必须是语音对话模式（ASR 识别语言 = 陪练者朗读语言）
-        TrainingProject project = projectMapper.selectById(session.getProjectId());
-        if (project == null || project.getDialogueMode() == null || project.getDialogueMode() != 0) {
-            throw new BizException("该项目为文字对话模式");
-        }
+        // 3. 取陪练者配置决定 ASR 识别语言（v1.2：语音消息不再限对话方式）
         VirtualTrainer trainer = virtualTrainerMapper.selectOne(
                 new LambdaQueryWrapper<VirtualTrainer>().eq(VirtualTrainer::getProjectId, session.getProjectId()));
         String language = trainer == null || trainer.getLanguage() == null ? "mandarin" : trainer.getLanguage();
@@ -140,8 +139,7 @@ public class StudentSessionController {
         SpeechService.AsrResult asr = speechService.asr(wav, language);
 
         // 5. 共用流转判定（FlowEngineService 内部处理 ASR 短路与落库）
-        VoiceMessageResp resp = flowEngineService.sendVoiceMessage(
-                sessionId, asr.text(), wav, asr.durationMs());
+        VoiceMessageResp resp = flowEngineService.sendVoiceMessage(sessionId, asr, wav);
         return ApiResponse.success(resp);
     }
 }

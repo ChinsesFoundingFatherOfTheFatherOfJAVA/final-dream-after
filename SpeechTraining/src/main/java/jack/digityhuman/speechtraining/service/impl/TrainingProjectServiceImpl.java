@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.speechtraining.common.DimensionMetricConfig;
+import jack.digityhuman.speechtraining.common.KeyPointsUtil;
 import jack.digityhuman.speechtraining.common.PageResult;
 import jack.digityhuman.speechtraining.dto.req.FlowSaveReq;
 import jack.digityhuman.speechtraining.dto.req.ProjectQueryParam;
@@ -43,6 +45,10 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
     private final ScoringDimensionMapper scoringDimensionMapper;
     private final VirtualTrainerMapper virtualTrainerMapper;
     private final UserContext userContext;
+
+    /** 需学员作答的大节点类型：2=陪练者问学员，3=学员问陪练者（与流程引擎的判定口径一致） */
+    private static final int NODE_TYPE_ROUND = 2;
+    private static final int NODE_TYPE_ROUND_ALT = 3;
 
     @Override
     public PageResult<ProjectListResp> listProjects(ProjectQueryParam param) {
@@ -120,13 +126,7 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
 
         if (req.getScoringDimensions() != null) {
             for (ProjectSaveReq.ScoringDimensionReq dimReq : req.getScoringDimensions()) {
-                ScoringDimension dim = new ScoringDimension();
-                BeanUtils.copyProperties(dimReq, dim, "ruleType");
-                dim.setRuleType(dimReq.getRuleTypeAsInt());
-                dim.setProjectId(project.getId());
-                dim.setCreatedAt(LocalDateTime.now());
-                dim.setUpdatedAt(LocalDateTime.now());
-                scoringDimensionMapper.insert(dim);
+                scoringDimensionMapper.insert(toDimension(dimReq, project.getId()));
             }
         }
 
@@ -167,13 +167,7 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
             scoringDimensionMapper.delete(
                     new LambdaQueryWrapper<ScoringDimension>().eq(ScoringDimension::getProjectId, id));
             for (ProjectSaveReq.ScoringDimensionReq dimReq : req.getScoringDimensions()) {
-                ScoringDimension dim = new ScoringDimension();
-                BeanUtils.copyProperties(dimReq, dim, "ruleType");
-                dim.setRuleType(dimReq.getRuleTypeAsInt());
-                dim.setProjectId(id);
-                dim.setCreatedAt(LocalDateTime.now());
-                dim.setUpdatedAt(LocalDateTime.now());
-                scoringDimensionMapper.insert(dim);
+                scoringDimensionMapper.insert(toDimension(dimReq, id));
             }
         }
 
@@ -191,6 +185,23 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
         }
     }
 
+    /**
+     * 评分维度请求 → 实体。评分依据缺省按"文字"处理；量化指标 key 转成 metric_config JSON 入库，
+     * 指标为空即代表该维度完全交给 AI 评分
+     */
+    private ScoringDimension toDimension(ProjectSaveReq.ScoringDimensionReq dimReq, Long projectId) {
+        ScoringDimension dim = new ScoringDimension();
+        BeanUtils.copyProperties(dimReq, dim, "ruleType", "metricKey");
+        dim.setRuleType(dimReq.getRuleTypeAsInt());
+        dim.setEvidenceType(dimReq.getEvidenceType() == null
+                ? DimensionMetricConfig.EVIDENCE_TEXT : dimReq.getEvidenceType());
+        dim.setMetricConfig(DimensionMetricConfig.toJson(dimReq.getMetricKey()));
+        dim.setProjectId(projectId);
+        dim.setCreatedAt(LocalDateTime.now());
+        dim.setUpdatedAt(LocalDateTime.now());
+        return dim;
+    }
+
     @Override
     @Transactional
     public void publishProject(Long id) {
@@ -203,6 +214,21 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
                 new LambdaQueryWrapper<TrainingNode>().eq(TrainingNode::getProjectId, id));
         if (nodes.isEmpty()) {
             throw new BizException("请先设置流程设计");
+        }
+        // 学员节点必须配置考核要点：后端流转判定对空要点按"无门槛"放行（否则历史项目会让学员卡死），
+        // 因此新建/编辑的项目必须在发布这道关口拦下来——不然学员随便答什么都算通过，且界面上看不出异常
+        for (TrainingNode node : nodes) {
+            Integer type = node.getNodeType();
+            if (type == null || (type != NODE_TYPE_ROUND && type != NODE_TYPE_ROUND_ALT)) {
+                continue;
+            }
+            boolean hasKeyPoint = KeyPointsUtil.parse(node.getKeyPoints()).stream()
+                    .anyMatch(kp -> StringUtils.hasText(kp.content()));
+            if (!hasKeyPoint) {
+                throw new BizException("节点「"
+                        + (StringUtils.hasText(node.getNodeName()) ? node.getNodeName() : node.getId())
+                        + "」未配置考核要点，学员将无门槛通过，请先补充要点");
+            }
         }
 
         project.setStatus(1);

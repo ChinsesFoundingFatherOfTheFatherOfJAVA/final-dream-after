@@ -25,6 +25,9 @@ class TtsCacheHitTest {
     @Mock
     private VoiceMapProperties voiceMapProperties;
 
+    @Mock
+    private jack.digityhuman.speechtraining.doubao.DoubaoSaucClient doubaoSaucClient;
+
     /** 使用真实文件系统的缓存服务（临时目录） */
     private TtsCacheService ttsCacheService;
     private SpeechService speechService;
@@ -46,13 +49,67 @@ class TtsCacheHitTest {
         ttsCacheService = new TtsCacheService(fileStorageService);
 
         // SpeechService 子类覆写 doSynthesize，统计真实合成次数
-        speechService = new SpeechService(ttsCacheService, voiceMapProperties) {
+        speechService = new SpeechService(ttsCacheService, voiceMapProperties, doubaoSaucClient) {
             @Override
             byte[] doSynthesize(String text, String voice, int speed) {
                 synthesizeCount.incrementAndGet();
-                return new byte[32_000]; // 1 秒音频
+                return oneSecondOfMp3();
             }
         };
+    }
+
+    /**
+     * 同键并发只合成一次：开局时 N 个学员会对同一句陪练者问题同时发 TTS，
+     * 不去重就是 N 次百炼调用（计时器用于撑开合成窗口，让 5 个线程确定落在同一次合成上）。
+     */
+    @Test
+    void 同键并发只合成一次() throws Exception {
+        int callers = 5;
+        SpeechService slow = new SpeechService(ttsCacheService, voiceMapProperties, doubaoSaucClient) {
+            @Override
+            byte[] doSynthesize(String text, String voice, int speed) {
+                synthesizeCount.incrementAndGet();
+                try {
+                    Thread.sleep(300);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return oneSecondOfMp3();
+            }
+        };
+
+        java.util.concurrent.CyclicBarrier ready = new java.util.concurrent.CyclicBarrier(callers);
+        java.util.List<java.util.concurrent.Callable<SpeechService.TtsResult>> tasks = new java.util.ArrayList<>();
+        for (int i = 0; i < callers; i++) {
+            tasks.add(() -> {
+                ready.await();
+                return slow.tts("今天吃了吗", "longwan_v2", 30);
+            });
+        }
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(callers);
+        try {
+            java.util.List<java.util.concurrent.Future<SpeechService.TtsResult>> results = pool.invokeAll(tasks);
+            String url = results.get(0).get().url();
+            for (java.util.concurrent.Future<SpeechService.TtsResult> r : results) {
+                assertEquals(url, r.get().url(), "同键并发应返回同一个缓存文件");
+            }
+            assertEquals(1, synthesizeCount.get(), "同键并发只允许一次真实合成");
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /**
+     * 约 1 秒的合法 MPEG1 Layer III 帧流（128kbps/44100Hz，每帧 417 字节、1152 采样）。
+     * 时长现在按帧头实测，全零字节冒充 MP3 只会解析出 0ms。
+     */
+    private static byte[] oneSecondOfMp3() {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        for (int i = 0; i < 39; i++) {
+            out.write(new byte[]{(byte) 0xFF, (byte) 0xFB, (byte) 0x90, 0x00}, 0, 4);
+            out.write(new byte[413], 0, 413);
+        }
+        return out.toByteArray();
     }
 
     /** 反射注入 @Value 字段 */
@@ -70,7 +127,7 @@ class TtsCacheHitTest {
         assertTrue(first.url().startsWith("/audio/tts/"));
         assertTrue(first.url().endsWith(".mp3"));
         assertEquals(1, synthesizeCount.get());
-        assertEquals(1000, first.durationMs());
+        assertEquals(1019, first.durationMs());
 
         // 第二次相同"文本+声音+语速"：命中缓存，不再合成
         SpeechService.TtsResult second = speechService.tts("今天吃了吗", "longwan_v2", 30);

@@ -1,5 +1,6 @@
 package jack.digityhuman.speechtraining.dto.req;
 
+import jack.digityhuman.speechtraining.common.DimensionMetricConfig;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -38,8 +39,23 @@ public class ProjectSaveReq {
         /** 兼容前端传字符串或数字 */
         private Object ruleType;
         private String scoringRule;
+        /** 评分依据: 1=文字, 2=语音, 3=文字+语音；null 按文字处理 */
+        private Integer evidenceType;
+        /** 量化指标: speech_speed / forbidden_words，空表示该维度交给 AI 评分；入库转为 metric_config JSON */
+        private String metricKey;
+        /** 入库的指标配置 JSON，详情回显时反解成 metricKey */
+        private String metricConfig;
         private Integer isCustom;
         private Integer sortOrder;
+
+        /** 详情回显：优先取请求里带的指标 key，否则从 metric_config JSON 反解 */
+        public String getMetricKey() {
+            if (metricKey != null) {
+                return metricKey;
+            }
+            DimensionMetricConfig parsed = DimensionMetricConfig.parse(metricConfig);
+            return parsed == null ? null : parsed.metric();
+        }
 
         /** 统一转为 Integer 入库 */
         public Integer getRuleTypeAsInt() {

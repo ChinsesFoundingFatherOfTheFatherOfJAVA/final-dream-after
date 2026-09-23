@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -43,12 +44,22 @@ public class FlowEngineService {
     private final TrainingEdgeMapper edgeMapper;
     private final VirtualTrainerMapper virtualTrainerMapper;
     private final TrainingReportMapper reportMapper;
+    private final TrainingRoundAcousticMapper acousticMapper;
     private final DifyScoringService difyScoringService;
     private final UserContext userContext;
     private final ReportGenerationService reportGenerationService;
     private final jack.digityhuman.speechtraining.common.FileStorageService fileStorageService;
+    /** 写阶段短事务：判定（含 Dify 调用）在事务外完成，落库+流转在事务内持行锁完成 */
+    private final TransactionTemplate transactionTemplate;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /**
+     * 包含式命中匹配所要求的命中项最短长度。
+     * <p>Dify 只回一个"好"字之类时，不足以证明它命中了整条要点；但要点本身就这么短时，
+     * 逐字等值仍然算命中（等值说明是模型自己判定命中的，不是后端字符串匹配放的水）。
+     */
+    private static final int MIN_CONTAIN_HIT_LEN = 2;
 
     /** 节点类型 */
     private static final int NODE_START = 1;
@@ -86,8 +97,6 @@ public class FlowEngineService {
         // 2. 加载流程并校验拓扑
         List<TrainingNode> nodes = nodeMapper.selectList(new LambdaQueryWrapper<TrainingNode>()
                 .eq(TrainingNode::getProjectId, projectId));
-        List<TrainingEdge> edges = edgeMapper.selectList(new LambdaQueryWrapper<TrainingEdge>()
-                .eq(TrainingEdge::getProjectId, projectId));
         TrainingNode startNode = nodes.stream()
                 .filter(n -> n.getNodeType() != null && n.getNodeType() == NODE_START)
                 .findFirst()
@@ -99,14 +108,11 @@ public class FlowEngineService {
         if (totalRounds == 0) {
             throw new BizException("流程未配置或拓扑不完整");
         }
-        // 首个大节点 = 开始节点的出边目标
-        TrainingNode firstRoundNode = edges.stream()
-                .filter(e -> e.getSourceNodeId().equals(startNode.getId()))
-                .findFirst()
-                .map(e -> nodeById(nodes, e.getTargetNodeId()))
-                .orElseThrow(() -> new BizException("流程未配置或拓扑不完整"));
+        // 首个大节点 = 开始节点的出边，同样按权重随机路由
+        //（开始节点可以有多条出边=多个开场分支；按 id 取第一条会让权重配置在开局失效）
+        TrainingNode firstRoundNode = routeByWeight(projectId, startNode.getId());
         if (!isRoundNode(firstRoundNode)) {
-            throw new BizException("流程未配置或拓扑不完整");
+            throw new BizException("流程未配置或拓扑不完整：开始节点的下游不是学员节点");
         }
 
         // 3. 创建会话
@@ -140,11 +146,12 @@ public class FlowEngineService {
     }
 
     /**
-     * 发送消息（文字模式）：Dify 要点命中判定 → 流转条件复核 → 权重路由（FP-12/20）
+     * 发送消息（文字模式）：读上下文 → Dify 判定（事务外）→ 行锁内落库流转（FP-12/20）
+     * <p>不加 {@code @Transactional}：Dify 一次调用可达数秒，包在事务里会让会话行长时间持锁，
+     * 拖慢同一学员的重复提交与其它会话的写；改为判定无事务、只有写阶段持锁。
      */
-    @Transactional
     public SendMessageResp sendMessage(Long sessionId, String content) {
-        // 1. 会话与输入校验
+        // 1. 输入校验
         String text = content == null ? "" : content.trim();
         if (text.isEmpty()) {
             throw new BizException("请输入内容");
@@ -152,53 +159,35 @@ public class FlowEngineService {
         if (text.length() > 2000) {
             throw new BizException("消息长度不能超过2000字");
         }
-        TrainingSession session = requireOngoing(sessionId);
-        requireCurrentRoundNode(session);
-        // 2. 共用流转判定（文字：无语音字段）
-        return doJudgeAndRoute(session, text, null).resp();
+        // 2. 读阶段：会话/当前节点/要点（无锁）
+        JudgeContext ctx = readContext(sessionId);
+        // 3. 判定阶段：Dify + 后端复核（无锁、无事务）
+        Verdict verdict = judge(ctx, text);
+        // 4. 写阶段：行锁内复核未过期后落库流转
+        return apply(ctx, text, null, null, verdict).resp();
     }
 
     /**
-     * 发送语音消息（v1.1，FP-24/28）：ASR 识别文本 → 与文字模式完全相同的流转判定。
-     * 识别文本长度 &lt; 2 时直接按"未通过"处理（撤回+要点提示），不调 Dify。
+     * 发送语音消息（v1.1，FP-24/28；v1.2 双输入改造）：ASR 识别文本 → 与文字模式完全相同的流转判定。
+     * <p>v1.2：语音输入不再限对话方式，语音对话与文字对话项目通用。
+     * <p>v1.2 修正：识别文本为空（没有听到内容）才短路，单字照常送 Dify 判定。
+     * "没听到"与"没答到点上"是两回事，前者提示重说、不弹要点弹窗。
+     * <p>v1.2 新增：识别结果自带的声学特征（发声时长/停顿/逐字时间戳/检出语种）随消息落
+     * {@code training_round_acoustic}，撤回的回答同样留存。
      *
-     * @param recognizedText ASR 识别文本（可为 null/空）
-     * @param wav            学员录音原始字节（WAV），落盘为 /audio/asr/{messageId}.wav
-     * @param durationMs     音频时长（毫秒，来自 ASR）
+     * @param asr ASR 识别结果（文本 + 语音时长 + 声学特征）
+     * @param wav 学员录音原始字节（WAV），落盘为 /audio/asr/{messageId}.wav
      * @return 语音消息响应（识别文本 + 音频信息 + 判定结果）
      */
-    @Transactional
-    public VoiceMessageResp sendVoiceMessage(Long sessionId, String recognizedText, byte[] wav, Long durationMs) {
-        // 1. 会话校验（语音模式校验）
-        TrainingSession session = requireOngoing(sessionId);
-        TrainingProject project = projectMapper.selectById(session.getProjectId());
-        if (project == null || project.getDialogueMode() == null || project.getDialogueMode() != 0) {
-            throw new BizException("该项目为文字对话模式");
-        }
-        TrainingNode currentNode = requireCurrentRoundNode(session);
+    public VoiceMessageResp sendVoiceMessage(Long sessionId, SpeechService.AsrResult asr, byte[] wav) {
+        String text = asr.text() == null ? "" : asr.text().trim();
+        VoiceFields voice = new VoiceFields((int) asr.durationMs(), asr.acoustic());
 
-        String text = recognizedText == null ? "" : recognizedText.trim();
-        int roundNo = session.getFinishedRounds() + 1;
-        int nextSeq = nextSeq(sessionId);
-        List<String> keyPointContents = KeyPointsUtil.parse(currentNode.getKeyPoints())
-                .stream().map(KeyPointsUtil.KeyPoint::content).toList();
-
-        // 2. ASR 短路：识别文本长度 < 2 直接按未通过处理，不调 Dify（风险清单 v1.1 对策）
-        VoiceFields voice = new VoiceFields(durationMs == null ? null : durationMs.intValue());
-        if (text.length() < 2) {
-            TrainingSessionMessage msg = insertMessage(sessionId, currentNode, ROLE_STUDENT, text,
-                    roundNo, "[]", 0, 1, nextSeq, voice);
-            persistAudio(msg, wav);
-            SendMessageResp withdrawn = SendMessageResp.withdrawn(keyPointContents,
-                    session.getFinishedRounds(), session.getTotalRounds());
-            return VoiceMessageResp.of(withdrawn, text, msg);
-        }
-
-        // 3. 共用流转判定（与文字模式同一实现）
-        SendOutcome outcome = doJudgeAndRoute(session, text, voice);
-        TrainingSessionMessage studentMessage = outcome.studentMessage();
-        persistAudio(studentMessage, wav);
-        return VoiceMessageResp.of(outcome.resp(), text, studentMessage);
+        JudgeContext ctx = readContext(sessionId);
+        // 识别不到任何内容：不调 Dify（空文本送过去只会让模型自由发挥），直接按"没听到"撤回
+        Verdict verdict = text.isEmpty() ? Verdict.NO_SPEECH : judge(ctx, text);
+        SendOutcome outcome = apply(ctx, text, voice, wav, verdict);
+        return VoiceMessageResp.of(outcome.resp(), text, outcome.studentMessage());
     }
 
     /**
@@ -248,23 +237,43 @@ public class FlowEngineService {
     // ==================== 内部方法 ====================
 
     /** 学员消息的语音上下文（文字消息为 null） */
-    private record VoiceFields(Integer audioDurationMs) {
+    private record VoiceFields(Integer audioDurationMs, SpeechService.Acoustic acoustic) {
     }
 
-    /** 共用判定结果：流转判定响应 + 学员消息实体（语音模式用于回填 audio_url） */
+    /** 共用判定结果：流转判定响应 + 学员消息实体（语音消息用于回填 audio_url 与声学特征行） */
     private record SendOutcome(SendMessageResp resp, TrainingSessionMessage studentMessage) {
     }
 
     /**
-     * 落盘学员录音并回填消息 audio_url：文件名 = 消息ID（/audio/asr/{messageId}.wav）
+     * 落盘学员录音与声学特征（两者都挂在消息ID上）：
+     * 音频文件名 = 消息ID（/audio/asr/{messageId}.wav），特征行 {@code message_id} 唯一。
      */
-    private void persistAudio(TrainingSessionMessage studentMessage, byte[] wav) {
-        if (wav == null || wav.length == 0) {
+    private void persistVoice(TrainingSessionMessage studentMessage, byte[] wav, VoiceFields voice, int roundNo) {
+        if (wav != null && wav.length > 0) {
+            String url = fileStorageService.saveAsrAudio(studentMessage.getId(), wav);
+            studentMessage.setAudioUrl(url);
+            messageMapper.updateById(studentMessage);
+        }
+        SpeechService.Acoustic acoustic = voice == null ? null : voice.acoustic();
+        if (acoustic == null) {
             return;
         }
-        String url = fileStorageService.saveAsrAudio(studentMessage.getId(), wav);
-        studentMessage.setAudioUrl(url);
-        messageMapper.updateById(studentMessage);
+        TrainingRoundAcoustic row = new TrainingRoundAcoustic();
+        row.setSessionId(studentMessage.getSessionId());
+        row.setMessageId(studentMessage.getId());
+        row.setRoundNo(roundNo);
+        row.setAudioMs(acoustic.audioMs());
+        row.setSpeechMs(acoustic.speechMs());
+        row.setUtteranceCount(acoustic.utteranceCount());
+        row.setPauseCount(acoustic.pauseCount());
+        row.setPauseTotalMs(acoustic.pauseTotalMs());
+        row.setMaxPauseMs(acoustic.maxPauseMs());
+        row.setTextLength(acoustic.textLength());
+        row.setLidLang(acoustic.lidLang());
+        row.setDefinite(acoustic.definite());
+        row.setWordsJson(acoustic.wordsJson());
+        row.setServerAudioMs(acoustic.serverAudioMs());
+        acousticMapper.insert(row);
     }
 
     /**
@@ -278,45 +287,95 @@ public class FlowEngineService {
         return currentNode;
     }
 
+    /** 读阶段上下文：判定所必需的只读数据；写阶段在行锁内复核 current_node_id 未变 */
+    private record JudgeContext(Long sessionId, TrainingNode node, List<KeyPointsUtil.KeyPoint> keyPoints) {
+    }
+
+    /** 判定阶段结果（Dify 命中要点 + 后端复核结论，尚未落库） */
+    private record Verdict(List<String> hitPoints, String hitPointsJson, boolean passed, boolean noSpeech) {
+
+        /** 语音未识别到内容：不调 Dify 的固定结论 */
+        static final Verdict NO_SPEECH = new Verdict(List.of(), "[]", false, true);
+    }
+
     /**
-     * 流转判定与路由（文字/语音共用核心，v1.0 行为不变）：
-     * Dify 要点命中判定 → 后端流转条件复核 → 未通过撤回 / 通过权重路由（陪练者问或结束）
-     *
-     * @param voice 语音上下文（null=文字消息）
+     * 读阶段：校验会话进行中、当前是学员节点，并解析要点。不开事务、不加锁。
      */
-    private SendOutcome doJudgeAndRoute(TrainingSession session, String text, VoiceFields voice) {
+    private JudgeContext readContext(Long sessionId) {
+        TrainingSession session = requireOngoing(sessionId);
+        TrainingNode node = requireCurrentRoundNode(session);
+        return new JudgeContext(sessionId, node, KeyPointsUtil.parse(node.getKeyPoints()));
+    }
+
+    /**
+     * 判定阶段：Dify 要点命中 + 后端按流转条件独立复核（不信任 LLM 自评 passed）。
+     * <p>Dify 一次调用可达数秒，因此与写阶段分离：判定期间不持有任何数据库锁。
+     */
+    private Verdict judge(JudgeContext ctx, String text) {
+        AiHitResult ai = callScoringAgent(ctx.node(), ctx.keyPoints(), text);
+        boolean passed = judgePass(ctx.node(), ctx.keyPoints(), ai.hitPoints());
+        return new Verdict(ai.hitPoints(), ai.hitPointsJson(), passed, false);
+    }
+
+    /**
+     * 写阶段入口：开一个只包住落库与流转的短事务。
+     */
+    private SendOutcome apply(JudgeContext ctx, String text, VoiceFields voice, byte[] wav, Verdict verdict) {
+        return transactionTemplate.execute(status -> write(ctx, text, voice, wav, verdict));
+    }
+
+    /**
+     * 写阶段实体（事务内、会话行排他锁持有期间执行）。
+     * <p>锁内必须复核两件事，否则"双击提交 / 双开页面 / 判定期间已退出"会让过期回答生效：
+     * ① 会话仍为进行中；② current_node_id 仍是判定所依据的那个节点。
+     * 消息序号也只能在锁内计算，否则并发请求会取到同一个 seq。
+     */
+    private SendOutcome write(JudgeContext ctx, String text, VoiceFields voice, byte[] wav, Verdict verdict) {
+        TrainingSession session = sessionMapper.selectForUpdate(ctx.sessionId());
+        if (session == null) {
+            throw new BizException("会话不存在");
+        }
+        if (session.getStatus() == null || session.getStatus() != SESSION_ONGOING) {
+            throw new BizException("会话已结束，不能继续发送");
+        }
+        if (!Objects.equals(session.getCurrentNodeId(), ctx.node().getId())) {
+            throw new BizException("本条回答已过期，请重新发送");
+        }
+
         Long sessionId = session.getId();
-        TrainingNode currentNode = requireCurrentRoundNode(session);
-
-        // 1. 解析要点与流转条件
-        List<KeyPointsUtil.KeyPoint> keyPoints = KeyPointsUtil.parse(currentNode.getKeyPoints());
-        List<String> keyPointContents = keyPoints.stream().map(KeyPointsUtil.KeyPoint::content).toList();
-
-        // 2. 调 Dify 话术评分器判定要点命中（复用已有智能体）
-        AiHitResult ai = callScoringAgent(currentNode, keyPoints, text);
-
-        // 3. 后端按流转条件独立复核（不信任 LLM 自评 passed）
-        boolean passed = judgePass(currentNode, keyPoints, ai.hitPoints());
+        TrainingNode currentNode = ctx.node();
+        List<String> keyPointContents = ctx.keyPoints().stream().map(KeyPointsUtil.KeyPoint::content).toList();
         int roundNo = session.getFinishedRounds() + 1;
         int nextSeq = nextSeq(sessionId);
 
-        // 4.1 未通过：撤回消息（withdrawn=1 留存），返回要点提示
-        if (!passed) {
+        // 1. 没听到内容：撤回 + 提示重说（不带要点，此时学员还没"作答"，弹要点只会让人以为答偏了）
+        if (verdict.noSpeech()) {
             TrainingSessionMessage msg = insertMessage(sessionId, currentNode, ROLE_STUDENT, text,
-                    roundNo, ai.hitPointsJson(), 0, 1, nextSeq, voice);
+                    roundNo, verdict.hitPointsJson(), 0, 1, nextSeq, voice);
+            persistVoice(msg, wav, voice, roundNo);
+            return new SendOutcome(SendMessageResp.noSpeech(session.getFinishedRounds(),
+                    session.getTotalRounds()), msg);
+        }
+
+        // 2. 未通过：撤回消息（withdrawn=1 留存，供报告与复盘使用），返回要点提示
+        if (!verdict.passed()) {
+            TrainingSessionMessage msg = insertMessage(sessionId, currentNode, ROLE_STUDENT, text,
+                    roundNo, verdict.hitPointsJson(), 0, 1, nextSeq, voice);
+            persistVoice(msg, wav, voice, roundNo);
             return new SendOutcome(SendMessageResp.withdrawn(keyPointContents,
                     session.getFinishedRounds(), session.getTotalRounds()), msg);
         }
 
-        // 4.2 通过：消息保留，轮次+1
+        // 3. 通过：消息保留，轮次+1
         TrainingSessionMessage studentMessage = insertMessage(sessionId, currentNode, ROLE_STUDENT, text,
-                roundNo, ai.hitPointsJson(), 1, 0, nextSeq, voice);
+                roundNo, verdict.hitPointsJson(), 1, 0, nextSeq, voice);
+        persistVoice(studentMessage, wav, voice, roundNo);
         session.setFinishedRounds(session.getFinishedRounds() + 1);
 
-        // 5. 按出边权重随机路由
+        // 4. 按出边权重随机路由
         TrainingNode next = routeByWeight(session.getProjectId(), currentNode.getId());
         if (next.getNodeType() != null && next.getNodeType() == NODE_END) {
-            // 5.1 流程结束：置完成 + 同步落报告行（生成中）+ 事务提交后异步生成
+            // 4.1 流程结束：置完成 + 同步落报告行（生成中）+ 事务提交后异步生成
             finishSession(session);
             return new SendOutcome(SendMessageResp.finished(keyPointContents,
                     session.getFinishedRounds(), session.getTotalRounds()), studentMessage);
@@ -324,7 +383,7 @@ public class FlowEngineService {
         if (!isRoundNode(next)) {
             throw new BizException("流程拓扑异常：下游节点类型不合法");
         }
-        // 5.2 流转到下一个大节点：current_node_id 前进 + 落库陪练者问
+        // 4.2 流转到下一个大节点：current_node_id 前进 + 落库陪练者问
         //（roundNo=即将进行的轮次 finishedRounds+1；withdrawn=0；seq=nextSeq+1）
         session.setCurrentNodeId(next.getId());
         sessionMapper.updateById(session);
@@ -374,45 +433,48 @@ public class FlowEngineService {
 
     /**
      * 流转条件判定（后端独立复核，不信任 LLM 自评）：
-     * type=1 命中任意N个 → |命中要点∩要点列表| >= N；
+     * type=1 命中任意N个 → 命中的要点数 >= N；
      * type=2 命中指定 → 指定要点全部被命中。
-     * 命中匹配：去空格等值比较，失败时做包含式兜底
+     * <p>命中匹配只认"命中项包含要点全文"这一个方向。反方向（要点包含命中项）等于
+     * 学员只说了要点半句也算命中，会让长要点形同虚设；按要点下标记命中而不是按内容，
+     * 是为了让内容重复的两条要点各算一次，不至于互相顶替。
      */
     boolean judgePass(TrainingNode node, List<KeyPointsUtil.KeyPoint> keyPoints, List<String> hits) {
-        // 未配置要点视为无门槛，直接通过
+        // 未配置要点视为无门槛：发布校验会拦住这种节点，此处只兜底历史数据，避免学员卡死
         if (keyPoints.isEmpty()) {
+            log.warn("节点未配置要点，流转判定按无门槛放行, nodeId={}", node.getId());
             return true;
         }
-        // 计算被命中的要点集合
-        Set<String> matchedContents = new HashSet<>();
-        for (KeyPointsUtil.KeyPoint kp : keyPoints) {
-            String point = normalize(kp.content());
-            if (point.isEmpty()) continue;
-            for (String hit : hits) {
-                String h = normalize(hit);
-                if (h.isEmpty()) continue;
-                // 精确等值优先，包含式兜底（Dify 输出与要点轻微出入时）
-                if (point.equals(h) || point.contains(h) || h.contains(point)) {
-                    matchedContents.add(kp.content());
-                    break;
-                }
+        List<String> normHits = hits.stream().map(this::normalize).filter(h -> !h.isEmpty()).toList();
+        Set<Integer> matched = new HashSet<>();
+        for (int i = 0; i < keyPoints.size(); i++) {
+            String point = normalize(keyPoints.get(i).content());
+            if (point.isEmpty()) {
+                continue;
+            }
+            boolean hit = normHits.stream().anyMatch(h -> h.equals(point)
+                    || (h.length() >= MIN_CONTAIN_HIT_LEN && h.contains(point)));
+            if (hit) {
+                matched.add(i);
             }
         }
         Integer type = node.getPassConditionType();
         if (type != null && type == 2) {
             List<String> ids = KeyPointsUtil.parsePointIds(node.getPassConditionPoints());
-            List<String> required = keyPoints.stream()
-                    .filter(kp -> ids.contains(kp.id()))
-                    .map(KeyPointsUtil.KeyPoint::content)
-                    .toList();
+            List<Integer> required = new ArrayList<>();
+            for (int i = 0; i < keyPoints.size(); i++) {
+                if (ids.contains(keyPoints.get(i).id())) {
+                    required.add(i);
+                }
+            }
             // 指定要点为空时退化为命中任意 1 个
             if (required.isEmpty()) {
-                return !matchedContents.isEmpty();
+                return !matched.isEmpty();
             }
-            return matchedContents.containsAll(required);
+            return matched.containsAll(required);
         }
         int n = node.getPassConditionN() == null ? 1 : node.getPassConditionN();
-        return matchedContents.size() >= n;
+        return matched.size() >= n;
     }
 
     /**
@@ -473,12 +535,19 @@ public class FlowEngineService {
         report.setStatus(1);
         reportMapper.insert(report);
 
-        // 事务提交后再触发异步生成，避免异步线程读不到未提交数据
+        // 事务提交后再触发异步生成，避免异步线程读不到未提交数据。
+        // 提交动作本身可能失败（reportExecutor 队列满抛 TaskRejectedException），此时报告行已落库为
+        // "生成中"且事务已提交，若不显式置失败，学员端会永远停在"报告生成中"且拿不到重试入口
         Long sessionId = session.getId();
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                reportGenerationService.generateAsync(sessionId);
+                try {
+                    reportGenerationService.generateAsync(sessionId);
+                } catch (Exception e) {
+                    log.error("报告生成任务提交失败, sessionId={}", sessionId, e);
+                    reportGenerationService.markFailedBySession(sessionId);
+                }
             }
         });
     }
@@ -501,11 +570,6 @@ public class FlowEngineService {
                 && (node.getNodeType() == NODE_ROUND || node.getNodeType() == NODE_ROUND_ALT);
     }
 
-    /** 从列表中取节点 */
-    private TrainingNode nodeById(List<TrainingNode> nodes, Long id) {
-        return nodes.stream().filter(n -> n.getId().equals(id)).findFirst().orElse(null);
-    }
-
     /** 陪练者设置（含名称与形象） */
     private VirtualTrainer trainerOf(Long projectId) {
         return virtualTrainerMapper.selectOne(
@@ -525,12 +589,12 @@ public class FlowEngineService {
                 .orderByAsc(TrainingSessionMessage::getSeq));
     }
 
-    /** 下一个消息序号 */
+    /**
+     * 下一个消息序号（在会话行锁内调用，故与并发的另一个请求互斥）。
+     * <p>库里 training_session_message(session_id, seq) 建了唯一索引，序号重复会直接报错而不是静默乱序。
+     */
     private int nextSeq(Long sessionId) {
-        return messageMapper.selectList(new LambdaQueryWrapper<TrainingSessionMessage>()
-                        .eq(TrainingSessionMessage::getSessionId, sessionId))
-                .stream().mapToInt(m -> m.getSeq() == null ? 0 : m.getSeq())
-                .max().orElse(-1) + 1;
+        return messageMapper.selectMaxSeq(sessionId) + 1;
     }
 
     /**
@@ -552,7 +616,7 @@ public class FlowEngineService {
         msg.setWithdrawn(withdrawn);
         msg.setLikeCount(0);
         msg.setSeq(seq);
-        // v1.1 语音字段：语音消息带时长，audio_url 由 persistAudio 落盘后回填
+        // v1.1 语音字段：语音消息带时长，audio_url 与声学特征行由 persistVoice 落盘后回填
         msg.setInputMode(voice == null ? 1 : 2);
         if (voice != null) {
             msg.setAudioDurationMs(voice.audioDurationMs());
@@ -577,9 +641,17 @@ public class FlowEngineService {
         return resp;
     }
 
-    /** 练习时长（秒），开始时间缺失时为 0 */
+    /**
+     * 练习时长（秒）。起止时间都取应用时钟，故不受数据库时区影响。
+     * <p>结束时早于开始只可能是 JVM 与数据库时钟/时区不一致（start_time 由上一次请求写入），
+     * 静默返回 0 会让报告里的时长莫名其妙，故留一条 warn。
+     */
     private int durationSeconds(LocalDateTime start, LocalDateTime end) {
-        if (start == null || end == null || end.isBefore(start)) {
+        if (start == null) {
+            return 0;
+        }
+        if (end == null || end.isBefore(start)) {
+            log.warn("会话结束时间不晚于开始时间，时长按 0 计, start={}, end={}", start, end);
             return 0;
         }
         return (int) Duration.between(start, end).getSeconds();

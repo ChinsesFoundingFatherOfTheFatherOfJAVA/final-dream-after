@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -148,7 +149,9 @@ public class DifyAgentClient {
                     if (!finished.get()) {
                         log.warn("Dify 对话流超时（{}ms），中止读取 sessionId={}",
                                 properties.getAgentTimeoutMs(), sessionId);
-                        errorHolder[0] = "Dify 响应超时";
+                        // 原因写成给用户看的话：它会同时进审计日志和聊天框
+                        errorHolder[0] = "回复超时（" + (properties.getAgentTimeoutMs() / 1000)
+                                + " 秒未完成），请重试或简化提问";
                         try {
                             lines.close();
                         } catch (Exception e) {
@@ -180,11 +183,27 @@ public class DifyAgentClient {
             callLogService.record(sessionId, DifyCallLogService.APP_ORCHESTRATOR, traceId,
                     false, "调用被中断", System.currentTimeMillis() - start);
             throw new BizException("Dify 对话调用被中断");
-        } catch (IOException e) {
+        } catch (IOException | UncheckedIOException e) {
+            // 看门狗关流后，BufferedReader 的流式读取以 UncheckedIOException（内含 "IOException: closed"）抛出：
+            // 根因是超时，必须用看门狗记下的原因，否则聊天框里会出现 Java 异常原文
+            // （与 DifyWorkflowClient 同一次踩坑，那边已修，这边漏了）。
+            String reason = errorHolder[0] != null
+                    ? errorHolder[0]
+                    : "Dify 对话调用失败：" + rootMessage(e);
             callLogService.record(sessionId, DifyCallLogService.APP_ORCHESTRATOR, traceId,
-                    false, e.getMessage(), System.currentTimeMillis() - start);
-            throw new BizException("Dify 对话调用失败：" + e.getMessage());
+                    false, reason, System.currentTimeMillis() - start);
+            throw new BizException(reason);
         }
+    }
+
+    /** 底层 IO 异常的可读原因：包装异常（UncheckedIOException）取根因消息，避免输出 Java 类名 */
+    private String rootMessage(Throwable e) {
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String message = root.getMessage();
+        return message == null || message.isBlank() ? root.getClass().getSimpleName() : message;
     }
 
     /**

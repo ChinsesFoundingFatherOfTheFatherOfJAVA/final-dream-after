@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.UUID;
 
 /**
@@ -164,12 +165,23 @@ public class FileStorageService {
         return normalizePrefix(avatarUrlPrefix) + "/" + filename;
     }
 
-    /** 音频统一落盘（/audio/{subDir}/{filename}） */
+    /**
+     * 音频统一落盘（/audio/{subDir}/{filename}）
+     * <p>先写同目录临时文件再原子改名：TTS 音频会被浏览器 {@code <audio>} 直接请求，
+     * 原地 {@code Files.write} 的截断窗口会让并发读者拿到半截文件，且 MP3 半截不报错、只是播不出来。
+     */
     private String saveAudio(String subDir, String filename, byte[] audio) {
+        Path dir = audioPath.resolve(subDir);
+        Path target = dir.resolve(filename);
         try {
-            Path dir = audioPath.resolve(subDir);
             Files.createDirectories(dir);
-            Files.write(dir.resolve(filename), audio);
+            Path tmp = Files.createTempFile(dir, filename, ".tmp");
+            try {
+                Files.write(tmp, audio);
+                Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+                Files.deleteIfExists(tmp);
+            }
             return normalizePrefix(audioUrlPrefix) + "/" + subDir + "/" + filename;
         } catch (IOException e) {
             throw new BizException("音频保存失败: " + e.getMessage());
