@@ -2,7 +2,7 @@ package jack.digityhuman.staffmanagement.department.vo;
 
 import lombok.Data;
 
-/** 部门树节点（FP-01），接口以平铺数组下发，前端按 parentCode 递归建树。 */
+/** 部门树节点（FP-01/FP-22），接口以平铺数组下发，前端按 deptPath/parentPath 建树。 */
 @Data
 public class DepartmentNodeVo {
 
@@ -10,9 +10,12 @@ public class DepartmentNodeVo {
     private String deptCode;
     private String deptName;
 
-    /** 父部门编码，根节点为 null。 */
-    private String parentCode;
+    /** 完整层级路径，建树唯一依据。 */
+    private String deptPath;
 
-    /** 该部门（含子部门）的启用用户数，由同步任务冗余维护。 */
+    /** 父节点完整路径，根节点为 null。 */
+    private String parentPath;
+
+    /** 该部门（含子部门）的全部用户数，由同步任务冗余维护。 */
     private Integer userCount;
 }

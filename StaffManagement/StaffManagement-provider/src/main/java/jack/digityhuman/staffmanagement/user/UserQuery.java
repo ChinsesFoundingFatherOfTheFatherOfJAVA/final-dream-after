@@ -19,8 +19,8 @@ public class UserQuery {
     /** 每页条数，前端只允许 20/50/100。 */
     private Integer size = 20;
 
-    /** 部门编码：查该部门<b>含全部子部门</b>的用户，按 dept_path 前缀匹配。 */
-    private String deptCode;
+    /** 部门节点 ID：查该部门<b>含全部子部门</b>的用户，按节点 dept_path 前缀匹配。 */
+    private String deptId;
 
     /** 1 启用 / 0 禁用，null 表示全部。 */
     private Integer status;
@@ -51,8 +51,8 @@ public class UserQuery {
         if (keyword != null && keyword.isBlank()) {
             keyword = null;
         }
-        if (deptCode != null && deptCode.isBlank()) {
-            deptCode = null;
+        if (deptId != null && deptId.isBlank()) {
+            deptId = null;
         }
         if (positionNames != null) {
             positionNames = positionNames.stream().filter(v -> v != null && !v.isBlank()).map(String::trim).toList();

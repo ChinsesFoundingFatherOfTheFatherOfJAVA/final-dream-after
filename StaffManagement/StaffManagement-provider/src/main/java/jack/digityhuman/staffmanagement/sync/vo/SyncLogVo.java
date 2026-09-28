@@ -16,7 +16,8 @@ public class SyncLogVo {
     private Integer total;
     private Integer inserted;
     private Integer updated;
-    private Integer disabled;
+    private Integer deleted;
+    private Integer skipped;
     private String status;
     private String errorMsg;
     private String startedAt;

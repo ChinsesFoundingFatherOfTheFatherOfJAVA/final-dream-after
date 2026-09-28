@@ -3,6 +3,7 @@ package jack.digityhuman.staffmanagement.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import jack.digityhuman.staffmanagement.entity.SysUser;
 import jack.digityhuman.staffmanagement.mapper.row.AccountNameRow;
+import jack.digityhuman.staffmanagement.mapper.row.DeptPathInfoRow;
 import jack.digityhuman.staffmanagement.mapper.row.DeptPathCountRow;
 import jack.digityhuman.staffmanagement.mapper.row.PositionCountRow;
 import jack.digityhuman.staffmanagement.mapper.row.UserRoleNameRow;
@@ -120,8 +121,17 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
     @Select("select account from sys_user")
     List<String> selectAllAccounts();
 
-    /** 按部门全路径统计启用用户数，部门树的人数上卷以它为输入。 */
+    /** 按部门全路径统计全部用户数，部门树的人数上卷以它为输入。 */
     @Select("select dept_path, count(*) user_count from sys_user"
-            + " where status = 1 and dept_path is not null and dept_path != '' group by dept_path")
+            + " where dept_path is not null and dept_path != '' group by dept_path")
     List<DeptPathCountRow> sumEnabledByDeptPath();
+
+    /** 用户直属部门路径与编码；同一路径多行时由同步侧取首个非空编码。 */
+    @Select("select dept_path, min(dept_code) dept_code from sys_user"
+            + " where dept_path is not null and dept_path != '' group by dept_path")
+    List<DeptPathInfoRow> selectDeptPathInfo();
+
+    /** 全量同步收口：当前仍存在的 Oracle 来源账号。 */
+    @Select("select account from sys_user where source = 'ORACLE'")
+    List<String> selectOracleAccounts();
 }

@@ -38,6 +38,9 @@ public enum ErrorCode {
     /** 修改密码时原密码不符。 */
     OLD_PASSWORD_WRONG(40904, "原密码错误"),
 
+    /** 用户仍是训练项目负责人/创建者。 */
+    USER_PROJECT_RESPONSIBLE(40905, "该用户仍是训练项目负责人，请先处理项目"),
+
     /** 服务器内部错误。 */
     SERVER_ERROR(50001, "服务器内部错误，请稍后重试"),
 

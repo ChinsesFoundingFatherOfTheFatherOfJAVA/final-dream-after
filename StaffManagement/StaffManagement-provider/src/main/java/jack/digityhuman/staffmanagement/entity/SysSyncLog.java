@@ -32,8 +32,11 @@ public class SysSyncLog {
     private Integer inserted;
     private Integer updated;
 
-    /** 因 Oracle 侧离职而置为禁用的用户数。 */
-    private Integer disabled;
+    /** 因 Oracle 侧离职或调出范围而级联删除的用户数。 */
+    private Integer deleted;
+
+    /** 因仍是训练项目负责人/创建者而跳过删除的用户数。 */
+    private Integer skipped;
 
     /** SUCCESS / FAILED。 */
     private String status;

@@ -5,7 +5,9 @@ import jack.digityhuman.staffmanagement.config.AuthProperties;
 import jack.digityhuman.staffmanagement.entity.SysPermission;
 import jack.digityhuman.staffmanagement.entity.SysUser;
 import jack.digityhuman.staffmanagement.mapper.SysPermissionMapper;
+import jack.digityhuman.staffmanagement.mapper.SysRolePermissionMapper;
 import jack.digityhuman.staffmanagement.mapper.SysUserMapper;
+import jack.digityhuman.staffmanagement.entity.SysRolePermission;
 import jack.digityhuman.staffmanagement.role.PermissionService;
 import jack.digityhuman.staffmanagement.user.UserAdminService;
 import org.slf4j.Logger;
@@ -41,9 +43,10 @@ public class DataInitializer implements ApplicationRunner {
      */
     private static final List<Seed> PERMISSIONS = List.of(
             new Seed("org", "组织架构", null, 10),
-            new Seed("org:employee", "员工名册", "org", 11, "/udp/orgoumgmt"),
+            new Seed("org:employee", "员工名册", "org", 11, "/enterprise/staff"),
+            new Seed("org:department", "部门管理", "org", 12, "/enterprise/departments"),
             new Seed("role", "角色权限", null, 20),
-            new Seed("role:mgmt", "角色管理", "role", 21, "/udp/role"),
+            new Seed("role:mgmt", "角色管理", "role", 21, "/enterprise/roles"),
             new Seed("act", "AI实战训练场", null, 30),
             new Seed("act:speech", "话术训练中心", "act", 31, "/sparring/newmanage"),
             new Seed("act:template", "话术模板", "act", 32, "/sparring/newtemplate"),
@@ -53,13 +56,16 @@ public class DataInitializer implements ApplicationRunner {
 
     private final SysUserMapper userMapper;
     private final SysPermissionMapper permissionMapper;
+    private final SysRolePermissionMapper rolePermissionMapper;
     private final PasswordEncoder passwordEncoder;
     private final AuthProperties properties;
 
     public DataInitializer(SysUserMapper userMapper, SysPermissionMapper permissionMapper,
+                           SysRolePermissionMapper rolePermissionMapper,
                            PasswordEncoder passwordEncoder, AuthProperties properties) {
         this.userMapper = userMapper;
         this.permissionMapper = permissionMapper;
+        this.rolePermissionMapper = rolePermissionMapper;
         this.passwordEncoder = passwordEncoder;
         this.properties = properties;
     }
@@ -93,27 +99,36 @@ public class DataInitializer implements ApplicationRunner {
     }
 
     /**
-     * 按 code 逐条补齐权限点：已有就不动（角色关联的是 permission_id，重复插入会撞唯一键，
-     * 先删再插更会把已配好的角色权限清空）。
+     * 按 code 补齐并更新权限点：保留已有 ID，避免清空角色-权限关联。
      */
     private void seedPermissions() {
-        Map<String, Long> idsByCode = new HashMap<>();
+        Map<String, SysPermission> existingByCode = new HashMap<>();
         for (SysPermission existing : permissionMapper.selectList(null)) {
-            idsByCode.put(existing.getCode(), existing.getId());
+            existingByCode.put(existing.getCode(), existing);
+        }
+        SysPermission legacy = existingByCode.remove("sparring:manage");
+        if (legacy != null) {
+            rolePermissionMapper.delete(
+                    Wrappers.<SysRolePermission>lambdaQuery()
+                            .eq(SysRolePermission::getPermissionId, legacy.getId()));
+            permissionMapper.deleteById(legacy.getId());
+            log.info("已移除旧版权限点 code=sparring:manage");
         }
         int inserted = 0;
+        int updated = 0;
         for (Seed seed : PERMISSIONS) {
-            if (idsByCode.containsKey(seed.code())) {
-                continue;
+            SysPermission permission = existingByCode.get(seed.code());
+            boolean create = permission == null;
+            if (create) {
+                permission = new SysPermission();
+                permission.setCode(seed.code());
             }
-            SysPermission permission = new SysPermission();
-            permission.setCode(seed.code());
             permission.setName(seed.name());
             // 清单已保证父在前，父 ID 要么本来就在库里，要么刚被这条循环插出来；
             // 拿不到就是清单写错了顺序，直接起不来比默默挂到根节点好排查
             Long parentId = seed.parent() == null
                     ? Long.valueOf(PermissionService.ROOT_PARENT_ID)
-                    : idsByCode.get(seed.parent());
+                    : resolveParentId(existingByCode, seed.parent());
             if (parentId == null) {
                 throw new IllegalStateException("权限清单顺序错误：父节点 " + seed.parent()
                         + " 未出现在其子节点 " + seed.code() + " 之前");
@@ -121,13 +136,23 @@ public class DataInitializer implements ApplicationRunner {
             permission.setParentId(parentId);
             permission.setRoutePath(seed.routePath());
             permission.setSort(seed.sort());
-            permissionMapper.insert(permission);
-            idsByCode.put(seed.code(), permission.getId());
-            inserted++;
+            if (create) {
+                permissionMapper.insert(permission);
+                existingByCode.put(seed.code(), permission);
+                inserted++;
+            } else {
+                permissionMapper.updateById(permission);
+                updated++;
+            }
         }
-        if (inserted > 0) {
-            log.info("权限点 seeding 新增 count={}", inserted);
+        if (inserted > 0 || updated > 0) {
+            log.info("权限点 seeding 新增={} 更新={}", inserted, updated);
         }
+    }
+
+    private Long resolveParentId(Map<String, SysPermission> existingByCode, String code) {
+        SysPermission parent = existingByCode.get(code);
+        return parent == null ? null : parent.getId();
     }
 
     /** 一行清单数据；{@code parent} 为 null 即根节点，{@code routePath} 为 null 即不可勾选的分组。 */

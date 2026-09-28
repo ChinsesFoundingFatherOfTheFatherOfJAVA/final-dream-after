@@ -66,8 +66,8 @@ public class RoleMemberService {
 
         String deptPath = null;
         String childPathPattern = null;
-        if (query.getDeptCode() != null) {
-            SysDepartment dept = departmentService.requireByCode(query.getDeptCode());
+        if (query.getDeptId() != null) {
+            SysDepartment dept = departmentService.requireById(query.getDeptId());
             deptPath = dept.getDeptPath();
             childPathPattern = DepartmentService.childPathPattern(deptPath);
         }

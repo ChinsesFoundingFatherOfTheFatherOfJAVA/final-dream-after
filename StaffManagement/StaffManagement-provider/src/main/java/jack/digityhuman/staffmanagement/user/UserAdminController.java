@@ -34,7 +34,7 @@ public class UserAdminController {
     /**
      * 用户分页查询。添加成员弹窗（FP-16）复用同一接口，只是多带 roleId 已由前端过滤已选人员。
      *
-     * <p>例：{@code GET /api/sm/admin/users?page=1&size=20&deptCode=D002&searchField=name&keyword=贾}
+     * <p>例：{@code GET /api/sm/admin/users?page=1&size=20&deptId=2&searchField=name&keyword=贾}
      */
     @GetMapping
     public ApiResponse<PageVo<UserRowVo>> list(@ModelAttribute UserQuery query) {

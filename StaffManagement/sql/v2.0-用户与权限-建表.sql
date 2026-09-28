@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS sys_user (
   position_name VARCHAR(128) COMMENT '岗位名称（Oracle POSINAME）',
   job_grade VARCHAR(64) COMMENT '职级（Oracle JOBGRADE）',
   entry_date DATE COMMENT '入职时间（Oracle HIREDATE）',
-  status TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1=启用, 0=禁用（Oracle 离职或人工禁用）',
+  status TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1=启用, 0=禁用（仅在职员工的管理员手动启停）',
   is_super_admin TINYINT NOT NULL DEFAULT 0 COMMENT '是否超级管理员: 1=是，拥有全部菜单权限',
   password VARCHAR(128) NOT NULL COMMENT 'BCrypt 哈希；同步任务永不覆盖',
   source VARCHAR(16) NOT NULL DEFAULT 'ORACLE' COMMENT '来源: ORACLE=同步, MANUAL=手工（内置 admin）',
@@ -39,20 +39,20 @@ CREATE TABLE IF NOT EXISTS sys_user (
   INDEX idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统用户表';
 
--- 2. 部门表（FP-01/17）：同步任务从员工的部门全路径拆解而来
+-- 2. 部门表（FP-01/17）：同步任务按员工部门全路径合成而来
 CREATE TABLE IF NOT EXISTS sys_department (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
-  dept_code VARCHAR(64) NOT NULL COMMENT '部门编码（Oracle 组织编号）',
+  dept_code VARCHAR(64) COMMENT '部门编码（Oracle 组织编号，合成中间层为 NULL）',
   dept_name VARCHAR(255) NOT NULL COMMENT '部门名',
-  parent_code VARCHAR(64) COMMENT '父部门编码，根为 NULL',
-  dept_path VARCHAR(1024) COMMENT '完整层级路径，下划线分隔',
-  dept_level INT COMMENT '层级，根为 1',
+  parent_path VARCHAR(1024) COMMENT '父节点完整路径，根为 NULL',
+  dept_path VARCHAR(1024) NOT NULL COMMENT '完整层级路径，下划线分隔',
+  dept_level INT COMMENT '相对股份树层级，根为 1',
   sort INT DEFAULT 0 COMMENT '同级排序',
-  user_count INT DEFAULT 0 COMMENT '该部门（含子部门）启用用户数，同步任务重算',
+  user_count INT DEFAULT 0 COMMENT '该部门（含子部门）全部用户数，同步任务重算',
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uk_dept_code (dept_code),
-  INDEX idx_parent_code (parent_code),
-  INDEX idx_dept_path (dept_path(255))
+  INDEX idx_dept_code (dept_code),
+  INDEX idx_parent_path (parent_path(255)),
+  UNIQUE KEY uk_dept_path (dept_path(255))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='部门表';
 
 -- 3. 角色表（FP-12~14）
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS sys_permission (
   code VARCHAR(64) NOT NULL COMMENT '权限码，如 org:employee',
   name VARCHAR(64) NOT NULL COMMENT '菜单名',
   parent_id BIGINT NOT NULL DEFAULT 0 COMMENT '父节点ID，0=根',
-  route_path VARCHAR(128) COMMENT '前端路由，如 /udp/orgoumgmt；分组节点为 NULL',
+  route_path VARCHAR(128) COMMENT '前端路由，如 /enterprise/staff；分组节点为 NULL',
   sort INT DEFAULT 0 COMMENT '同级排序',
   UNIQUE KEY uk_perm_code (code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='权限点表（菜单级）';
@@ -108,7 +108,8 @@ CREATE TABLE IF NOT EXISTS sys_sync_log (
   total INT COMMENT '本轮处理的 Oracle 记录数',
   inserted INT COMMENT '新增用户数',
   updated INT COMMENT '更新用户数',
-  disabled INT COMMENT '因离职置为禁用的用户数',
+  deleted INT COMMENT '因离职/调出范围被删除的用户数',
+  skipped INT COMMENT '因仍是训练项目负责人/创建者而跳过删除的用户数',
   status VARCHAR(16) NOT NULL COMMENT 'SUCCESS / FAILED；FAILED 不推进水位',
   error_msg VARCHAR(2000) COMMENT '失败原因',
   started_at DATETIME NOT NULL,

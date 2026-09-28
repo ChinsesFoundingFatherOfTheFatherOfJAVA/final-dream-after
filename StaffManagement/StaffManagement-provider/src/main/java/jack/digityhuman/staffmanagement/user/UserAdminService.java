@@ -16,6 +16,7 @@ import jack.digityhuman.staffmanagement.entity.SysUser;
 import jack.digityhuman.staffmanagement.entity.SysUserRole;
 import jack.digityhuman.staffmanagement.mapper.SysUserMapper;
 import jack.digityhuman.staffmanagement.mapper.SysUserRoleMapper;
+import jack.digityhuman.staffmanagement.mapper.UserCascadeMapper;
 import jack.digityhuman.staffmanagement.mapper.row.UserRoleNameRow;
 import jack.digityhuman.staffmanagement.user.vo.UserRowVo;
 import org.slf4j.Logger;
@@ -43,15 +44,18 @@ public class UserAdminService {
 
     private final SysUserMapper userMapper;
     private final SysUserRoleMapper userRoleMapper;
+    private final UserCascadeMapper cascadeMapper;
     private final DepartmentService departmentService;
     private final PasswordEncoder passwordEncoder;
     private final AuthProperties properties;
 
     public UserAdminService(SysUserMapper userMapper, SysUserRoleMapper userRoleMapper,
+                            UserCascadeMapper cascadeMapper,
                             DepartmentService departmentService, PasswordEncoder passwordEncoder,
                             AuthProperties properties) {
         this.userMapper = userMapper;
         this.userRoleMapper = userRoleMapper;
+        this.cascadeMapper = cascadeMapper;
         this.departmentService = departmentService;
         this.passwordEncoder = passwordEncoder;
         this.properties = properties;
@@ -60,7 +64,7 @@ public class UserAdminService {
     /**
      * 多条件分页查询用户。
      *
-     * <p>{@code deptCode} 的"含子部门"落在部门全路径前缀上，但前缀匹配必须把路径里的
+     * <p>{@code deptId} 的"含子部门"落在部门全路径前缀上，但前缀匹配必须把路径里的
      * {@code _} 转义成字面量：它同时是 MySQL 的 LIKE 单字符通配符，不转义的话
      * 前缀 "杰克集团_营销军团" 会连 "杰克集团_营销军团X_…" 这种兄弟部门一起捞出来。
      * 等值分支覆盖"用户就挂在该部门本身"的情况。
@@ -69,8 +73,8 @@ public class UserAdminService {
         query.normalize();
         LambdaQueryWrapper<SysUser> wrapper = Wrappers.lambdaQuery();
 
-        if (query.getDeptCode() != null) {
-            SysDepartment dept = departmentService.requireByCode(query.getDeptCode());
+        if (query.getDeptId() != null) {
+            SysDepartment dept = departmentService.requireById(query.getDeptId());
             String path = dept.getDeptPath();
             wrapper.and(w -> w.eq(SysUser::getDeptPath, path)
                     .or().apply("dept_path LIKE {0}", DepartmentService.childPathPattern(path)));
@@ -161,7 +165,7 @@ public class UserAdminService {
     }
 
     /**
-     * 物理删除用户及其角色关联（FP-10）。
+     * 物理删除用户及其角色、项目学员关联（FP-10）。
      *
      * <p>同事务删除 {@code sys_user_role}，不留孤儿关联。若该员工在 Oracle 侧仍在职，
      * 下一轮同步会以默认密码把他重新建回来——已确认接受，前端确认弹窗有对应提示（风险 R-4）。
@@ -172,9 +176,42 @@ public class UserAdminService {
         if (isBuiltinAdmin(user)) {
             throw new BizException(ErrorCode.BUILTIN_ADMIN_PROTECTED);
         }
+        int projects = cascadeMapper.countProtectedProjects(user.getAccount());
+        if (projects > 0) {
+            throw new BizException(ErrorCode.USER_PROJECT_RESPONSIBLE,
+                    "该用户仍是 " + projects + " 个训练项目的负责人/创建者，请先处理项目");
+        }
+        deleteRows(user);
+        log.info("用户已删除 account={}（含角色与项目学员关联）", user.getAccount());
+    }
+
+    /**
+     * 同步删除入口：只处理 ORACLE 来源用户，负责人保护命中时返回 {@link DeleteOutcome#PROTECTED}。
+     *
+     * <p>该方法由同步批次的事务模板调用，实际会加入同一事务；管理端删除走
+     * {@link #delete(String)}，两者共用同一套级联 SQL。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public DeleteOutcome deleteSyncedByAccount(String account) {
+        SysUser user = userMapper.selectOne(
+                Wrappers.<SysUser>lambdaQuery().eq(SysUser::getAccount, account));
+        if (user == null || !SOURCE_ORACLE.equals(user.getSource())) {
+            return DeleteOutcome.NOT_ORACLE;
+        }
+        int projects = cascadeMapper.countProtectedProjects(account);
+        if (projects > 0) {
+            log.warn("同步删除跳过：账号 {} 仍是 {} 个训练项目的负责人/创建者", account, projects);
+            return DeleteOutcome.PROTECTED;
+        }
+        deleteRows(user);
+        log.info("同步删除用户 account={}（离职或调出范围）", account);
+        return DeleteOutcome.DELETED;
+    }
+
+    private void deleteRows(SysUser user) {
         userRoleMapper.delete(Wrappers.<SysUserRole>lambdaQuery().eq(SysUserRole::getUserId, user.getId()));
+        cascadeMapper.deleteProjectStudents(user.getAccount());
         userMapper.deleteById(user.getId());
-        log.info("用户已删除 account={}（含其角色关联）", user.getAccount());
     }
 
     /** 设置/取消超管（FP-10/20）：仅超管可操作，且不能取消内置 admin 的超管身份。 */
@@ -227,5 +264,12 @@ public class UserAdminService {
         } catch (NumberFormatException ex) {
             throw BizException.param("ID 格式不正确: " + value);
         }
+    }
+
+    /** 同步删除的三态结果；负责人保护不是失败，需要计入 skipped。 */
+    public enum DeleteOutcome {
+        DELETED,
+        PROTECTED,
+        NOT_ORACLE
     }
 }

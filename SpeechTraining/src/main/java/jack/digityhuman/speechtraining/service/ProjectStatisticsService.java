@@ -566,7 +566,7 @@ public class ProjectStatisticsService {
             params.add(like);
             params.add(like);
         }
-        appendInFilter(sql, params, "u.dept_code", query.getDeptIds());
+        appendDepartmentFilter(sql, params, query.getDeptIds());
         appendInFilter(sql, params, "u.position_name", query.getPostIds());
         if (query.getAccountStatus() != null) {
             sql.append(" AND u.status = ?");
@@ -583,6 +583,29 @@ public class ProjectStatisticsService {
         }
         sql.append(" AND ").append(column).append(" IN (")
                 .append(String.join(",", java.util.Collections.nCopies(clean.size(), "?"))).append(")");
+        params.addAll(clean);
+    }
+
+    /** 统计列表同样接收 sys_department.id，并按部门路径含子树过滤。 */
+    private void appendDepartmentFilter(
+            StringBuilder sql, List<Object> params, Collection<String> deptIds) {
+        List<String> clean = deptIds == null ? List.of()
+                : deptIds.stream().filter(StringUtils::hasText).map(String::trim).distinct().toList();
+        if (clean.isEmpty()) {
+            return;
+        }
+        for (String deptId : clean) {
+            try {
+                Long.parseLong(deptId);
+            } catch (NumberFormatException ex) {
+                throw new BizException("部门不存在");
+            }
+        }
+        sql.append(" AND EXISTS (SELECT 1 FROM sys_department d WHERE d.id IN (")
+                .append(String.join(",", java.util.Collections.nCopies(clean.size(), "?")))
+                .append(") AND (u.dept_path = d.dept_path")
+                .append(" OR (LEFT(u.dept_path, CHAR_LENGTH(d.dept_path)) = d.dept_path")
+                .append(" AND SUBSTRING(u.dept_path, CHAR_LENGTH(d.dept_path) + 1, 1) = '_')))");
         params.addAll(clean);
     }
 

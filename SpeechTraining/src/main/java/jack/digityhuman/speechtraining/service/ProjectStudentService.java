@@ -211,8 +211,16 @@ public class ProjectStudentService {
                 """);
         whereParams.add(projectId);
         if (StringUtils.hasText(deptId)) {
-            where.append(" AND u.dept_code = ?");
-            whereParams.add(deptId.trim());
+            String deptPath = requireDepartmentPath(deptId);
+            where.append("""
+                     AND (u.dept_path = ?
+                          OR (LEFT(u.dept_path, CHAR_LENGTH(?)) = ?
+                              AND SUBSTRING(u.dept_path, CHAR_LENGTH(?) + 1, 1) = '_'))
+                    """);
+            whereParams.add(deptPath);
+            whereParams.add(deptPath);
+            whereParams.add(deptPath);
+            whereParams.add(deptPath);
         }
         if (StringUtils.hasText(keyword)) {
             where.append(" AND (u.name LIKE ? OR u.account LIKE ? OR u.employee_no LIKE ?)");
@@ -243,7 +251,7 @@ public class ProjectStudentService {
             params.add(like);
             params.add(like);
         }
-        appendInFilter(sql, params, "u.dept_code", query.getDeptIds());
+        appendDepartmentFilter(sql, params, query.getDeptIds());
         appendInFilter(sql, params, "u.position_name", query.getPostIds());
         if (query.getAccountStatus() != null) {
             sql.append(" AND u.status = ?");
@@ -260,6 +268,48 @@ public class ProjectStudentService {
         sql.append(" AND ").append(column).append(" IN (")
                 .append(String.join(",", java.util.Collections.nCopies(clean.size(), "?"))).append(")");
         params.addAll(clean);
+    }
+
+    /**
+     * 部门筛选参数是 {@code sys_department.id}，不是组织编码。
+     * 路径前缀再加下一位边界判断，等价于“该节点及其全部子部门”，且不受 "_" LIKE 通配符影响。
+     */
+    private void appendDepartmentFilter(StringBuilder sql, List<Object> params,
+                                        Collection<String> deptIds) {
+        List<String> clean = deptIds == null ? List.of()
+                : deptIds.stream().filter(StringUtils::hasText).map(String::trim).distinct().toList();
+        if (clean.isEmpty()) {
+            return;
+        }
+        for (String deptId : clean) {
+            try {
+                Long.parseLong(deptId);
+            } catch (NumberFormatException ex) {
+                throw new BizException("部门不存在");
+            }
+        }
+        sql.append(" AND EXISTS (SELECT 1 FROM sys_department d WHERE d.id IN (")
+                .append(String.join(",", java.util.Collections.nCopies(clean.size(), "?")))
+                .append(") AND (u.dept_path = d.dept_path")
+                .append(" OR (LEFT(u.dept_path, CHAR_LENGTH(d.dept_path)) = d.dept_path")
+                .append(" AND SUBSTRING(u.dept_path, CHAR_LENGTH(d.dept_path) + 1, 1) = '_')))");
+        params.addAll(clean);
+    }
+
+    private String requireDepartmentPath(String deptId) {
+        List<String> paths;
+        try {
+            paths = jdbcTemplate.query(
+                    "SELECT dept_path FROM sys_department WHERE id = ?",
+                    (rs, rowNum) -> rs.getString(1),
+                    Long.parseLong(deptId.trim()));
+        } catch (NumberFormatException ex) {
+            throw new BizException("部门不存在");
+        }
+        if (paths.isEmpty() || !StringUtils.hasText(paths.get(0))) {
+            throw new BizException("部门不存在");
+        }
+        return paths.get(0);
     }
 
     private TrainingProject requireProject(Long projectId) {

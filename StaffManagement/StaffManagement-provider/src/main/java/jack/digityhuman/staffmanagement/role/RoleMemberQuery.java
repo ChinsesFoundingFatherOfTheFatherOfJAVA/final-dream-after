@@ -16,8 +16,8 @@ public class RoleMemberQuery {
     private Integer page = 1;
     private Integer size = 20;
 
-    /** 部门编码：查该部门<b>含全部子部门</b>的成员。 */
-    private String deptCode;
+    /** 部门节点 ID：查该部门<b>含全部子部门</b>的成员。 */
+    private String deptId;
 
     /** 1 启用 / 0 禁用，null 表示全部。 */
     private Integer status;
@@ -41,8 +41,8 @@ public class RoleMemberQuery {
         if (keyword != null && keyword.isBlank()) {
             keyword = null;
         }
-        if (deptCode != null && deptCode.isBlank()) {
-            deptCode = null;
+        if (deptId != null && deptId.isBlank()) {
+            deptId = null;
         }
     }
 

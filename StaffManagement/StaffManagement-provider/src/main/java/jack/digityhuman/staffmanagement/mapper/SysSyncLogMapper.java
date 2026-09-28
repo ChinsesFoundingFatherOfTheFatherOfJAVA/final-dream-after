@@ -27,7 +27,7 @@ public interface SysSyncLogMapper extends BaseMapper<SysSyncLog> {
     LocalDateTime selectCurrentWatermark();
 
     /** 最近若干次同步记录（倒序），供 {@code GET /api/sm/admin/sync/status} 排查用。 */
-    @Select("select id, sync_type, watermark, total, inserted, updated, disabled, status, error_msg,"
+    @Select("select id, sync_type, watermark, total, inserted, updated, deleted, skipped, status, error_msg,"
             + " started_at, finished_at from sys_sync_log order by id desc limit #{limit}")
     List<SysSyncLog> selectRecent(@Param("limit") int limit);
 }

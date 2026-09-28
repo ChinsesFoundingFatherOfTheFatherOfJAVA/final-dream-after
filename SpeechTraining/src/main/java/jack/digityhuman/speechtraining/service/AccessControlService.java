@@ -18,7 +18,8 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class AccessControlService {
 
-    public static final String SPARRING_MANAGE = "sparring:manage";
+    private static final List<String> ACT_PERMISSIONS =
+            List.of("act:speech", "act:template", "act:training");
 
     private static final String PERMISSION_SQL = """
             SELECT COUNT(*)
@@ -52,7 +53,8 @@ public class AccessControlService {
 
     public void requireManage() {
         SpeechAuthContext.Principal principal = requirePrincipal();
-        if (!principal.superAdmin() && !hasPermission(principal.account(), SPARRING_MANAGE)) {
+        if (!principal.superAdmin()
+                && ACT_PERMISSIONS.stream().noneMatch(code -> hasPermission(principal.account(), code))) {
             throw new BizException(403001, "无 AI话术训练管理权限");
         }
     }
@@ -65,7 +67,7 @@ public class AccessControlService {
     public List<String> currentPermissions() {
         SpeechAuthContext.Principal principal = requirePrincipal();
         if (principal.superAdmin()) {
-            return List.of(SPARRING_MANAGE);
+            return ACT_PERMISSIONS;
         }
         return jdbcTemplate.queryForList(PERMISSIONS_SQL, String.class, principal.account());
     }

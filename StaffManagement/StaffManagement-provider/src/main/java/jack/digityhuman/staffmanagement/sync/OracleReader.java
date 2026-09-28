@@ -91,6 +91,18 @@ public class OracleReader {
     }
 
     /**
+     * 全量同步收口 {@code LASTCHANGE IS NULL} 的员工。
+     *
+     * <p>这类行无法参与 {@code (LASTCHANGE, GH)} 键集续接；实测只有 42 行，单独一次读取即可，
+     * 不再为它们维护第二套分页状态。
+     */
+    public List<OracleEmployee> readEmployeesWithNullLastChange() {
+        String sql = "select distinct " + EMPLOYEE_COLUMNS + " from " + VIEW
+                + " where \"LASTCHANGE\" is null order by \"GH\"";
+        return jdbcTemplate.query(sql, (rs, rowNum) -> toEmployee(rs));
+    }
+
+    /**
      * 全量部门维度（实测 1384 个）。按路径排序，使 {@code sys_department} 的自增 ID 与
      * 层级顺序一致，同级部门在树上的先后也就稳定。
      */

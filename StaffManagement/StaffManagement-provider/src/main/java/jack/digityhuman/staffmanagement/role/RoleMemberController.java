@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 
 /**
- * 角色人员管理（FP-15/16），页面路径 {@code #/udp/role/users/{roleId}}。
+ * 角色人员管理（FP-15/16），页面路径 {@code #/enterprise/roles/users/{roleId}}。
  */
 @RestController
 @RequestMapping("/api/sm/admin/roles/{roleId}/users")
@@ -28,7 +28,7 @@ public class RoleMemberController {
         this.roleMemberService = roleMemberService;
     }
 
-    /** 成员分页列表。例：{@code GET /api/sm/admin/roles/2/users?page=1&size=20&deptCode=D002&searchField=name&keyword=潘} */
+    /** 成员分页列表。例：{@code GET /api/sm/admin/roles/2/users?page=1&size=20&deptId=2&searchField=name&keyword=潘} */
     @GetMapping
     public ApiResponse<PageVo<RoleMemberVo>> list(@PathVariable String roleId,
                                                   @ModelAttribute RoleMemberQuery query) {

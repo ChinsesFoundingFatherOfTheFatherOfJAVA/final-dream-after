@@ -40,7 +40,8 @@ public class DepartmentController {
         vo.setDeptId(String.valueOf(dept.getId()));
         vo.setDeptCode(dept.getDeptCode());
         vo.setDeptName(dept.getDeptName());
-        vo.setParentCode(dept.getParentCode());
+        vo.setDeptPath(dept.getDeptPath());
+        vo.setParentPath(dept.getParentPath());
         vo.setUserCount(dept.getUserCount());
         return vo;
     }

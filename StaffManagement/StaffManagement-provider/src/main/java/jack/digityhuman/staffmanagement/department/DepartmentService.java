@@ -9,12 +9,11 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * 部门树查询（FP-01，以及 FP-15 的"选择部门"下拉）。
@@ -35,13 +34,18 @@ public class DepartmentService {
     }
 
     /**
-     * 按编码取部门，用于把"查该部门含子部门"翻译成路径前缀条件；查不到即 40401。
+     * 按节点 ID 取部门，用于把"查该部门含子部门"翻译成路径前缀条件；查不到即 40401。
      */
-    public SysDepartment requireByCode(String deptCode) {
-        SysDepartment dept = departmentMapper.selectOne(
-                Wrappers.<SysDepartment>lambdaQuery().eq(SysDepartment::getDeptCode, deptCode));
+    public SysDepartment requireById(String deptId) {
+        Long id;
+        try {
+            id = Long.valueOf(deptId);
+        } catch (RuntimeException ex) {
+            throw BizException.param("部门 ID 格式不正确: " + deptId);
+        }
+        SysDepartment dept = departmentMapper.selectById(id);
         if (dept == null) {
-            throw BizException.notFound("部门 " + deptCode);
+            throw BizException.notFound("部门 " + deptId);
         }
         return dept;
     }
@@ -68,8 +72,10 @@ public class DepartmentService {
         if (keyword == null || keyword.isBlank()) {
             return all;
         }
-        Map<String, SysDepartment> byCode = all.stream()
-                .collect(Collectors.toMap(SysDepartment::getDeptCode, Function.identity(), (a, b) -> a));
+        Map<String, SysDepartment> byPath = new HashMap<>(all.size());
+        for (SysDepartment dept : all) {
+            byPath.put(dept.getDeptPath(), dept);
+        }
         String needle = keyword.trim();
 
         Set<String> keep = new LinkedHashSet<>();
@@ -77,17 +83,16 @@ public class DepartmentService {
             if (dept.getDeptName() == null || !dept.getDeptName().contains(needle)) {
                 continue;
             }
-            keep.add(dept.getDeptCode());
-            SysDepartment parent = byCode.get(dept.getParentCode());
-            // 逐层上溯把父链补齐；byCode 由库里的 parent_code 构成，理论上无环，
-            // 但脏数据（自引用或互为父子）会让这个循环退不出去，所以带上已见判断。
-            while (parent != null && keep.add(parent.getDeptCode())) {
-                parent = byCode.get(parent.getParentCode());
+            keep.add(dept.getDeptPath());
+            SysDepartment parent = byPath.get(dept.getParentPath());
+            // 逐层上溯把父链补齐；路径结构理论上无环，仍带已见判断防御脏数据。
+            while (parent != null && keep.add(parent.getDeptPath())) {
+                parent = byPath.get(parent.getParentPath());
             }
         }
         List<SysDepartment> filtered = new ArrayList<>(keep.size());
         for (SysDepartment dept : all) {
-            if (keep.contains(dept.getDeptCode())) {
+            if (keep.contains(dept.getDeptPath())) {
                 filtered.add(dept);
             }
         }
