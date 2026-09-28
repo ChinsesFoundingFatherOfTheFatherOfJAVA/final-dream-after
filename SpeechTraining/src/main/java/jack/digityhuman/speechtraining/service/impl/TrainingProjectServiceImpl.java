@@ -23,6 +23,7 @@ import jack.digityhuman.speechtraining.mapper.TrainingEdgeMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingNodeMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingProjectMapper;
 import jack.digityhuman.speechtraining.mapper.VirtualTrainerMapper;
+import jack.digityhuman.speechtraining.service.AccessControlService;
 import jack.digityhuman.speechtraining.service.TrainingProjectService;
 import jack.digityhuman.speechtraining.service.UserContext;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +46,7 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
     private final ScoringDimensionMapper scoringDimensionMapper;
     private final VirtualTrainerMapper virtualTrainerMapper;
     private final UserContext userContext;
+    private final AccessControlService accessControlService;
 
     /** 需学员作答的大节点类型：2=陪练者问学员，3=学员问陪练者（与流程引擎的判定口径一致） */
     private static final int NODE_TYPE_ROUND = 2;
@@ -52,6 +54,7 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
 
     @Override
     public PageResult<ProjectListResp> listProjects(ProjectQueryParam param) {
+        accessControlService.requireManage();
         LambdaQueryWrapper<TrainingProject> wrapper = new LambdaQueryWrapper<>();
         if (param.getStatus() != null) {
             wrapper.eq(TrainingProject::getStatus, param.getStatus());
@@ -81,6 +84,7 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
 
     @Override
     public ProjectDetailResp getProjectDetail(Long id) {
+        accessControlService.requireManage();
         TrainingProject project = getById(id);
         if (project == null) {
             throw new BizException("项目不存在");
@@ -113,6 +117,7 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
     @Override
     @Transactional
     public Long createProject(ProjectSaveReq req) {
+        accessControlService.requireManage();
         TrainingProject project = new TrainingProject();
         BeanUtils.copyProperties(req, project);
         project.setStatus(0);
@@ -147,6 +152,7 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
     @Override
     @Transactional
     public void updateProject(Long id, ProjectSaveReq req) {
+        accessControlService.requireProjectOwner(id);
         TrainingProject project = getById(id);
         if (project == null) {
             throw new BizException("项目不存在");
@@ -195,7 +201,13 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
         dim.setRuleType(dimReq.getRuleTypeAsInt());
         dim.setEvidenceType(dimReq.getEvidenceType() == null
                 ? DimensionMetricConfig.EVIDENCE_TEXT : dimReq.getEvidenceType());
-        dim.setMetricConfig(DimensionMetricConfig.toJson(dimReq.getMetricKey()));
+        String metricKey = dimReq.getMetricKey();
+        String metricAspect = dimReq.getMetricAspect();
+        if (DimensionMetricConfig.METRIC_TONE.equals(metricKey)
+                && !DimensionMetricConfig.isValidToneAspect(metricAspect)) {
+            throw new BizException("评什么角度需为2~6个字");
+        }
+        dim.setMetricConfig(DimensionMetricConfig.toJson(metricKey, dimReq.getMetricParams(), metricAspect));
         dim.setProjectId(projectId);
         dim.setCreatedAt(LocalDateTime.now());
         dim.setUpdatedAt(LocalDateTime.now());
@@ -205,6 +217,7 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
     @Override
     @Transactional
     public void publishProject(Long id) {
+        accessControlService.requireProjectOwner(id);
         TrainingProject project = getById(id);
         if (project == null) {
             throw new BizException("项目不存在");
@@ -239,6 +252,7 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
     @Override
     @Transactional
     public void withdrawProject(Long id) {
+        accessControlService.requireProjectOwner(id);
         TrainingProject project = getById(id);
         if (project == null) {
             throw new BizException("项目不存在");
@@ -252,6 +266,7 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
     @Override
     @Transactional
     public void deleteProject(Long id) {
+        accessControlService.requireProjectOwner(id);
         TrainingProject project = getById(id);
         if (project == null) {
             throw new BizException("项目不存在");
@@ -266,6 +281,7 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
 
     @Override
     public FlowDataResp getFlowData(Long id) {
+        accessControlService.requireManage();
         List<TrainingNode> nodes = nodeMapper.selectList(
                 new LambdaQueryWrapper<TrainingNode>()
                         .eq(TrainingNode::getProjectId, id)
@@ -292,6 +308,7 @@ public class TrainingProjectServiceImpl extends ServiceImpl<TrainingProjectMappe
     @Override
     @Transactional
     public void saveFlow(Long projectId, FlowSaveReq req) {
+        accessControlService.requireProjectOwner(projectId);
         // 1. 先用前端传来的临时ID做环检测（此时ID映射关系尚未建立，但拓扑结构是正确的）
         if (hasCycle(req.getNodes(), req.getEdges())) {
             throw new BizException("流程图中存在环，请检查连线");

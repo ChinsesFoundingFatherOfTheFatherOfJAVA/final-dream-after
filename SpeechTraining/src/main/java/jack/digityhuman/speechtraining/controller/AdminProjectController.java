@@ -42,17 +42,11 @@ public class AdminProjectController {
         return ApiResponse.success(projectService.createProject(req));
     }
 
-    /**
-     * 创建项目（FormData 方式，支持上传封面图片）
-     * 封面图片保存到服务器 /coverImage 目录，cover_image 字段存访问路径
-     */
+    /** 创建项目（FormData 方式，支持上传封面与陪练者形象图片） */
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<Long> createWithCover(MultipartHttpServletRequest request) {
         ProjectSaveReq req = projectFormParser.parse(request);
-        MultipartFile file = projectFormParser.extractFile(request);
-        if (file != null) {
-            req.setCoverImage(fileStorageService.saveCoverImage(file));
-        }
+        applyUploadedImages(req, request);
         return ApiResponse.success(projectService.createProject(req));
     }
 
@@ -63,16 +57,33 @@ public class AdminProjectController {
         return ApiResponse.success();
     }
 
-    /** 更新项目（FormData 方式，支持上传封面图片） */
+    /** 更新项目（FormData 方式，支持上传封面与陪练者形象图片） */
     @PutMapping(value = "/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<Void> updateWithCover(@PathVariable Long id, MultipartHttpServletRequest request) {
         ProjectSaveReq req = projectFormParser.parse(request);
-        MultipartFile file = projectFormParser.extractFile(request);
-        if (file != null) {
-            req.setCoverImage(fileStorageService.saveCoverImage(file));
-        }
+        applyUploadedImages(req, request);
         projectService.updateProject(id, req);
         return ApiResponse.success();
+    }
+
+    /**
+     * 本地文件优先于 JSON 中已有的图片 URL；封面与形象图只认各自的专用字段。
+     */
+    private void applyUploadedImages(ProjectSaveReq req, MultipartHttpServletRequest request) {
+        MultipartFile coverFile = projectFormParser.extractFile(request);
+        if (coverFile != null) {
+            req.setCoverImage(fileStorageService.saveCoverImage(coverFile));
+        }
+
+        MultipartFile avatarFile = request.getFile("avatarImage");
+        if (avatarFile != null && !avatarFile.isEmpty()) {
+            ProjectSaveReq.VirtualTrainerReq trainer = req.getVirtualTrainer();
+            if (trainer == null) {
+                trainer = new ProjectSaveReq.VirtualTrainerReq();
+                req.setVirtualTrainer(trainer);
+            }
+            trainer.setAvatarImage(fileStorageService.saveAvatarImage(avatarFile));
+        }
     }
 
     @PostMapping("/{id}/publish")

@@ -36,17 +36,13 @@ public class ProjectFormParser {
         this.objectMapper.registerModule(module);
     }
 
-    /** 从请求中取出上传的文件（任意文件字段，优先 coverImage/file/cover） */
+    /** 从请求中取出封面文件；只认专用字段，避免形象图等文件串位。 */
     public MultipartFile extractFile(MultipartHttpServletRequest request) {
-        if (!request.getFileMap().isEmpty()) {
-            for (String preferred : new String[]{"coverImage", "cover", "file", "image"}) {
-                MultipartFile f = request.getFile(preferred);
-                if (f != null && !f.isEmpty()) return f;
+        for (String coverField : new String[]{"coverImage", "cover"}) {
+            MultipartFile file = request.getFile(coverField);
+            if (file != null && !file.isEmpty()) {
+                return file;
             }
-            return request.getFileMap().values().stream()
-                    .filter(f -> f != null && !f.isEmpty())
-                    .findFirst()
-                    .orElse(null);
         }
         return null;
     }

@@ -14,11 +14,11 @@ import jack.digityhuman.speechtraining.entity.TrainingSession;
 import jack.digityhuman.speechtraining.entity.TrainingSessionMessage;
 import jack.digityhuman.speechtraining.entity.VirtualTrainer;
 import jack.digityhuman.speechtraining.mapper.TrainingProjectMapper;
-import jack.digityhuman.speechtraining.mapper.TrainingSessionMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingSessionMessageMapper;
 import jack.digityhuman.speechtraining.mapper.VirtualTrainerMapper;
 import jack.digityhuman.speechtraining.service.FlowEngineService;
 import jack.digityhuman.speechtraining.service.SpeechService;
+import jack.digityhuman.speechtraining.service.StudentSessionAccessService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -35,7 +35,7 @@ public class StudentSessionController {
 
     private final FlowEngineService flowEngineService;
     private final SpeechService speechService;
-    private final TrainingSessionMapper sessionMapper;
+    private final StudentSessionAccessService sessionAccessService;
     private final TrainingSessionMessageMapper messageMapper;
     private final TrainingProjectMapper projectMapper;
     private final VirtualTrainerMapper virtualTrainerMapper;
@@ -43,18 +43,21 @@ public class StudentSessionController {
     /** FP-19 获取会话详情（刷新恢复） */
     @GetMapping("/{sessionId}")
     public ApiResponse<SessionDetailResp> detail(@PathVariable Long sessionId) {
+        sessionAccessService.requireOwned(sessionId, "会话不存在或无权访问");
         return ApiResponse.success(flowEngineService.getSessionDetail(sessionId));
     }
 
     /** FP-12/20 发送消息（流转判定，核心） */
     @PostMapping("/{sessionId}/messages")
     public ApiResponse<SendMessageResp> sendMessage(@PathVariable Long sessionId, @RequestBody SendMessageReq req) {
+        sessionAccessService.requireOwned(sessionId, "会话不存在或无权访问");
         return ApiResponse.success(flowEngineService.sendMessage(sessionId, req.getContent()));
     }
 
     /** FP-13/19 退出训练 */
     @PostMapping("/{sessionId}/exit")
     public ApiResponse<Void> exit(@PathVariable Long sessionId) {
+        sessionAccessService.requireOwned(sessionId, "会话不存在或无权访问");
         flowEngineService.exit(sessionId);
         return ApiResponse.success();
     }
@@ -67,10 +70,7 @@ public class StudentSessionController {
     @PostMapping("/{sessionId}/tts")
     public ApiResponse<TtsResp> tts(@PathVariable Long sessionId, @RequestBody TtsReq req) {
         // 1. 会话校验
-        TrainingSession session = sessionMapper.selectById(sessionId);
-        if (session == null) {
-            throw new BizException("会话不存在");
-        }
+        TrainingSession session = sessionAccessService.requireOwned(sessionId, "会话不存在或无权访问");
         // 2. 消息校验：存在且属于该会话且为陪练者消息
         if (req.getMessageId() == null) {
             throw new BizException("消息不存在或不属于该会话");
@@ -113,10 +113,7 @@ public class StudentSessionController {
             @PathVariable Long sessionId,
             @RequestParam("audio") MultipartFile audio) {
         // 1. 会话存在且进行中（错误口径与文字作答接口一致）
-        TrainingSession session = sessionMapper.selectById(sessionId);
-        if (session == null) {
-            throw new BizException("会话不存在");
-        }
+        TrainingSession session = sessionAccessService.requireOwned(sessionId, "会话不存在或无权访问");
         if (session.getStatus() == null || session.getStatus() != 0) {
             throw new BizException("会话已结束，不能继续发送");
         }

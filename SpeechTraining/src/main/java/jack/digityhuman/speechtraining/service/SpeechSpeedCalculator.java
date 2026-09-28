@@ -29,8 +29,6 @@ public class SpeechSpeedCalculator {
     /** metric_config.params 中可覆盖的键 */
     private static final String PARAM_BEST_MIN = "bestMin";
     private static final String PARAM_BEST_MAX = "bestMax";
-    private static final String PARAM_STEP = "step";
-    private static final String PARAM_DEDUCT_PER_STEP = "deductPerStep";
 
     /**
      * 计算语速（字/分钟）
@@ -91,8 +89,8 @@ public class SpeechSpeedCalculator {
         }
         int min = bestMin(metric);
         int max = bestMax(metric);
-        int step = Math.max(1, intParam(metric, PARAM_STEP, DEVIATION_STEP));
-        int deduct = Math.max(0, intParam(metric, PARAM_DEDUCT_PER_STEP, DEDUCT_PER_STEP));
+        int step = DEVIATION_STEP;
+        int deduct = DEDUCT_PER_STEP;
         int deviation = 0;
         if (speechSpeed < min) {
             deviation = min - speechSpeed;

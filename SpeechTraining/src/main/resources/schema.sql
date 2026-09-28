@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS scoring_dimension (
   rule_type TINYINT DEFAULT 1 COMMENT '规则类型: 1=精准逐字匹配, 2=要点表达, 3=混合模式, 4=分级评分, 5=公式计算, 6=扣分制',
   scoring_rule TEXT COMMENT '评分规则描述',
   evidence_type TINYINT DEFAULT 1 COMMENT '评分依据: 1=文字, 2=语音, 3=文字+语音。语音依据维度在本次训练无语音数据时不参与评分',
-  metric_config VARCHAR(500) COMMENT '量化指标配置(JSON): {"metric":"speech_speed","params":{"bestMin":150,"bestMax":250,"step":10,"deductPerStep":5}}。空=该维度由AI评分；非空=得分由后端规则计算，AI只写评语',
+  metric_config VARCHAR(500) COMMENT '量化指标配置(JSON): {"metric":"speech_speed","params":{"bestMin":150,"bestMax":250}} 或 {"metric":"forbidden_words","params":{"deductPerHit":20}}。空=该维度由AI评分；非空=得分由后端规则计算，AI只写评语',
   is_custom TINYINT DEFAULT 0 COMMENT '是否自定义维度',
   sort_order INT DEFAULT 0 COMMENT '排序',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -228,7 +228,7 @@ CREATE TABLE IF NOT EXISTS training_message_like (
   UNIQUE INDEX uk_message_user (message_id, user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息点赞记录表';
 
--- 14. 每轮语音声学特征表（v1.2：只留存不参与评分，一条语音学员消息一行）
+-- 14. 每轮语音声学特征表（v1.3：语速读取 speech_ms，停顿供混合维度参考）
 CREATE TABLE IF NOT EXISTS training_round_acoustic (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   session_id BIGINT NOT NULL COMMENT '会话ID',
@@ -248,4 +248,15 @@ CREATE TABLE IF NOT EXISTS training_round_acoustic (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   UNIQUE INDEX uk_message (message_id),
   INDEX idx_session_round (session_id, round_no)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='每轮语音声学特征表(留存,暂不参与评分)';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='每轮语音声学特征表(v1.3起语速评分读speech_ms,停顿供混合维度参考)';
+
+-- 15. 训练项目指派学员关系（v1.4：移除仍保留历史会话/报告）
+CREATE TABLE IF NOT EXISTS project_student (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  project_id BIGINT NOT NULL COMMENT '训练项目ID',
+  user_id VARCHAR(64) NOT NULL COMMENT '学员账号(sys_user.account)',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_by VARCHAR(64) COMMENT '添加人账号',
+  UNIQUE INDEX uk_project_user (project_id, user_id),
+  INDEX idx_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='训练项目指派学员';

@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 学员端报告查询服务（FP-16/17/22）
@@ -37,6 +38,7 @@ public class StudentReportService {
     private final VirtualTrainerMapper virtualTrainerMapper;
     private final TrainingMessageLikeMapper messageLikeMapper;
     private final UserContext userContext;
+    private final AccessControlService accessControlService;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -44,10 +46,20 @@ public class StudentReportService {
      * 按会话查询训练报告（报告页主接口，含生成状态轮询，FP-22）
      */
     public ReportResp getReportBySession(Long sessionId) {
+        return getReportBySession(sessionId, null);
+    }
+
+    /**
+     * 按会话查询训练报告。管理端可显式传学员账号，但仍要求模块管理权限。
+     */
+    public ReportResp getReportBySession(Long sessionId, String requestedUserId) {
         TrainingReport report = reportMapper.selectOne(new LambdaQueryWrapper<TrainingReport>()
                 .eq(TrainingReport::getSessionId, sessionId));
         if (report == null) {
             throw new BizException("报告不存在");
+        }
+        if (!Objects.equals(report.getUserId(), reportOwner(requestedUserId))) {
+            throw new BizException("报告不存在或无权访问");
         }
 
         ReportResp resp = new ReportResp();
@@ -85,7 +97,12 @@ public class StudentReportService {
      * 话术一致性详情：逐轮要点命中明细（FP-16）
      */
     public ConsistencyResp getConsistency(Long reportId) {
+        return getConsistency(reportId, null);
+    }
+
+    public ConsistencyResp getConsistency(Long reportId, String requestedUserId) {
         TrainingReport report = requireReport(reportId);
+        requireReportOwner(report, requestedUserId);
         List<TrainingSessionMessage> messages = sessionMessages(report.getSessionId());
 
         ConsistencyResp resp = new ConsistencyResp();
@@ -118,6 +135,11 @@ public class StudentReportService {
      * 对话记录：只返回 withdrawn=0 的消息（FP-17）
      */
     public List<MessageResp> getSessionMessages(Long sessionId) {
+        return getSessionMessages(sessionId, null);
+    }
+
+    public List<MessageResp> getSessionMessages(Long sessionId, String requestedUserId) {
+        requireSessionOwner(sessionId, requestedUserId, "会话不存在或无权访问");
         return sessionMessages(sessionId).stream()
                 .filter(m -> m.getWithdrawn() == null || m.getWithdrawn() == 0)
                 .map(this::toMessageResp)
@@ -133,6 +155,7 @@ public class StudentReportService {
         if (message == null) {
             throw new BizException("消息不存在");
         }
+        requireSessionOwner(message.getSessionId(), null, "消息不存在或无权访问");
         String userId = userContext.getStudentId();
         // 幂等：已点赞过则直接返回当前计数
         Long liked = messageLikeMapper.selectCount(new LambdaQueryWrapper<TrainingMessageLike>()
@@ -161,6 +184,34 @@ public class StudentReportService {
             throw new BizException("报告不存在");
         }
         return report;
+    }
+
+    /**
+     * 学生端重新生成前校验报告归属；管理端不开放该操作。
+     */
+    public void requireReportOwner(Long reportId) {
+        requireReportOwner(requireReport(reportId), null);
+    }
+
+    private void requireReportOwner(TrainingReport report, String requestedUserId) {
+        if (!Objects.equals(report.getUserId(), reportOwner(requestedUserId))) {
+            throw new BizException("报告不存在或无权访问");
+        }
+    }
+
+    private void requireSessionOwner(Long sessionId, String requestedUserId, String errorMessage) {
+        TrainingSession session = sessionMapper.selectById(sessionId);
+        if (session == null || !Objects.equals(session.getUserId(), reportOwner(requestedUserId))) {
+            throw new BizException(errorMessage);
+        }
+    }
+
+    private String reportOwner(String requestedUserId) {
+        if (requestedUserId != null && !requestedUserId.isBlank()) {
+            accessControlService.requireManage();
+            return requestedUserId.trim();
+        }
+        return userContext.getStudentId();
     }
 
     /** 报告维度明细列表 */

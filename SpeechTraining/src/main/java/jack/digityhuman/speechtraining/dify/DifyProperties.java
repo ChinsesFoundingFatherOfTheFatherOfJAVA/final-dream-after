@@ -18,6 +18,8 @@ public class DifyProperties {
     public static class AgentConfig {
         private String baseUrl;
         private String apiKey;
+        /** HTTP read timeout in milliseconds; long-running workflows can override per agent. */
+        private int readTimeoutMs = 120_000;
     }
 
     public AgentConfig getAgentConfig(String agentType) {

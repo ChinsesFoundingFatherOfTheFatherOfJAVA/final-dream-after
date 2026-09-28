@@ -4,11 +4,14 @@ import jack.digityhuman.speechtraining.common.BizException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 @Slf4j
 @Component
@@ -16,7 +19,7 @@ import java.util.Map;
 public class DifyWorkflowSupport {
 
     private final DifyProperties difyProperties;
-    private final RestTemplate restTemplate;
+    private final ConcurrentMap<Integer, RestTemplate> restTemplates = new ConcurrentHashMap<>();
 
     /**
      * 调用Dify工作流
@@ -42,7 +45,7 @@ public class DifyWorkflowSupport {
         String url = config.getBaseUrl() + "/workflows/run";
         log.info("调用Dify工作流: agentType={}, url={}", agentType, url);
 
-        ResponseEntity<Map> response = restTemplate.exchange(
+        ResponseEntity<Map> response = restTemplateFor(config.getReadTimeoutMs()).exchange(
                 url,
                 HttpMethod.POST,
                 request,
@@ -74,5 +77,16 @@ public class DifyWorkflowSupport {
             throw new BizException("AI 服务未返回结果，请稍后重试");
         }
         return outputs;
+    }
+
+    /** 按读超时复用请求客户端，避免每个工作流请求都创建连接工厂。 */
+    RestTemplate restTemplateFor(int configuredReadTimeoutMs) {
+        int readTimeoutMs = configuredReadTimeoutMs > 0 ? configuredReadTimeoutMs : 120_000;
+        return restTemplates.computeIfAbsent(readTimeoutMs, timeout -> {
+            SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+            factory.setConnectTimeout(5_000);
+            factory.setReadTimeout(timeout);
+            return new RestTemplate(factory);
+        });
     }
 }

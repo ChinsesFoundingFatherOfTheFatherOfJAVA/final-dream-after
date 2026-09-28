@@ -25,20 +25,26 @@ public class StudentReportController {
 
     /** FP-13/21/22 查询训练报告（含轮询） */
     @GetMapping("/reports/session/{sessionId}")
-    public ApiResponse<ReportResp> getReportBySession(@PathVariable Long sessionId) {
-        return ApiResponse.success(studentReportService.getReportBySession(sessionId));
+    public ApiResponse<ReportResp> getReportBySession(
+            @PathVariable Long sessionId,
+            @RequestParam(required = false) String userId) {
+        return ApiResponse.success(studentReportService.getReportBySession(sessionId, userId));
     }
 
     /** FP-16 话术一致性详情 */
     @GetMapping("/reports/{reportId}/consistency")
-    public ApiResponse<ConsistencyResp> getConsistency(@PathVariable Long reportId) {
-        return ApiResponse.success(studentReportService.getConsistency(reportId));
+    public ApiResponse<ConsistencyResp> getConsistency(
+            @PathVariable Long reportId,
+            @RequestParam(required = false) String userId) {
+        return ApiResponse.success(studentReportService.getConsistency(reportId, userId));
     }
 
     /** FP-17 对话记录（消息列表，只含未撤回消息） */
     @GetMapping("/reports/session/{sessionId}/messages")
-    public ApiResponse<List<MessageResp>> getSessionMessages(@PathVariable Long sessionId) {
-        return ApiResponse.success(studentReportService.getSessionMessages(sessionId));
+    public ApiResponse<List<MessageResp>> getSessionMessages(
+            @PathVariable Long sessionId,
+            @RequestParam(required = false) String userId) {
+        return ApiResponse.success(studentReportService.getSessionMessages(sessionId, userId));
     }
 
     /** FP-17 消息点赞 */
@@ -52,6 +58,7 @@ public class StudentReportController {
     @PostMapping("/reports/{reportId}/regenerate")
     public ApiResponse<Void> regenerate(@PathVariable Long reportId) {
         // 同步重置状态后触发异步重新生成（拆两步调用保证 @Async 代理生效）
+        studentReportService.requireReportOwner(reportId);
         Long sessionId = reportGenerationService.resetForRegenerate(reportId);
         reportGenerationService.generateAsync(sessionId);
         return ApiResponse.success();

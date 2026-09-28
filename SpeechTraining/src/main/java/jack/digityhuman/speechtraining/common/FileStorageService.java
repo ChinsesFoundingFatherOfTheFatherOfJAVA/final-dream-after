@@ -166,6 +166,27 @@ public class FileStorageService {
     }
 
     /**
+     * 保存管理端本地上传的陪练者形象图片。
+     *
+     * @return 访问路径，如 /avatar/{uuid}.png
+     */
+    public String saveAvatarImage(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            return null;
+        }
+        String filename = UUID.randomUUID().toString().replace("-", "")
+                + resolveExtension(file.getOriginalFilename());
+        try {
+            Path target = avatarPath.resolve(filename);
+            file.transferTo(target.toFile());
+            log.info("陪练者形象图片已保存: {}", target);
+        } catch (IOException e) {
+            throw new BizException("形象图片保存失败: " + e.getMessage());
+        }
+        return normalizePrefix(avatarUrlPrefix) + "/" + filename;
+    }
+
+    /**
      * 音频统一落盘（/audio/{subDir}/{filename}）
      * <p>先写同目录临时文件再原子改名：TTS 音频会被浏览器 {@code <audio>} 直接请求，
      * 原地 {@code Files.write} 的截断窗口会让并发读者拿到半截文件，且 MP3 半截不报错、只是播不出来。
@@ -185,6 +206,38 @@ public class FileStorageService {
             return normalizePrefix(audioUrlPrefix) + "/" + subDir + "/" + filename;
         } catch (IOException e) {
             throw new BizException("音频保存失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 将落库的音频 URL 安全解析为本地文件路径。
+     * 只接受配置前缀下的相对路径，并拒绝 {@code ..} 越界与非法路径。
+     *
+     * @return 不在音频目录前缀下或路径非法时返回 null
+     */
+    public Path resolveAudioPath(String audioUrl) {
+        if (audioUrl == null || audioUrl.isBlank()) {
+            return null;
+        }
+        String prefix = normalizePrefix(audioUrlPrefix);
+        String expected = prefix + "/";
+        if (!audioUrl.startsWith(expected)) {
+            return null;
+        }
+        String relative = audioUrl.substring(expected.length());
+        if (relative.isBlank()) {
+            return null;
+        }
+        try {
+            Path resolved = audioPath.resolve(relative).normalize();
+            if (!resolved.startsWith(audioPath)) {
+                log.warn("拒绝越界的音频路径: {}", audioUrl);
+                return null;
+            }
+            return resolved;
+        } catch (RuntimeException e) {
+            log.warn("音频路径非法: {}", audioUrl, e);
+            return null;
         }
     }
 

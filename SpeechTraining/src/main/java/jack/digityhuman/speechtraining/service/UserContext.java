@@ -1,43 +1,49 @@
 package jack.digityhuman.speechtraining.service;
 
+import jack.digityhuman.speechtraining.auth.SpeechAuthContext;
+import jack.digityhuman.speechtraining.common.BizException;
 import org.springframework.stereotype.Component;
 
 /**
- * 用户上下文 - 钉钉同步未完成前的临时方案
- * TODO: 钉钉集成后替换为从钉钉获取真实用户信息
+ * 当前登录人上下文。
  */
 @Component
 public class UserContext {
 
     /**
-     * 获取当前用户ID
-     * 临时方案：返回固定占位值，钉钉同步完成后替换为真实实现
+     * 获取当前用户账号，用于 created_by / updated_by。
      */
     public String getCurrentUserId() {
-        return "system_admin";
+        return principal().account();
     }
 
     /**
-     * 获取当前用户名
-     * 临时方案：返回固定占位值，钉钉同步完成后替换为真实实现
+     * 获取当前用户名。
      */
     public String getCurrentUserName() {
-        return "系统管理员";
+        String name = principal().name();
+        return name == null ? principal().account() : name;
     }
 
     /**
-     * 获取当前学员端学员ID
-     * 临时方案：mock 固定学员（决策记录 FP-18），钉钉人员同步后替换为真实实现，接口签名不变
+     * 获取当前学员账号。指派、会话和报告统一以该账号作为隔离键。
      */
     public String getStudentId() {
-        return "mock_student_001";
+        return principal().account();
     }
 
     /**
-     * 获取当前学员端学员姓名
-     * 临时方案：mock 固定姓名，钉钉人员同步后替换
+     * 获取当前学员姓名。
      */
     public String getStudentName() {
-        return "学员";
+        return getCurrentUserName();
+    }
+
+    private SpeechAuthContext.Principal principal() {
+        SpeechAuthContext.Principal principal = SpeechAuthContext.get();
+        if (principal == null || principal.account() == null || principal.account().isBlank()) {
+            throw new BizException(401001, "未登录或登录已过期");
+        }
+        return principal;
     }
 }

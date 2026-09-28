@@ -9,25 +9,48 @@ import java.util.Map;
 
 /**
  * 违禁词检查器（学员端报告生成，FP-21）
- * 规则：按 virtual_trainer.forbidden_words 逗号分隔词表对学员消息做包含匹配，
- * 每命中一次扣 20 分，扣完为止，未踩中 = 100 分。
+ * 按 virtual_trainer.forbidden_words 逗号分隔词表对学员消息做包含匹配，只保留客观事实；
+ * 具体每次扣多少分由当前评分维度的 metric_config.params.deductPerHit 决定。
  */
 @Component
 public class ForbiddenWordChecker {
 
-    /** 单次命中扣分 */
-    private static final int DEDUCT_PER_HIT = 20;
+    /** 未配置参数时的单次命中默认扣分 */
+    public static final int DEFAULT_DEDUCT_PER_HIT = 20;
     /** 满分 */
     private static final int FULL_SCORE = 100;
 
     /**
      * 违禁词判定结果
      */
-    public record ForbiddenResult(int score, int totalHits, Map<String, Integer> hitWords, String factText) {
+    public record ForbiddenResult(int totalHits, Map<String, Integer> hitWords) {
 
         /** 是否踩中违禁词 */
         public boolean hasHit() {
             return totalHits > 0;
+        }
+
+        /**
+         * 按当前维度配置计算得分；缺失或非正数回落默认每次扣 20 分。
+         */
+        public int score(int deductPerHit) {
+            int deduct = deductPerHit > 0 ? deductPerHit : DEFAULT_DEDUCT_PER_HIT;
+            long score = FULL_SCORE - (long) totalHits * deduct;
+            return (int) Math.max(0, score);
+        }
+
+        /**
+         * 交给 Dify 的全局违禁词事实，不包含维度得分或扣分参数。
+         */
+        public String factText() {
+            if (totalHits == 0) {
+                return "学员在演练中没有踩中任何违禁词。";
+            }
+            StringBuilder sb = new StringBuilder("学员在演练中踩中违禁词共 ")
+                    .append(totalHits).append(" 次：");
+            hitWords.forEach((word, count) ->
+                    sb.append("「").append(word).append("」x").append(count).append("；"));
+            return sb.toString();
         }
     }
 
@@ -57,8 +80,7 @@ public class ForbiddenWordChecker {
             }
         }
 
-        int score = Math.max(0, FULL_SCORE - totalHits * DEDUCT_PER_HIT);
-        return new ForbiddenResult(score, totalHits, hitWords, buildFactText(totalHits, hitWords, score));
+        return new ForbiddenResult(totalHits, hitWords);
     }
 
     /**
@@ -89,18 +111,5 @@ public class ForbiddenWordChecker {
             idx += word.length();
         }
         return count;
-    }
-
-    /**
-     * 构建传给 Dify 报告智能体的事实描述文本
-     */
-    private String buildFactText(int totalHits, Map<String, Integer> hitWords, int score) {
-        if (totalHits == 0) {
-            return "学员在演练中没有踩中任何违禁词，违禁词维度得分100分。";
-        }
-        StringBuilder sb = new StringBuilder("学员在演练中踩中违禁词共 ").append(totalHits).append(" 次：");
-        hitWords.forEach((word, count) -> sb.append("「").append(word).append("」x").append(count).append("；"));
-        sb.append("按规则每命中一次扣20分，违禁词维度最终得分 ").append(score).append(" 分。");
-        return sb.toString();
     }
 }

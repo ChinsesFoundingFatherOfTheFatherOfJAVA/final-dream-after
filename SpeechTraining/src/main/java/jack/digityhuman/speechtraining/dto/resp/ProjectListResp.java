@@ -16,5 +16,7 @@ public class ProjectListResp {
     private LocalDateTime endTime;
     private String responsiblePersonName;
     private String coverImage;
+    private String createdBy;
+    private String createdByName;
     private LocalDateTime createdAt;
 }

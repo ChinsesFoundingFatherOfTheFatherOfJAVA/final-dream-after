@@ -83,6 +83,23 @@ class SpeechSpeedCalculatorTest {
     }
 
     @Test
+    void 自定义区间_160到240按新公式计算() {
+        DimensionMetricConfig metric = DimensionMetricConfig.parse(
+                "{\"metric\":\"speech_speed\",\"params\":{\"bestMin\":160,\"bestMax\":240}}");
+        // 150 低于自定义下限 10 → 扣 5 分；同一语速仍在默认区间 150-250 内。
+        assertEquals(95, calculator.calcRoundScore(150, metric));
+        assertEquals(100, calculator.calcRoundScore(150));
+    }
+
+    @Test
+    void 历史非白名单参数_step与deductPerStep不再生效() {
+        DimensionMetricConfig metric = DimensionMetricConfig.parse(
+                "{\"metric\":\"speech_speed\",\"params\":{\"step\":1,\"deductPerStep\":50}}");
+        // 若旧参数仍生效，120 会扣到 0；白名单过滤后应按默认偏离 3 步 × 5 分。
+        assertEquals(85, calculator.calcRoundScore(120, metric));
+    }
+
+    @Test
     void 极端语速_扣完为止不低于0() {
         // 语速 10：偏离 140 → 14 步 × 5 = 扣 70 → 30 分
         assertEquals(30, calculator.calcRoundScore(10));

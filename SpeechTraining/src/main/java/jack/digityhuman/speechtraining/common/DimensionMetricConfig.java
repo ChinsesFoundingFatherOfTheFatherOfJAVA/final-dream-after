@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -21,9 +22,18 @@ public record DimensionMetricConfig(String metric, Map<String, Object> params) {
     public static final String METRIC_SPEECH_SPEED = "speech_speed";
     /** 违禁词指标：由 virtual_trainer.forbidden_words 词表做包含匹配扣分 */
     public static final String METRIC_FORBIDDEN_WORDS = "forbidden_words";
+    /** 语气指标：由音频多模态模型按 aspect 单角度评分 */
+    public static final String METRIC_TONE = "tone";
+
+    public static final String DEFAULT_TONE_ASPECT = "热情";
 
     /** 管理端可选的指标白名单，未知 key 一律不落库 */
-    private static final Set<String> SUPPORTED_METRICS = Set.of(METRIC_SPEECH_SPEED, METRIC_FORBIDDEN_WORDS);
+    private static final Set<String> SUPPORTED_METRICS = Set.of(
+            METRIC_SPEECH_SPEED, METRIC_FORBIDDEN_WORDS, METRIC_TONE);
+    /** 各指标允许落库的参数白名单 */
+    private static final Set<String> SPEECH_SPEED_PARAMS = Set.of("bestMin", "bestMax");
+    private static final Set<String> FORBIDDEN_WORDS_PARAMS = Set.of("deductPerHit");
+    private static final Set<String> TONE_PARAMS = Set.of("aspect");
 
     /** 评分依据：文字 */
     public static final int EVIDENCE_TEXT = 1;
@@ -38,6 +48,22 @@ public record DimensionMetricConfig(String metric, Map<String, Object> params) {
      * 管理端选择的指标 key → 入库 JSON。空白/未知 key 返回 null（= 该维度交给 AI 评分）
      */
     public static String toJson(String metricKey) {
+        return toJson(metricKey, null, null);
+    }
+
+    /**
+     * 管理端选择的指标 key + 参数 → 入库 JSON。
+     * 只保留当前指标支持的参数，未知参数丢弃并告警。
+     */
+    public static String toJson(String metricKey, Map<String, Integer> params) {
+        return toJson(metricKey, params, null);
+    }
+
+    /**
+     * 管理端选择的指标 key + 整数参数 + tone 专用字符串参数 → 入库 JSON。
+     * tone 的 aspect 单独传入，避免把字符串硬塞进 Map&lt;String, Integer&gt;。
+     */
+    public static String toJson(String metricKey, Map<String, Integer> params, String aspect) {
         String key = metricKey == null ? "" : metricKey.trim();
         if (key.isEmpty() || "none".equals(key)) {
             return null;
@@ -46,7 +72,45 @@ public record DimensionMetricConfig(String metric, Map<String, Object> params) {
             log.warn("忽略未知评分指标配置: {}", key);
             return null;
         }
-        return "{\"metric\":\"" + key + "\"}";
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("metric", key);
+        Map<String, Object> cleanParams = new LinkedHashMap<>(cleanParams(key, params));
+        if (METRIC_TONE.equals(key)) {
+            cleanParams.put("aspect", normalizeToneAspect(aspect));
+        }
+        if (!cleanParams.isEmpty()) {
+            root.put("params", cleanParams);
+        }
+        try {
+            return MAPPER.writeValueAsString(root);
+        } catch (Exception e) {
+            log.warn("评分指标配置序列化失败，仅保留指标 key: {}", key, e);
+            return "{\"metric\":\"" + key + "\"}";
+        }
+    }
+
+    private static Map<String, Integer> cleanParams(String metricKey, Map<String, Integer> params) {
+        if (params == null || params.isEmpty()) {
+            return Map.of();
+        }
+        Set<String> allowed = allowedParams(metricKey);
+        Map<String, Integer> clean = new LinkedHashMap<>();
+        params.forEach((name, value) -> {
+            if (!allowed.contains(name) || value == null) {
+                log.warn("忽略评分指标 {} 不支持的参数: {}", metricKey, name);
+                return;
+            }
+            clean.put(name, value);
+        });
+        return clean;
+    }
+
+    private static Set<String> allowedParams(String metricKey) {
+        return switch (metricKey) {
+            case METRIC_SPEECH_SPEED -> SPEECH_SPEED_PARAMS;
+            case METRIC_TONE -> TONE_PARAMS;
+            default -> FORBIDDEN_WORDS_PARAMS;
+        };
     }
 
     /**
@@ -67,12 +131,51 @@ public record DimensionMetricConfig(String metric, Map<String, Object> params) {
                 return null;
             }
             Object params = root.get("params");
-            return new DimensionMetricConfig(key,
-                    params instanceof Map<?, ?> m ? castMap(m) : Map.of());
+            return new DimensionMetricConfig(key, parseParams(key, params));
         } catch (Exception e) {
             log.warn("维度评分指标配置解析失败，改由 AI 评分: {}", json, e);
             return null;
         }
+    }
+
+    /**
+     * 解析时同样执行白名单过滤，避免历史 JSON 里的 step/deductPerStep 继续影响当前公式。
+     */
+    private static Map<String, Object> parseParams(String metricKey, Object rawParams) {
+        if (!(rawParams instanceof Map<?, ?> m)) {
+            return Map.of();
+        }
+        Set<String> allowed = allowedParams(metricKey);
+        Map<String, Object> clean = new LinkedHashMap<>();
+        castMap(m).forEach((name, value) -> {
+            if (allowed.contains(name)) {
+                clean.put(name, value);
+            }
+        });
+        if (METRIC_TONE.equals(metricKey)) {
+            clean.put("aspect", normalizeToneAspect(stringValue(clean.get("aspect"))));
+        }
+        return clean;
+    }
+
+    /**
+     * tone 角度的统一入口：空值回落“热情”，做首尾空白清理。
+     */
+    public static String normalizeToneAspect(String aspect) {
+        String value = stringValue(aspect);
+        return value.isEmpty() ? DEFAULT_TONE_ASPECT : value;
+    }
+
+    /**
+     * 仅 tone 需要；2~6 个 UTF-16 字符，覆盖常见中文角度词。
+     */
+    public static boolean isValidToneAspect(String aspect) {
+        int length = normalizeToneAspect(aspect).length();
+        return length >= 2 && length <= 6;
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
     }
 
     @SuppressWarnings("unchecked")
@@ -84,7 +187,7 @@ public record DimensionMetricConfig(String metric, Map<String, Object> params) {
      * 读取 int 型参数，缺失或非法时回落到默认值
      */
     public int intParam(String name, int fallback) {
-        Object v = params.get(name);
+        Object v = params == null ? null : params.get(name);
         if (v instanceof Number n) {
             return n.intValue();
         }
@@ -94,5 +197,14 @@ public record DimensionMetricConfig(String metric, Map<String, Object> params) {
             log.warn("评分指标参数 {} 非法值 {}，使用默认值 {}", name, v, fallback);
             return fallback;
         }
+    }
+
+    /**
+     * 读取字符串参数，缺失或空白时回落到默认值。
+     */
+    public String stringParam(String name, String fallback) {
+        Object value = params == null ? null : params.get(name);
+        String text = stringValue(value);
+        return text.isEmpty() ? fallback : text;
     }
 }

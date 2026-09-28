@@ -26,6 +26,7 @@ public class ProjectDetailResp {
     private String responsiblePersonName;
     private String coverImage;
     private Integer dialogueMode;
+    private String createdBy;
     private String createdByName;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

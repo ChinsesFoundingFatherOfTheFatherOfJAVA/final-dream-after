@@ -39,6 +39,8 @@ public class ReportGenerationService {
     private final ForbiddenWordChecker forbiddenWordChecker;
     private final DifyReportScoringService difyReportScoringService;
     private final SpeechSpeedCalculator speechSpeedCalculator;
+    private final TrainingRoundAcousticMapper trainingRoundAcousticMapper;
+    private final ToneScoringService toneScoringService;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     /** "生成中"报告被判卡死的阈值（分钟） */
@@ -51,7 +53,9 @@ public class ReportGenerationService {
      * 学员说过话但每轮都被撤回/未通过时同样落到这里，说"全程文字作答"与事实不符。
      */
     private static final String NO_ACOUSTIC_REASON =
-            "本次没有可用于评分的语音作答，该维度以语音表现为评分依据，未参与本次评分";
+            "本次没有可用于评分的语音作答，该维度以语音表现为评分依据，未参与本次评分（权重已计入总分）";
+    private static final String TONE_UNAVAILABLE_REASON =
+            "语气语音评分本次不可用，该维度未参与本次评分（权重已计入总分）";
 
     /**
      * 重试前的同步重置：校验 + 删除旧维度明细 + 状态置回"生成中"
@@ -158,7 +162,7 @@ public class ReportGenerationService {
                 new LambdaQueryWrapper<TrainingSessionMessage>()
                         .eq(TrainingSessionMessage::getSessionId, session.getId())
                         .orderByAsc(TrainingSessionMessage::getSeq));
-        List<Map<String, Object>> rounds = buildRounds(messages);
+        List<Map<String, Object>> rounds = buildRounds(session.getId(), messages);
         if (rounds.isEmpty()) {
             throw new BizException("会话无有效对话轮次，无法生成报告");
         }
@@ -175,6 +179,7 @@ public class ReportGenerationService {
                 .filter(m -> m.get("speech_speed") != null)
                 .map(m -> (Integer) m.get("speech_speed"))
                 .toList();
+        List<ToneScoringService.ToneRoundInput> toneRounds = buildToneRounds(messages);
 
         // 3. 项目启用的评分维度
         List<ScoringDimension> dimensions = scoringDimensionMapper.selectList(
@@ -187,7 +192,7 @@ public class ReportGenerationService {
         }
 
         // 4. 逐个维度定档：是否参与本次评分、得分由后端指标算还是由 AI 评
-        List<DimensionPlan> plans = planDimensions(dimensions, roundSpeeds, forbiddenResult);
+        List<DimensionPlan> plans = planDimensions(dimensions, roundSpeeds, toneRounds, forbiddenResult);
         List<DimensionPlan> scoringPlans = plans.stream().filter(DimensionPlan::participates).toList();
         if (scoringPlans.isEmpty()) {
             throw new BizException("本次训练没有可参与评分的维度：" + plans.get(0).excludeReason());
@@ -195,7 +200,7 @@ public class ReportGenerationService {
 
         // 5. 调 Dify 报告评分智能体（只送参与评分的维度；后端已定分的维度把事实与得分追加进 rule，AI 只写评语）
         DifyReportScoringService.ReportAgentOutput agentOutput = difyReportScoringService.score(
-                toJson(rounds), toDimensionsJson(scoringPlans), forbiddenResult.factText());
+                toJson(rounds), toDimensionsJson(scoringPlans, rounds), forbiddenResult.factText());
 
         // 6. 组装维度明细（按项目维度顺序，含未参与维度，便于学员端说明原因）
         Map<String, DifyReportScoringService.AgentDimension> agentMap = agentOutput.getDimensions().stream()
@@ -203,36 +208,15 @@ public class ReportGenerationService {
                 .collect(Collectors.toMap(DifyReportScoringService.AgentDimension::getName, d -> d, (a, b) -> a));
 
         List<TrainingReportDimension> dimensionRows = new ArrayList<>();
-        BigDecimal weightedSum = BigDecimal.ZERO;
-        int weightSum = 0;
         int order = 1;
         for (DimensionPlan plan : plans) {
             TrainingReportDimension row = buildDimensionRow(report.getId(), plan,
                     agentMap.get(plan.dim().getDimensionName()), order++);
             dimensionRows.add(row);
-            if (row.getScore() == null) {
-                continue;   // 未参与评分的维度既不给分，也不占总分归一的权重
-            }
-            int weight = plan.dim().getWeight() == null ? 0 : plan.dim().getWeight();
-            weightSum += weight;
-            weightedSum = weightedSum.add(row.getScore().multiply(BigDecimal.valueOf(weight)));
         }
 
-        // 7. 总分 = Σ(维度分×权重) / Σ参与评分维度的权重（权重未配置时退化为已评分维度的简单平均）
-        List<BigDecimal> scored = dimensionRows.stream()
-                .map(TrainingReportDimension::getScore)
-                .filter(Objects::nonNull)
-                .toList();
-        if (scored.isEmpty()) {
-            throw new BizException("AI 未返回任何维度评分，报告无法生成");
-        }
-        BigDecimal totalScore;
-        if (weightSum > 0) {
-            totalScore = weightedSum.divide(BigDecimal.valueOf(weightSum), 1, RoundingMode.HALF_UP);
-        } else {
-            totalScore = scored.stream().reduce(BigDecimal.ZERO, BigDecimal::add)
-                    .divide(BigDecimal.valueOf(scored.size()), 1, RoundingMode.HALF_UP);
-        }
+        // 7. 未参与维度权重照占、按 0 分计；权重全为 0 时退化为已评分维度简单平均
+        BigDecimal totalScore = calculateTotalScore(dimensionRows);
 
         // 8. 排名 / 超过百分比 / 较上次变化（按项目内学员最高报告总分）
         RankResult rank = calcRank(session.getProjectId(), session.getUserId(), report.getId(), totalScore);
@@ -260,11 +244,14 @@ public class ReportGenerationService {
     /**
      * 按消息序还原逐轮对话：每个通过的学员消息与其前紧邻的陪练者问组成一轮
      * 输出结构：[{seq, trainer_question, student_answer, key_points, standard_script}]；
-     * v1.1：input_mode=2 的语音轮额外附加 {audio_duration_ms, char_count, speech_speed}
+     * v1.1：input_mode=2 的语音轮额外附加 {audio_duration_ms, char_count, speech_speed}；
+     * v1.3：speech_speed 优先使用声学表净发声时长 speech_ms，无有效值时回落 audioDurationMs。
      */
-    private List<Map<String, Object>> buildRounds(List<TrainingSessionMessage> messages) {
+    List<Map<String, Object>> buildRounds(Long sessionId, List<TrainingSessionMessage> messages) {
         List<Map<String, Object>> rounds = new ArrayList<>();
         Map<Long, TrainingNode> nodeCache = new HashMap<>();
+        Map<Long, TrainingRoundAcoustic> acousticByMessage = loadAcoustics(sessionId, messages);
+        boolean[] fallbackWarned = {false};
         String pendingQuestion = null;
         Long pendingNodeId = null;
         for (TrainingSessionMessage msg : messages) {
@@ -287,13 +274,26 @@ public class ReportGenerationService {
                 round.put("key_points", node == null ? List.of()
                         : KeyPointsUtil.parse(node.getKeyPoints()).stream().map(KeyPointsUtil.KeyPoint::content).toList());
                 round.put("standard_script", node == null ? null : node.getStandardScript());
-                // v1.1 语音特征：charCount=识别文本去标点长度，speechSpeed=字数÷时长×60（四舍五入）
+                // v1.3 语音特征：charCount=识别文本去标点长度，speechSpeed=字数÷净发声时长×60（四舍五入）
                 if (msg.getInputMode() != null && msg.getInputMode() == 2) {
                     int charCount = speechSpeedCalculator.countChars(msg.getContent());
+                    TrainingRoundAcoustic acoustic = msg.getId() == null
+                            ? null : acousticByMessage.get(msg.getId());
+                    Integer speechMs = acoustic == null ? null : acoustic.getSpeechMs();
+                    Integer durationMs = speechMs != null && speechMs > 0
+                            ? speechMs : msg.getAudioDurationMs();
+                    if ((speechMs == null || speechMs <= 0) && !fallbackWarned[0]) {
+                        fallbackWarned[0] = true;
+                        log.warn("会话 {} 存在无有效 speech_ms 的语音轮，语速回落 audioDurationMs", sessionId);
+                    }
                     round.put("audio_duration_ms", msg.getAudioDurationMs());
                     round.put("char_count", charCount);
-                    if (msg.getAudioDurationMs() != null && msg.getAudioDurationMs() > 0) {
-                        round.put("speech_speed", speechSpeedCalculator.calcSpeed(charCount, msg.getAudioDurationMs()));
+                    if (durationMs != null && durationMs > 0) {
+                        round.put("speech_speed", speechSpeedCalculator.calcSpeed(charCount, durationMs));
+                    }
+                    if (acoustic != null) {
+                        round.put("pause_count", acoustic.getPauseCount());
+                        round.put("pause_total_ms", acoustic.getPauseTotalMs());
                     }
                 }
                 rounds.add(round);
@@ -303,22 +303,74 @@ public class ReportGenerationService {
     }
 
     /**
+     * 按会话一次性读取声学行，避免逐轮查库；纯文字会话直接跳过。
+     */
+    private Map<Long, TrainingRoundAcoustic> loadAcoustics(Long sessionId,
+                                                            List<TrainingSessionMessage> messages) {
+        boolean hasVoice = messages != null && messages.stream()
+                .anyMatch(m -> m.getInputMode() != null && m.getInputMode() == 2);
+        if (!hasVoice || sessionId == null) {
+            return Map.of();
+        }
+        List<TrainingRoundAcoustic> rows = trainingRoundAcousticMapper.selectList(
+                new LambdaQueryWrapper<TrainingRoundAcoustic>()
+                        .eq(TrainingRoundAcoustic::getSessionId, sessionId));
+        Map<Long, TrainingRoundAcoustic> byMessage = new HashMap<>();
+        for (TrainingRoundAcoustic row : rows) {
+            if (row.getMessageId() != null) {
+                byMessage.putIfAbsent(row.getMessageId(), row);
+            }
+        }
+        return byMessage;
+    }
+
+    /**
+     * 组装语气模型输入。口径与语音语速指标一致：只取通过、未撤回的语音轮。
+     */
+    List<ToneScoringService.ToneRoundInput> buildToneRounds(List<TrainingSessionMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return List.of();
+        }
+        return messages.stream()
+                .filter(msg -> msg.getRole() != null && msg.getRole() == 2)
+                .filter(msg -> msg.getPassed() != null && msg.getPassed() == 1)
+                .filter(msg -> msg.getWithdrawn() == null || msg.getWithdrawn() == 0)
+                .filter(msg -> msg.getInputMode() != null && msg.getInputMode() == 2)
+                .map(msg -> new ToneScoringService.ToneRoundInput(
+                        msg.getId(),
+                        toneScoringService.resolveAudioFile(msg.getAudioUrl()),
+                        msg.getContent(),
+                        speechSpeedCalculator.countChars(msg.getContent())))
+                .toList();
+    }
+
+    /**
      * 逐个维度定档：先按评分依据（evidence_type）判断本次是否参与评分，
      * 再对参与的维度尝试走后端量化指标（metric_config）。
-     * 语音依据维度在本次没有语音数据时不参与评分——既不按满分也不按 0 分计入总分。
+     * 语音依据维度在本次没有语音数据时得分留空，但权重仍计入总分（等价于按 0 分计）。
      */
-    private List<DimensionPlan> planDimensions(List<ScoringDimension> dimensions, List<Integer> roundSpeeds,
-                                               ForbiddenWordChecker.ForbiddenResult forbiddenResult) {
+    List<DimensionPlan> planDimensions(List<ScoringDimension> dimensions, List<Integer> roundSpeeds,
+                                       List<ToneScoringService.ToneRoundInput> toneRounds,
+                                       ForbiddenWordChecker.ForbiddenResult forbiddenResult) {
         List<DimensionPlan> plans = new ArrayList<>();
         for (ScoringDimension dim : dimensions) {
             DimensionMetricConfig metric = DimensionMetricConfig.parse(dim.getMetricConfig());
+            boolean toneMetric = metric != null && DimensionMetricConfig.METRIC_TONE.equals(metric.metric());
             boolean needsAcoustic = dim.getEvidenceType() != null
                     && dim.getEvidenceType() == DimensionMetricConfig.EVIDENCE_ACOUSTIC;
-            if (needsAcoustic && roundSpeeds.isEmpty()) {
+            boolean hasAcousticRounds = toneMetric
+                    ? toneRounds != null && !toneRounds.isEmpty()
+                    : !roundSpeeds.isEmpty();
+            if (needsAcoustic && !hasAcousticRounds) {
                 plans.add(new DimensionPlan(dim, false, NO_ACOUSTIC_REASON, null));
                 continue;
             }
-            plans.add(new DimensionPlan(dim, true, null, measure(metric, roundSpeeds, forbiddenResult)));
+            MetricOutcome measured = measure(metric, roundSpeeds, toneRounds, forbiddenResult);
+            if (toneMetric && measured == null) {
+                plans.add(new DimensionPlan(dim, false, TONE_UNAVAILABLE_REASON, null));
+                continue;
+            }
+            plans.add(new DimensionPlan(dim, true, null, measured));
         }
         return plans;
     }
@@ -329,14 +381,16 @@ public class ReportGenerationService {
      *
      * @return null 表示该指标本次缺少数据（如混合依据维度遇上纯文字会话），该维度退回 AI 评分
      */
-    private MetricOutcome measure(DimensionMetricConfig metric, List<Integer> roundSpeeds,
-                                  ForbiddenWordChecker.ForbiddenResult forbiddenResult) {
+    MetricOutcome measure(DimensionMetricConfig metric, List<Integer> roundSpeeds,
+                          List<ToneScoringService.ToneRoundInput> toneRounds,
+                          ForbiddenWordChecker.ForbiddenResult forbiddenResult) {
         if (metric == null) {
             return null;
         }
         return switch (metric.metric()) {
             case DimensionMetricConfig.METRIC_SPEECH_SPEED -> measureSpeechSpeed(metric, roundSpeeds);
-            case DimensionMetricConfig.METRIC_FORBIDDEN_WORDS -> measureForbiddenWords(forbiddenResult);
+            case DimensionMetricConfig.METRIC_FORBIDDEN_WORDS -> measureForbiddenWords(metric, forbiddenResult);
+            case DimensionMetricConfig.METRIC_TONE -> toneScoringService.measureTone(metric, toneRounds);
             default -> null;
         };
     }
@@ -357,12 +411,15 @@ public class ReportGenerationService {
                 score < 80 ? List.of("建议将语速调整至 " + range + " 字/分钟的区间内，可通过录音回放自我校准。") : List.of());
     }
 
-    /** 违禁词指标：完全以违禁词检查结果为准；事实文本已由专门入参交给 Dify，不再重复拼进 rule */
-    private MetricOutcome measureForbiddenWords(ForbiddenWordChecker.ForbiddenResult forbiddenResult) {
-        return new MetricOutcome(forbiddenResult.score(), null,
+    /** 违禁词指标：按当前维度配置的每次扣分算分；事实文本已由专门入参交给 Dify，不再重复拼进 rule */
+    private MetricOutcome measureForbiddenWords(DimensionMetricConfig metric,
+                                                ForbiddenWordChecker.ForbiddenResult forbiddenResult) {
+        int deductPerHit = metric.intParam("deductPerHit", ForbiddenWordChecker.DEFAULT_DEDUCT_PER_HIT);
+        int score = forbiddenResult.score(deductPerHit);
+        return new MetricOutcome(score, null,
                 forbiddenResult.hasHit()
-                        ? "本次演练中踩中违禁词共 " + forbiddenResult.totalHits() + " 次，按规则扣分后得分 "
-                        + forbiddenResult.score() + " 分。"
+                        ? "本次演练中踩中违禁词共 " + forbiddenResult.totalHits() + " 次，每次扣 "
+                        + deductPerHit + " 分，按规则扣分后得分 " + score + " 分。"
                         : "您在演练中没有踩中任何违禁词，很不错，继续保持！",
                 forbiddenResult.hasHit() ? List.of() : List.of("全程未踩中任何违禁词"),
                 forbiddenResult.hasHit()
@@ -371,8 +428,8 @@ public class ReportGenerationService {
     }
 
     /**
-     * 组装单个维度明细行。得分为 null 的两种情形都不计入总分：
-     * 该维度本次不参与评分（缺依据数据）、AI 未返回该维度（不给 0 分兜底，避免把模型抖动算成学员失分）
+     * 组装单个维度明细行。得分为 null 的两种情形都保留权重并计入总分：
+     * 该维度本次不参与评分（缺依据数据）、AI 未返回该维度。
      */
     private TrainingReportDimension buildDimensionRow(Long reportId, DimensionPlan plan,
                                                       DifyReportScoringService.AgentDimension agent,
@@ -404,7 +461,7 @@ public class ReportGenerationService {
         if (agent == null) {
             log.warn("Dify报告评分缺少维度: {}", dim.getDimensionName());
             row.setScore(null);
-            row.setComment("AI 未返回该维度评分，本次未计入总分");
+            row.setComment("AI 未返回该维度评分，本次按 0 分计入总分");
             row.setGoodPoints(toJsonString(List.of()));
             row.setImprovements(toJsonString(List.of()));
             return row;
@@ -416,6 +473,34 @@ public class ReportGenerationService {
         row.setGoodPoints(toJsonString(agent.getGoodPoints() == null ? List.of() : agent.getGoodPoints()));
         row.setImprovements(toJsonString(agent.getImprovements() == null ? List.of() : agent.getImprovements()));
         return row;
+    }
+
+    /**
+     * 总分 = Σ(维度分×权重) / Σ全部维度权重。
+     * score=null 只跳过分子，权重照常进入分母；全部维度无分仍视为报告失败。
+     */
+    BigDecimal calculateTotalScore(List<TrainingReportDimension> dimensionRows) {
+        BigDecimal weightedSum = BigDecimal.ZERO;
+        BigDecimal scoreSum = BigDecimal.ZERO;
+        long weightSum = 0;
+        int scoredCount = 0;
+        for (TrainingReportDimension row : dimensionRows) {
+            int weight = row.getWeight() == null ? 0 : row.getWeight();
+            weightSum += weight;
+            if (row.getScore() == null) {
+                continue;
+            }
+            scoredCount++;
+            scoreSum = scoreSum.add(row.getScore());
+            weightedSum = weightedSum.add(row.getScore().multiply(BigDecimal.valueOf(weight)));
+        }
+        if (scoredCount == 0) {
+            throw new BizException("AI 未返回任何维度评分，报告无法生成");
+        }
+        if (weightSum > 0) {
+            return weightedSum.divide(BigDecimal.valueOf(weightSum), 1, RoundingMode.HALF_UP);
+        }
+        return scoreSum.divide(BigDecimal.valueOf(scoredCount), 1, RoundingMode.HALF_UP);
     }
 
     /**
@@ -495,21 +580,8 @@ public class ReportGenerationService {
     }
 
     /** 单个维度在本次报告里的定档结果 */
-    private record DimensionPlan(ScoringDimension dim, boolean participates, String excludeReason,
-                                 MetricOutcome measured) {
-    }
-
-    /**
-     * 后端量化指标的判定结果
-     *
-     * @param score       维度得分
-     * @param factText    追加进维度 rule 的事实文本；null 表示该事实已由专门入参交给 Dify
-     * @param comment     学员端维度总评
-     * @param goodPoints  做得好的点
-     * @param improvements 待改进点与建议
-     */
-    private record MetricOutcome(int score, String factText, String comment, List<String> goodPoints,
-                                 List<String> improvements) {
+    record DimensionPlan(ScoringDimension dim, boolean participates, String excludeReason,
+                         MetricOutcome measured) {
     }
 
     private String toJson(Object o) {
@@ -524,7 +596,8 @@ public class ReportGenerationService {
      * 维度输入 JSON：[{name, weight, rule}]，只送本次参与评分的维度
      * 后端已定分的维度把事实与得分追加进 rule，要求 Dify 采用该分数、只写评语
      */
-    private String toDimensionsJson(List<DimensionPlan> scoringPlans) {
+    String toDimensionsJson(List<DimensionPlan> scoringPlans, List<Map<String, Object>> rounds) {
+        String acousticReference = buildAcousticReference(rounds);
         List<Map<String, Object>> list = scoringPlans.stream().map(p -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name", p.dim().getDimensionName());
@@ -535,10 +608,71 @@ public class ReportGenerationService {
                 rule = (rule == null ? "" : rule) + "（后端已判定：" + measured.factText()
                         + "，该维度得分为 " + measured.score() + " 分，必须采用该分数，你只需据此写评语）";
             }
+            DimensionMetricConfig metric = DimensionMetricConfig.parse(p.dim().getMetricConfig());
+            if (acousticReference != null && metric == null
+                    && p.dim().getEvidenceType() != null
+                    && p.dim().getEvidenceType() == DimensionMetricConfig.EVIDENCE_MIXED) {
+                rule = (rule == null ? "" : rule) + acousticReference;
+            }
             m.put("rule", rule);
             return m;
         }).collect(Collectors.toList());
         return toJson(list);
+    }
+
+    /**
+     * 混合维度可用的语音参考摘要；只列出确实产出了语速的语音轮。
+     */
+    private String buildAcousticReference(List<Map<String, Object>> rounds) {
+        if (rounds == null || rounds.isEmpty()) {
+            return null;
+        }
+        List<String> items = new ArrayList<>();
+        for (Map<String, Object> round : rounds) {
+            Integer speed = asInteger(round.get("speech_speed"));
+            if (speed == null) {
+                continue;
+            }
+            int seq = Optional.ofNullable(asInteger(round.get("seq"))).orElse(items.size() + 1);
+            Integer pauseCount = asInteger(round.get("pause_count"));
+            Number pauseTotal = asNumber(round.get("pause_total_ms"));
+            String pauseText;
+            if (pauseCount == null || pauseCount <= 0 || pauseTotal == null || pauseTotal.longValue() <= 0) {
+                pauseText = "无停顿记录";
+            } else {
+                BigDecimal seconds = BigDecimal.valueOf(pauseTotal.longValue())
+                        .divide(BigDecimal.valueOf(1000), 1, RoundingMode.HALF_UP);
+                pauseText = "停顿" + pauseCount + "次共" + seconds + "秒";
+            }
+            items.add("第" + seq + "轮 语速" + speed + "字/分、" + pauseText);
+        }
+        if (items.isEmpty()) {
+            return null;
+        }
+        return "（语音表现参考——评分时请结合使用，但不要只按它打分："
+                + String.join("；", items) + "）";
+    }
+
+    private Integer asInteger(Object value) {
+        if (value instanceof Number n) {
+            return n.intValue();
+        }
+        try {
+            return value == null ? null : Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private Number asNumber(Object value) {
+        if (value instanceof Number n) {
+            return n;
+        }
+        try {
+            return value == null ? null : new BigDecimal(String.valueOf(value).trim());
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     /** 逐轮建议落库 JSON：[{seq, suggestion}] */
