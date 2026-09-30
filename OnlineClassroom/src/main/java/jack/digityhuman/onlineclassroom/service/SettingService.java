@@ -84,6 +84,9 @@ public class SettingService {
         if (request.speedScope() == null || (request.speedScope() != 1 && request.speedScope() != 2)) {
             throw new BizException("倍速使用范围不正确");
         }
+        if (request.speedHoursCalc() == null) {
+            throw new BizException("请选择是否开启学时倍速计算");
+        }
         KngSetting setting = loadRow();
         setting.setPlayConf(toJson(request));
         persist(setting, userId);
@@ -131,7 +134,7 @@ public class SettingService {
     }
 
     private KngSettingDtos.PlayConf defaultPlay() {
-        return new KngSettingDtos.PlayConf(true, 2);
+        return new KngSettingDtos.PlayConf(true, 2, true);
     }
 
     private KngSetting loadRow() {

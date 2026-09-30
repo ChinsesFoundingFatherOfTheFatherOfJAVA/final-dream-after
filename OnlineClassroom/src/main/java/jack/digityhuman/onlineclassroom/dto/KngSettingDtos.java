@@ -64,7 +64,7 @@ public final class KngSettingDtos {
     public record SpecialRequest(Boolean audioBackgroundPlay) {
     }
 
-    public record PlayConf(Boolean speedEnabled, Integer speedScope) {
+    public record PlayConf(Boolean speedEnabled, Integer speedScope, Boolean speedHoursCalc) {
     }
 
     public record FaceConf(Boolean enabled) {

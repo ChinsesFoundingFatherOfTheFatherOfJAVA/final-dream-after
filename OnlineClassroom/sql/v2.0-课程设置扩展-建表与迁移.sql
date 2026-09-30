@@ -27,6 +27,6 @@ INSERT INTO `kng_setting` (`id`, `score_conf`, `cheat_conf`, `play_conf`, `face_
   '{"antiIdleEnabled":true,"mode":1,"checkMinutes":3,"confirmSeconds":120,
     "promptText":"已触发防挂机验证，请点击\"继续学习\"，否则学习将被停止",
     "multiCourseEnabled":true,"forbidDragEnabled":true,"audioBackgroundPlay":false}',
-  '{"speedEnabled":true,"speedScope":2}',
+  '{"speedEnabled":true,"speedScope":2,"speedHoursCalc":true}',
   '{"enabled":false}'
 );
