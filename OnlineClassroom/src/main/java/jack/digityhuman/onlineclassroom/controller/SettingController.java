@@ -3,7 +3,6 @@ package jack.digityhuman.onlineclassroom.controller;
 import jack.digityhuman.onlineclassroom.common.ApiResponse;
 import jack.digityhuman.onlineclassroom.common.CurrentUserService;
 import jack.digityhuman.onlineclassroom.dto.KngSettingDtos;
-import jack.digityhuman.onlineclassroom.entity.KngSetting;
 import jack.digityhuman.onlineclassroom.service.SettingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,21 +25,46 @@ public class SettingController {
 
     @GetMapping
     public ApiResponse<KngSettingDtos.Response> get() {
-        KngSetting setting = settingService.get();
-        return ApiResponse.success(new KngSettingDtos.Response(
-                setting.getCreditMode(),
-                setting.getAntiIdleEnabled() != null && setting.getAntiIdleEnabled() == 1,
-                setting.getAntiIdleMode(),
-                setting.getCheckIntervalMinutes(),
-                setting.getConfirmSeconds(),
-                setting.getPromptText()));
+        return ApiResponse.success(settingService.getAll());
     }
 
-    @PutMapping
-    public ApiResponse<Void> save(
-            @RequestBody KngSettingDtos.SaveRequest request,
+    @PutMapping("/score")
+    public ApiResponse<Void> saveScore(
+            @RequestBody KngSettingDtos.ScoreConf request,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
-        settingService.save(request, currentUserService.userId(authorization));
+        settingService.saveScore(request, currentUserService.userId(authorization));
+        return ApiResponse.success(null);
+    }
+
+    @PutMapping("/cheat")
+    public ApiResponse<Void> saveCheat(
+            @RequestBody KngSettingDtos.CheatSaveRequest request,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        settingService.saveCheat(request, currentUserService.userId(authorization));
+        return ApiResponse.success(null);
+    }
+
+    @PutMapping("/special")
+    public ApiResponse<Void> saveSpecial(
+            @RequestBody KngSettingDtos.SpecialRequest request,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        settingService.saveSpecial(request, currentUserService.userId(authorization));
+        return ApiResponse.success(null);
+    }
+
+    @PutMapping("/play")
+    public ApiResponse<Void> savePlay(
+            @RequestBody KngSettingDtos.PlayConf request,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        settingService.savePlay(request, currentUserService.userId(authorization));
+        return ApiResponse.success(null);
+    }
+
+    @PutMapping("/face")
+    public ApiResponse<Void> saveFace(
+            @RequestBody KngSettingDtos.FaceConf request,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        settingService.saveFace(request, currentUserService.userId(authorization));
         return ApiResponse.success(null);
     }
 }
