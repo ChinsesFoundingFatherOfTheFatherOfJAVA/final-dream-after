@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="jack.digityhuman.staffmanagement.mapper.SysRolePermissionMapper">
+    <insert id="insertIgnore">
+        insert ignore into sys_role_permission (role_id, permission_id)
+        values (#{roleId}, #{permissionId})
+    </insert>
+
+    <select id="selectByRoleId"
+            resultType="jack.digityhuman.staffmanagement.entity.SysRolePermission">
+        select role_id, permission_id
+        from sys_role_permission
+        where role_id = #{roleId}
+    </select>
+
+    <select id="selectByRoleIds"
+            resultType="jack.digityhuman.staffmanagement.entity.SysRolePermission">
+        select role_id, permission_id
+        from sys_role_permission
+        where role_id in
+        <foreach collection="roleIds" item="roleId" open="(" separator="," close=")">
+            #{roleId}
+        </foreach>
+    </select>
+</mapper>

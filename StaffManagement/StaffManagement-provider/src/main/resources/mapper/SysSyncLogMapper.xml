@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="jack.digityhuman.staffmanagement.mapper.SysSyncLogMapper">
+    <select id="selectCurrentWatermark" resultType="java.time.LocalDateTime">
+        select watermark
+        from sys_sync_log
+        where status = 'SUCCESS'
+        order by id desc
+        limit 1
+    </select>
+
+    <select id="selectRecent" resultType="jack.digityhuman.staffmanagement.entity.SysSyncLog">
+        select id, sync_type, watermark, total, inserted, updated, deleted, skipped,
+               status, error_msg, started_at, finished_at
+        from sys_sync_log
+        order by id desc
+        limit #{limit}
+    </select>
+</mapper>

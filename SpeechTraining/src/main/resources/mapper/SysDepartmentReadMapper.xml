@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="jack.digityhuman.speechtraining.mapper.SysDepartmentReadMapper">
+    <select id="selectById" resultType="jack.digityhuman.speechtraining.entity.SysDepartmentRead">
+        select id, dept_name, parent_path, dept_path, dept_level, sort
+        from sys_department
+        where id = #{id}
+        limit 1
+    </select>
+</mapper>

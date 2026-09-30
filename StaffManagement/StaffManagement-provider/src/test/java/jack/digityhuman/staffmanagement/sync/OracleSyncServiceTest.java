@@ -1,12 +1,16 @@
 package jack.digityhuman.staffmanagement.sync;
 
-import jack.digityhuman.staffmanagement.auth.AuthService;
+import jack.digityhuman.staffmanagement.auth.service.AuthService;
 import jack.digityhuman.staffmanagement.config.SyncProperties;
 import jack.digityhuman.staffmanagement.entity.SysSyncLog;
 import jack.digityhuman.staffmanagement.mapper.SysDepartmentMapper;
 import jack.digityhuman.staffmanagement.mapper.SysSyncLogMapper;
 import jack.digityhuman.staffmanagement.mapper.SysUserMapper;
-import jack.digityhuman.staffmanagement.user.UserAdminService;
+import jack.digityhuman.staffmanagement.sync.service.OracleReader;
+import jack.digityhuman.staffmanagement.sync.service.OracleSyncService;
+import jack.digityhuman.staffmanagement.sync.service.impl.OracleSyncServiceImpl;
+import jack.digityhuman.staffmanagement.sync.vo.OracleEmployee;
+import jack.digityhuman.staffmanagement.user.service.UserAdminService;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
@@ -48,7 +52,7 @@ class OracleSyncServiceTest {
             return callback.doInTransaction(mock(TransactionStatus.class));
         });
 
-        OracleSyncService service = new OracleSyncService(reader, userMapper, departmentMapper,
+        OracleSyncService service = new OracleSyncServiceImpl(reader, userMapper, departmentMapper,
                 syncLogMapper, transactionTemplate, properties, authService, userAdminService);
         SysSyncLog log = service.syncNow(true);
 

@@ -5,6 +5,7 @@ import jack.digityhuman.onlineclassroom.common.BizException;
 import jack.digityhuman.onlineclassroom.dto.KngSettingDtos;
 import jack.digityhuman.onlineclassroom.entity.KngSetting;
 import jack.digityhuman.onlineclassroom.mapper.KngSettingMapper;
+import jack.digityhuman.onlineclassroom.service.impl.SettingServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -25,7 +26,7 @@ class SettingServiceTest {
     void returnsCodeDefaultsWhenRowIsMissing() {
         KngSettingMapper mapper = mock(KngSettingMapper.class);
         when(mapper.selectById(1)).thenReturn(null);
-        SettingService service = new SettingService(mapper);
+        SettingService service = new SettingServiceImpl(mapper);
 
         KngSettingDtos.Response response = service.getAll();
 
@@ -40,7 +41,7 @@ class SettingServiceTest {
     @Test
     void rejectsMicrocourseMaxScoreBelowSingleScore() {
         KngSettingMapper mapper = mock(KngSettingMapper.class);
-        SettingService service = new SettingService(mapper);
+        SettingService service = new SettingServiceImpl(mapper);
 
         KngSettingDtos.ScoreConf request = new KngSettingDtos.ScoreConf(
                 new KngSettingDtos.StandardRule(10, BigDecimal.ONE, false),
@@ -60,7 +61,7 @@ class SettingServiceTest {
         KngSettingMapper mapper = mock(KngSettingMapper.class);
         when(mapper.selectById(1)).thenReturn(null);
         when(mapper.updateById(any(KngSetting.class))).thenReturn(1);
-        SettingService service = new SettingService(mapper);
+        SettingService service = new SettingServiceImpl(mapper);
 
         String text = "a".repeat(251);
         assertThatThrownBy(() -> service.saveCheat(
@@ -82,7 +83,7 @@ class SettingServiceTest {
         KngSettingMapper mapper = mock(KngSettingMapper.class);
         when(mapper.selectById(1)).thenReturn(existing);
         when(mapper.updateById(any(KngSetting.class))).thenReturn(1);
-        SettingService service = new SettingService(mapper);
+        SettingService service = new SettingServiceImpl(mapper);
 
         service.saveCheat(
                 new KngSettingDtos.CheatSaveRequest(true, 2, 5, 90, "new", false, false),

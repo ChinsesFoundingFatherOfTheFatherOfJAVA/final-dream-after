@@ -2,9 +2,10 @@ package jack.digityhuman.staffmanagement.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import jack.digityhuman.staffmanagement.entity.SysRolePermission;
-import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+
+import java.util.List;
 
 /**
  * {@code sys_role_permission} 的数据访问（FP-14 权限即时保存）。
@@ -17,6 +18,9 @@ public interface SysRolePermissionMapper extends BaseMapper<SysRolePermission> {
      *
      * @return 1=新增成功，0=已存在
      */
-    @Insert("insert ignore into sys_role_permission (role_id, permission_id) values (#{roleId}, #{permissionId})")
     int insertIgnore(@Param("roleId") Long roleId, @Param("permissionId") Long permissionId);
+
+    List<SysRolePermission> selectByRoleId(@Param("roleId") Long roleId);
+
+    List<SysRolePermission> selectByRoleIds(@Param("roleIds") List<Long> roleIds);
 }

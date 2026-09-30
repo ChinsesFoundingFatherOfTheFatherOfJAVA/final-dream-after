@@ -3,7 +3,6 @@ package jack.digityhuman.speechtraining.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import jack.digityhuman.speechtraining.entity.TrainingSession;
 import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Select;
 
 /** 练习会话 Mapper */
 public interface TrainingSessionMapper extends BaseMapper<TrainingSession> {
@@ -13,6 +12,5 @@ public interface TrainingSessionMapper extends BaseMapper<TrainingSession> {
      * <p>学员"重复提交/双开页面"时两个请求会在锁上串行，后一个因此在锁内重读到
      * 已前进的 current_node_id，从而能判定自己的回答已过期。
      */
-    @Select("SELECT * FROM training_session WHERE id = #{sessionId} FOR UPDATE")
     TrainingSession selectForUpdate(@Param("sessionId") Long sessionId);
 }

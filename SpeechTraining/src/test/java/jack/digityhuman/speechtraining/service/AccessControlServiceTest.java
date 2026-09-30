@@ -3,27 +3,35 @@ package jack.digityhuman.speechtraining.service;
 import jack.digityhuman.speechtraining.auth.SpeechAuthContext;
 import jack.digityhuman.speechtraining.common.BizException;
 import jack.digityhuman.speechtraining.entity.TrainingProject;
+import jack.digityhuman.speechtraining.mapper.StaffUserMapper;
+import jack.digityhuman.speechtraining.mapper.SysPermissionReadMapper;
+import jack.digityhuman.speechtraining.mapper.SysRolePermissionReadMapper;
+import jack.digityhuman.speechtraining.mapper.SysUserRoleReadMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingProjectMapper;
+import jack.digityhuman.speechtraining.service.impl.AccessControlServiceImpl;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class AccessControlServiceTest {
 
     @Mock
-    private JdbcTemplate jdbcTemplate;
+    private StaffUserMapper staffUserMapper;
+    @Mock
+    private SysUserRoleReadMapper userRoleMapper;
+    @Mock
+    private SysRolePermissionReadMapper rolePermissionMapper;
+    @Mock
+    private SysPermissionReadMapper permissionMapper;
     @Mock
     private TrainingProjectMapper projectMapper;
 
@@ -31,7 +39,9 @@ class AccessControlServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AccessControlService(jdbcTemplate, projectMapper);
+        service = new AccessControlServiceImpl(
+                staffUserMapper, userRoleMapper, rolePermissionMapper,
+                permissionMapper, projectMapper);
     }
 
     @AfterEach
@@ -51,8 +61,7 @@ class AccessControlServiceTest {
     void rejectsUserWithoutSparringManagePermission() {
         SpeechAuthContext.set(new SpeechAuthContext.Principal(
                 "1001", "40022966", "周承浩", false));
-        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), any(), any()))
-                .thenReturn(0);
+        when(staffUserMapper.selectActiveByAccount(anyString())).thenReturn(null);
 
         assertThatThrownBy(service::requireManage)
                 .isInstanceOf(BizException.class)
@@ -78,13 +87,11 @@ class AccessControlServiceTest {
     @Test
     void allowsCreatorToWriteProject() {
         SpeechAuthContext.set(new SpeechAuthContext.Principal(
-                "1001", "40022966", "周承浩", false));
+                "1001", "40022966", "周承浩", true));
         TrainingProject project = new TrainingProject();
         project.setId(9L);
         project.setCreatedBy("40022966");
         when(projectMapper.selectById(9L)).thenReturn(project);
-        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), any(), any()))
-                .thenReturn(1);
 
         assertThatCode(() -> service.requireProjectOwner(9L)).doesNotThrowAnyException();
     }

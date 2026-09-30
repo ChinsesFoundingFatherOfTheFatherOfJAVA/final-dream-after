@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="jack.digityhuman.onlineclassroom.mapper.KngCoursewareMapper">
+
+    <sql id="coursewareFilters">
+        <where>
+            <if test="query != null and query.keyword != null and query.keyword != ''">
+                and (
+                    title like concat('%', #{query.keyword}, '%')
+                    or catalog_name like concat('%', #{query.keyword}, '%')
+                    or created_by_name like concat('%', #{query.keyword}, '%')
+                )
+            </if>
+            <if test="query != null and query.type != null">
+                and type = #{query.type}
+            </if>
+            <if test="query != null and query.status != null">
+                and status = #{query.status}
+            </if>
+            <if test="query != null and query.onSale != null">
+                and on_sale = #{query.onSale}
+            </if>
+            <if test="catalogIds != null and catalogIds.size() > 0">
+                and catalog_id in
+                <foreach collection="catalogIds" item="catalogId" open="(" separator="," close=")">
+                    #{catalogId}
+                </foreach>
+            </if>
+            <if test="query != null and query.quoted != null">
+                <choose>
+                    <when test="query.quoted == 1">
+                        <choose>
+                            <when test="quotedIds != null and quotedIds.size() > 0">
+                                and id in
+                                <foreach collection="quotedIds" item="quotedId" open="(" separator="," close=")">
+                                    #{quotedId}
+                                </foreach>
+                            </when>
+                            <otherwise>
+                                and 1 = 0
+                            </otherwise>
+                        </choose>
+                    </when>
+                    <otherwise>
+                        <if test="quotedIds != null and quotedIds.size() > 0">
+                            and id not in
+                            <foreach collection="quotedIds" item="quotedId" open="(" separator="," close=")">
+                                #{quotedId}
+                            </foreach>
+                        </if>
+                    </otherwise>
+                </choose>
+            </if>
+            <if test="query != null and query.uploadTimeStart != null and query.uploadTimeStart != ''">
+                and created_at &gt;= #{query.uploadTimeStart}
+            </if>
+            <if test="query != null and query.uploadTimeEnd != null and query.uploadTimeEnd != ''">
+                and created_at &lt; date_add(#{query.uploadTimeEnd}, interval 1 day)
+            </if>
+            <if test="query != null and query.updateTimeStart != null and query.updateTimeStart != ''">
+                and updated_at &gt;= #{query.updateTimeStart}
+            </if>
+            <if test="query != null and query.updateTimeEnd != null and query.updateTimeEnd != ''">
+                and updated_at &lt; date_add(#{query.updateTimeEnd}, interval 1 day)
+            </if>
+        </where>
+    </sql>
+
+    <select id="countByQuery" resultType="long">
+        select count(*)
+        from kng_courseware
+        <include refid="coursewareFilters"/>
+    </select>
+
+    <select id="selectPageByQuery" resultType="jack.digityhuman.onlineclassroom.entity.KngCourseware">
+        select *
+        from kng_courseware
+        <include refid="coursewareFilters"/>
+        <choose>
+            <when test="orderBy == 'updateTime' and orderType == 'asc'">
+                order by updated_at asc
+            </when>
+            <when test="orderBy == 'updateTime' and orderType == 'desc'">
+                order by updated_at desc
+            </when>
+            <otherwise>
+                order by updated_at desc
+            </otherwise>
+        </choose>
+        limit #{offset}, #{limit}
+    </select>
+
+    <select id="selectAllByQuery" resultType="jack.digityhuman.onlineclassroom.entity.KngCourseware">
+        select *
+        from kng_courseware
+        <include refid="coursewareFilters"/>
+        order by updated_at desc
+    </select>
+
+    <select id="countTranscode" resultType="long">
+        select count(*)
+        from kng_courseware
+        where status = #{status}
+        <if test="keyword != null and keyword != ''">
+            and (
+                title like concat('%', #{keyword}, '%')
+                or catalog_name like concat('%', #{keyword}, '%')
+                or created_by_name like concat('%', #{keyword}, '%')
+            )
+        </if>
+    </select>
+
+    <select id="selectTranscodePage" resultType="jack.digityhuman.onlineclassroom.entity.KngCourseware">
+        select *
+        from kng_courseware
+        where status = #{status}
+        <if test="keyword != null and keyword != ''">
+            and (
+                title like concat('%', #{keyword}, '%')
+                or catalog_name like concat('%', #{keyword}, '%')
+                or created_by_name like concat('%', #{keyword}, '%')
+            )
+        </if>
+        order by created_at desc
+        limit #{offset}, #{limit}
+    </select>
+
+    <select id="countByStatus" resultType="long">
+        select count(*)
+        from kng_courseware
+        where status = #{status}
+    </select>
+
+    <select id="countPlatformNoByPrefix" resultType="int">
+        select count(*)
+        from kng_courseware
+        where platform_no like concat(#{prefix}, '%')
+    </select>
+</mapper>

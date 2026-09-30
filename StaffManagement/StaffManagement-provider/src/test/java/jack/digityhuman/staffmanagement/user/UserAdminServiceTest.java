@@ -2,11 +2,15 @@ package jack.digityhuman.staffmanagement.user;
 
 import jack.digityhuman.staffmanagement.common.BizException;
 import jack.digityhuman.staffmanagement.config.AuthProperties;
-import jack.digityhuman.staffmanagement.department.DepartmentService;
+import jack.digityhuman.staffmanagement.department.service.DepartmentService;
 import jack.digityhuman.staffmanagement.entity.SysUser;
+import jack.digityhuman.staffmanagement.mapper.ProjectStudentCascadeMapper;
+import jack.digityhuman.staffmanagement.mapper.SysRoleMapper;
 import jack.digityhuman.staffmanagement.mapper.SysUserMapper;
 import jack.digityhuman.staffmanagement.mapper.SysUserRoleMapper;
-import jack.digityhuman.staffmanagement.mapper.UserCascadeMapper;
+import jack.digityhuman.staffmanagement.mapper.TrainingProjectCascadeMapper;
+import jack.digityhuman.staffmanagement.user.service.UserAdminService;
+import jack.digityhuman.staffmanagement.user.service.impl.UserAdminServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -48,7 +52,9 @@ class UserAdminServiceTest {
     private static Fixture fixture() {
         SysUserMapper userMapper = mock(SysUserMapper.class);
         SysUserRoleMapper userRoleMapper = mock(SysUserRoleMapper.class);
-        UserCascadeMapper cascadeMapper = mock(UserCascadeMapper.class);
+        SysRoleMapper roleMapper = mock(SysRoleMapper.class);
+        TrainingProjectCascadeMapper cascadeMapper = mock(TrainingProjectCascadeMapper.class);
+        ProjectStudentCascadeMapper studentCascadeMapper = mock(ProjectStudentCascadeMapper.class);
         DepartmentService departmentService = mock(DepartmentService.class);
         PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
         SysUser user = new SysUser();
@@ -57,12 +63,13 @@ class UserAdminServiceTest {
         user.setSource(UserAdminService.SOURCE_ORACLE);
         when(userMapper.selectById(1L)).thenReturn(user);
         when(userMapper.selectOne(any())).thenReturn(user);
-        UserAdminService service = new UserAdminService(userMapper, userRoleMapper, cascadeMapper,
+        UserAdminService service = new UserAdminServiceImpl(
+                userMapper, userRoleMapper, roleMapper, cascadeMapper, studentCascadeMapper,
                 departmentService, passwordEncoder, new AuthProperties());
         return new Fixture(service, userMapper, cascadeMapper);
     }
 
     private record Fixture(UserAdminService service, SysUserMapper userMapper,
-                           UserCascadeMapper cascadeMapper) {
+                           TrainingProjectCascadeMapper cascadeMapper) {
     }
 }

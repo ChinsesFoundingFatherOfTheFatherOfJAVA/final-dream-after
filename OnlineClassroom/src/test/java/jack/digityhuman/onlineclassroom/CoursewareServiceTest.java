@@ -9,13 +9,12 @@ import jack.digityhuman.onlineclassroom.mapper.KngCoursewareFileMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngCoursewareMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngRefMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngSettingMapper;
-import jack.digityhuman.onlineclassroom.service.CoursewareService;
+import jack.digityhuman.onlineclassroom.service.impl.CoursewareServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -39,10 +38,8 @@ class CoursewareServiceTest {
     private KngSettingMapper settingMapper;
     @Mock
     private KngRefMapper refMapper;
-    @Mock
-    private JdbcTemplate jdbcTemplate;
     @InjectMocks
-    private CoursewareService service;
+    private CoursewareServiceImpl service;
 
     @Test
     void followsScorePolicyInRealTimeForVideo() {

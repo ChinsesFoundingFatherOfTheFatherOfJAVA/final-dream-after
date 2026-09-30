@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="jack.digityhuman.staffmanagement.mapper.SysUserMapper">
+    <select id="selectRowsByIds" resultType="jack.digityhuman.staffmanagement.entity.SysUser">
+        select id, account, employee_no, name, mobile, email, dept_code, dept_name, dept_path,
+               position_name, job_grade, entry_date, status, is_super_admin, source,
+               last_sync_time, created_at, updated_at
+        from sys_user
+        where id in
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <select id="selectPositionCounts"
+            resultType="jack.digityhuman.staffmanagement.mapper.row.PositionCountRow">
+        select position_name, count(*) user_count
+        from sys_user
+        where position_name is not null
+          and position_name != ''
+        <if test="keyword != null and keyword != ''">
+            and position_name like concat('%', #{keyword}, '%')
+        </if>
+        group by position_name
+        order by user_count desc, position_name
+    </select>
+
+    <select id="selectJobGrades" resultType="string">
+        select distinct job_grade
+        from sys_user
+        where job_grade is not null
+          and job_grade != ''
+        order by job_grade
+    </select>
+
+    <select id="selectNamesByAccounts"
+            resultType="jack.digityhuman.staffmanagement.mapper.row.AccountNameRow">
+        select account, name
+        from sys_user
+        where account in
+        <foreach collection="accounts" item="account" open="(" separator="," close=")">
+            #{account}
+        </foreach>
+    </select>
+
+    <insert id="upsertBatch">
+        insert into sys_user (account, employee_no, name, mobile, dept_code, dept_name, dept_path,
+                              position_name, job_grade, entry_date, status, password, source, last_sync_time)
+        values
+        <foreach collection="list" item="user" separator=",">
+            (#{user.account}, #{user.employeeNo}, #{user.name}, #{user.mobile},
+             #{user.deptCode}, #{user.deptName}, #{user.deptPath}, #{user.positionName},
+             #{user.jobGrade}, #{user.entryDate}, #{user.status}, #{user.password},
+             #{user.source}, #{user.lastSyncTime})
+        </foreach>
+        as incoming
+        on duplicate key update
+            employee_no = incoming.employee_no,
+            name = incoming.name,
+            mobile = incoming.mobile,
+            dept_code = incoming.dept_code,
+            dept_name = incoming.dept_name,
+            dept_path = incoming.dept_path,
+            position_name = incoming.position_name,
+            job_grade = incoming.job_grade,
+            entry_date = incoming.entry_date,
+            last_sync_time = incoming.last_sync_time
+    </insert>
+
+    <update id="disableByAccounts">
+        update sys_user
+        set status = 0
+        where status = 1
+          and account in
+        <foreach collection="accounts" item="account" open="(" separator="," close=")">
+            #{account}
+        </foreach>
+    </update>
+
+    <select id="selectAllAccounts" resultType="string">
+        select account from sys_user
+    </select>
+
+    <select id="sumEnabledByDeptPath"
+            resultType="jack.digityhuman.staffmanagement.mapper.row.DeptPathCountRow">
+        select dept_path, count(*) user_count
+        from sys_user
+        where dept_path is not null
+          and dept_path != ''
+        group by dept_path
+    </select>
+
+    <select id="selectDeptPathInfo"
+            resultType="jack.digityhuman.staffmanagement.mapper.row.DeptPathInfoRow">
+        select dept_path, min(dept_code) dept_code
+        from sys_user
+        where dept_path is not null
+          and dept_path != ''
+        group by dept_path
+    </select>
+
+    <select id="selectOracleAccounts" resultType="string">
+        select account
+        from sys_user
+        where source = 'ORACLE'
+    </select>
+</mapper>

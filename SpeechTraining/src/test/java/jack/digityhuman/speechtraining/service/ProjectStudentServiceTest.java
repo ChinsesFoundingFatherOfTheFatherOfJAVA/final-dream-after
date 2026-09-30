@@ -8,14 +8,16 @@ import jack.digityhuman.speechtraining.entity.ProjectStudent;
 import jack.digityhuman.speechtraining.entity.StaffUser;
 import jack.digityhuman.speechtraining.mapper.ProjectStudentMapper;
 import jack.digityhuman.speechtraining.mapper.StaffUserMapper;
+import jack.digityhuman.speechtraining.mapper.SysDepartmentReadMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingProjectMapper;
+import jack.digityhuman.speechtraining.mapper.TrainingReportMapper;
+import jack.digityhuman.speechtraining.service.impl.ProjectStudentServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
 
@@ -38,14 +40,16 @@ class ProjectStudentServiceTest {
     @Mock
     private StaffUserMapper staffUserMapper;
     @Mock
-    private JdbcTemplate jdbcTemplate;
+    private TrainingReportMapper trainingReportMapper;
+    @Mock
+    private SysDepartmentReadMapper departmentMapper;
 
     private ProjectStudentService service;
 
     @BeforeEach
     void setUp() {
-        service = new ProjectStudentService(accessControlService, projectMapper, projectStudentMapper,
-                staffUserMapper, jdbcTemplate);
+        service = new ProjectStudentServiceImpl(accessControlService, projectMapper, projectStudentMapper,
+                staffUserMapper, trainingReportMapper, departmentMapper);
     }
 
     @Test
@@ -66,7 +70,7 @@ class ProjectStudentServiceTest {
         StaffUser u1 = user("u1");
         StaffUser u2 = user("u2");
         StaffUser u3 = user("u3");
-        when(staffUserMapper.selectList(any())).thenReturn(List.of(u1, u2, u3));
+        when(staffUserMapper.selectByAccounts(any())).thenReturn(List.of(u1, u2, u3));
         ProjectStudent existing = new ProjectStudent();
         existing.setUserId("u2");
         when(projectStudentMapper.selectList(any())).thenReturn(List.of(existing));
@@ -87,7 +91,7 @@ class ProjectStudentServiceTest {
     void inviteRejectsUnknownUser() {
         InviteStudentsReq req = new InviteStudentsReq();
         req.setUserIds(List.of("missing"));
-        when(staffUserMapper.selectList(any())).thenReturn(List.of());
+        when(staffUserMapper.selectByAccounts(any())).thenReturn(List.of());
 
         assertThatThrownBy(() -> service.invite(9L, req))
                 .isInstanceOf(BizException.class)

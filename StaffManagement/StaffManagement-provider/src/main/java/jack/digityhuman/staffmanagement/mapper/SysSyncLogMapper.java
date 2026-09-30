@@ -4,7 +4,6 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import jack.digityhuman.staffmanagement.entity.SysSyncLog;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Select;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -23,11 +22,8 @@ public interface SysSyncLogMapper extends BaseMapper<SysSyncLog> {
      *
      * @return 无成功记录（首次部署）时为 null，调用方按全量处理
      */
-    @Select("select watermark from sys_sync_log where status = 'SUCCESS' order by id desc limit 1")
     LocalDateTime selectCurrentWatermark();
 
     /** 最近若干次同步记录（倒序），供 {@code GET /api/sm/admin/sync/status} 排查用。 */
-    @Select("select id, sync_type, watermark, total, inserted, updated, deleted, skipped, status, error_msg,"
-            + " started_at, finished_at from sys_sync_log order by id desc limit #{limit}")
     List<SysSyncLog> selectRecent(@Param("limit") int limit);
 }

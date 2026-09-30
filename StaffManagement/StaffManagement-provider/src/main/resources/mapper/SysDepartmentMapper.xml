@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="jack.digityhuman.staffmanagement.mapper.SysDepartmentMapper">
+    <delete id="deleteAll">
+        delete from sys_department
+    </delete>
+
+    <insert id="insertBatch">
+        insert into sys_department (dept_code, dept_name, parent_path, dept_path, dept_level, sort, user_count)
+        values
+        <foreach collection="list" item="department" separator=",">
+            (#{department.deptCode}, #{department.deptName}, #{department.parentPath},
+             #{department.deptPath}, #{department.deptLevel}, #{department.sort}, 0)
+        </foreach>
+    </insert>
+
+    <update id="updateUserCounts">
+        update sys_department
+        set user_count = case dept_path
+        <foreach collection="list" item="department">
+            when #{department.deptPath} then #{department.userCount}
+        </foreach>
+        end
+        where dept_path in
+        <foreach collection="list" item="department" open="(" separator="," close=")">
+            #{department.deptPath}
+        </foreach>
+    </update>
+</mapper>
