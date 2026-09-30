@@ -50,7 +50,12 @@ public class DataInitializer implements ApplicationRunner {
             new Seed("act", "AI实战训练场", null, 30),
             new Seed("act:speech", "话术训练中心", "act", 31, "/sparring/newmanage"),
             new Seed("act:template", "话术模板", "act", 32, "/sparring/newtemplate"),
-            new Seed("act:training", "实战训练场", "act", 33, "/sparring/freesimulate"));
+            new Seed("act:training", "实战训练场", "act", 33, "/sparring/freesimulate"),
+            new Seed("kng", "在线课堂", null, 40),
+            new Seed("kng:courseware", "课件管理", "kng", 41, "/kng/courseware"),
+            new Seed("kng:course", "课程管理", "kng", 42, "/kng/course"),
+            new Seed("kng:catalog", "分类管理", "kng", 43, "/kng/catalog"),
+            new Seed("kng:setting", "课程设置", "kng", 44, "/kng/setting"));
 
     private static final Logger log = LoggerFactory.getLogger(DataInitializer.class);
 

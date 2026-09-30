@@ -34,6 +34,17 @@ class PassStrategyServiceTest {
     }
 
     @Test
+    void reportWithoutGeneratedStatusDoesNotCountAsCompleted() {
+        TrainingProject project = project(0, 1, null, null, null);
+        TrainingReport pending = report(100, 1);
+        pending.setStatus(1);
+        TrainingReport unknown = report(100, 2);
+        unknown.setStatus(null);
+
+        assertThat(service.isCompleted(project, List.of(pending, unknown))).isFalse();
+    }
+
+    @Test
     void singlePassAssessmentAcceptsAnyPassingReport() {
         TrainingProject project = project(1, null, 80, 1, null);
 

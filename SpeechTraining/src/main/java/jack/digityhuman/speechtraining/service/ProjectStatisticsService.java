@@ -656,7 +656,7 @@ public class ProjectStatisticsService {
         params.add(projectId);
         params.addAll(userIds);
         String sql = """
-                SELECT r.id, r.user_id, r.total_score, r.created_at
+                SELECT r.id, r.user_id, r.total_score, r.status, r.created_at
                 FROM training_report r
                 JOIN project_student ps ON ps.project_id = r.project_id AND ps.user_id = r.user_id
                 WHERE r.project_id = ? AND r.status = 2
@@ -668,6 +668,7 @@ public class ProjectStatisticsService {
             report.setId(rs.getLong("id"));
             report.setUserId(rs.getString("user_id"));
             report.setTotalScore(rs.getBigDecimal("total_score"));
+            report.setStatus(rs.getInt("status"));
             report.setCreatedAt(toLocalDateTime(rs.getTimestamp("created_at")));
             return report;
         }, params.toArray());
