@@ -1,7 +1,7 @@
 package jack.digityhuman.speechtraining.controller;
 
-import jack.digityhuman.speechtraining.common.ApiResponse;
-import jack.digityhuman.speechtraining.common.PageResult;
+import jack.digityhuman.common.api.ApiResponse;
+import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.speechtraining.dto.req.InviteStudentsReq;
 import jack.digityhuman.speechtraining.dto.req.ProjectStudentQueryReq;
 import jack.digityhuman.speechtraining.dto.resp.ProjectStudentRows;
@@ -23,24 +23,28 @@ public class AdminProjectStudentController {
 
     private final ProjectStudentService projectStudentService;
 
+    /** 项目学员列表（筛选 + 分页）。 */
     @PostMapping("/students/list")
     public ApiResponse<PageResult<ProjectStudentRows.ProjectStudentRow>> list(
             @PathVariable Long projectId, @RequestBody(required = false) ProjectStudentQueryReq req) {
         return ApiResponse.success(projectStudentService.list(projectId, req));
     }
 
+    /** 邀请学员（按账号，幂等跳过已指派）。 */
     @PostMapping("/students")
     public ApiResponse<ProjectStudentRows.InviteResult> invite(
             @PathVariable Long projectId, @RequestBody InviteStudentsReq req) {
         return ApiResponse.success(projectStudentService.invite(projectId, req));
     }
 
+    /** 移除学员指派。 */
     @DeleteMapping("/students")
     public ApiResponse<ProjectStudentRows.RemoveResult> remove(
             @PathVariable Long projectId, @RequestBody InviteStudentsReq req) {
         return ApiResponse.success(projectStudentService.remove(projectId, req));
     }
 
+    /** 候选学员（部门子树 + 关键词，排除已指派）。 */
     @GetMapping("/student-candidates")
     public ApiResponse<PageResult<ProjectStudentRows.CandidateRow>> candidates(
             @PathVariable Long projectId,

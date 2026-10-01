@@ -1,14 +1,12 @@
 package jack.digityhuman.speechtraining.service;
 
 import jack.digityhuman.speechtraining.auth.SpeechAuthContext;
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.entity.TrainingProject;
-import jack.digityhuman.speechtraining.mapper.StaffUserMapper;
-import jack.digityhuman.speechtraining.mapper.SysPermissionReadMapper;
-import jack.digityhuman.speechtraining.mapper.SysRolePermissionReadMapper;
-import jack.digityhuman.speechtraining.mapper.SysUserRoleReadMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingProjectMapper;
 import jack.digityhuman.speechtraining.service.impl.AccessControlServiceImpl;
+import jack.digityhuman.staffmanagement.api.OrgQueryService;
+import jack.digityhuman.staffmanagement.api.dto.AuthSnapshotDTO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,13 +23,7 @@ import static org.mockito.Mockito.when;
 class AccessControlServiceTest {
 
     @Mock
-    private StaffUserMapper staffUserMapper;
-    @Mock
-    private SysUserRoleReadMapper userRoleMapper;
-    @Mock
-    private SysRolePermissionReadMapper rolePermissionMapper;
-    @Mock
-    private SysPermissionReadMapper permissionMapper;
+    private OrgQueryService orgQueryService;
     @Mock
     private TrainingProjectMapper projectMapper;
 
@@ -39,9 +31,7 @@ class AccessControlServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AccessControlServiceImpl(
-                staffUserMapper, userRoleMapper, rolePermissionMapper,
-                permissionMapper, projectMapper);
+        service = new AccessControlServiceImpl(orgQueryService, projectMapper);
     }
 
     @AfterEach
@@ -61,7 +51,8 @@ class AccessControlServiceTest {
     void rejectsUserWithoutSparringManagePermission() {
         SpeechAuthContext.set(new SpeechAuthContext.Principal(
                 "1001", "40022966", "周承浩", false));
-        when(staffUserMapper.selectActiveByAccount(anyString())).thenReturn(null);
+        // 账号不存在：快照 userId 为 null，权限码为空
+        when(orgQueryService.getAuthSnapshot(anyString())).thenReturn(new AuthSnapshotDTO());
 
         assertThatThrownBy(service::requireManage)
                 .isInstanceOf(BizException.class)

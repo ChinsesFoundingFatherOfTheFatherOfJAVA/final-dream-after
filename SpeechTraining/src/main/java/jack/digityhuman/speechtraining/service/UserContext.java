@@ -1,7 +1,7 @@
 package jack.digityhuman.speechtraining.service;
 
 import jack.digityhuman.speechtraining.auth.SpeechAuthContext;
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import org.springframework.stereotype.Component;
 
 /**

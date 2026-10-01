@@ -1,6 +1,6 @@
 package jack.digityhuman.speechtraining.controller;
 
-import jack.digityhuman.speechtraining.common.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import jack.digityhuman.speechtraining.dto.resp.ConsistencyResp;
 import jack.digityhuman.speechtraining.dto.resp.MessageResp;
 import jack.digityhuman.speechtraining.dto.resp.ReportResp;

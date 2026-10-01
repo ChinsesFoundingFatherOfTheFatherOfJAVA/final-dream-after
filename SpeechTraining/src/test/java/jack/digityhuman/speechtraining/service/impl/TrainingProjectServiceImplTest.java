@@ -1,6 +1,6 @@
 package jack.digityhuman.speechtraining.service.impl;
 
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.dto.req.FlowSaveReq;
 import jack.digityhuman.speechtraining.dto.req.ProjectQueryParam;
 import jack.digityhuman.speechtraining.dto.req.ProjectSaveReq;

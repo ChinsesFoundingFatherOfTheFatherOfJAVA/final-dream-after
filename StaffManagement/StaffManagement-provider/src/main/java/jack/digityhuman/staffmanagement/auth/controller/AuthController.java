@@ -4,7 +4,7 @@ import jack.digityhuman.staffmanagement.auth.dto.ChangePasswordRequest;
 import jack.digityhuman.staffmanagement.auth.dto.LoginRequest;
 import jack.digityhuman.staffmanagement.auth.service.AuthService;
 import jack.digityhuman.staffmanagement.auth.vo.LoginResultVo;
-import jack.digityhuman.staffmanagement.web.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;

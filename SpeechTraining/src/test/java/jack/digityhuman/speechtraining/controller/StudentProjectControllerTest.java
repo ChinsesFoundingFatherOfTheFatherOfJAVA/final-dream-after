@@ -1,6 +1,6 @@
 package jack.digityhuman.speechtraining.controller;
 
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.dto.resp.ProjectRankResp;
 import jack.digityhuman.speechtraining.dto.resp.ProjectStatisticsResp;
 import jack.digityhuman.speechtraining.mapper.ProjectStudentMapper;

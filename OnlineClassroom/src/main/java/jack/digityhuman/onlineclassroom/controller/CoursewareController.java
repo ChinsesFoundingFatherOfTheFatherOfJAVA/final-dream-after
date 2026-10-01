@@ -1,6 +1,6 @@
 package jack.digityhuman.onlineclassroom.controller;
 
-import jack.digityhuman.onlineclassroom.common.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import jack.digityhuman.onlineclassroom.common.CurrentUserService;
 import jack.digityhuman.onlineclassroom.dto.KngCoursewareDtos;
 import jack.digityhuman.onlineclassroom.service.CoursewareService;
@@ -28,6 +28,7 @@ public class CoursewareController {
     private final CoursewareService coursewareService;
     private final CurrentUserService currentUserService;
 
+    /** 课件列表（多条件筛选 + 分页 + 学习次数排序）。 */
     @PostMapping("/list")
     public ApiResponse<KngCoursewareDtos.ListResponse> list(
             @RequestParam(defaultValue = "1") int page,
@@ -38,6 +39,7 @@ public class CoursewareController {
         return ApiResponse.success(coursewareService.list(page, pageSize, orderBy, orderType, query));
     }
 
+    /** 新建课件。 */
     @PostMapping
     public ApiResponse<KngCoursewareDtos.IdStatusResponse> create(
             @RequestBody KngCoursewareDtos.SaveRequest request,
@@ -46,6 +48,7 @@ public class CoursewareController {
                 request, currentUserService.userId(authorization)));
     }
 
+    /** 编辑课件。 */
     @PutMapping("/{id}")
     public ApiResponse<KngCoursewareDtos.IdResponse> update(
             @PathVariable String id,
@@ -55,11 +58,13 @@ public class CoursewareController {
                 id, request, currentUserService.userId(authorization)));
     }
 
+    /** 课件详情。 */
     @GetMapping("/{id}/detail")
     public ApiResponse<KngCoursewareDtos.Detail> detail(@PathVariable String id) {
         return ApiResponse.success(coursewareService.detail(id));
     }
 
+    /** 学习记录分页（支持按部门子树/人员关键词筛选）。 */
     @PostMapping("/{id}/study-records")
     public ApiResponse<KngCoursewareDtos.StudyRecordResponse> studyRecords(
             @PathVariable String id,
@@ -69,21 +74,25 @@ public class CoursewareController {
         return ApiResponse.success(coursewareService.studyRecords(id, page, pageSize, query));
     }
 
+    /** 学习概览三项计数。 */
     @GetMapping("/{id}/study-overview")
     public ApiResponse<KngCoursewareDtos.StudyOverview> studyOverview(@PathVariable String id) {
         return ApiResponse.success(coursewareService.studyOverview(id));
     }
 
+    /** 完课用时分布五档。 */
     @GetMapping("/{id}/finish-time-overview")
     public ApiResponse<KngCoursewareDtos.FinishTimeOverview> finishTimeOverview(@PathVariable String id) {
         return ApiResponse.success(coursewareService.finishTimeOverview(id));
     }
 
+    /** 学习记录筛选用的一级部门下拉。 */
     @GetMapping("/dept-first-level")
     public ApiResponse<List<KngCoursewareDtos.DeptBrief>> deptFirstLevel() {
         return ApiResponse.success(coursewareService.deptFirstLevel());
     }
 
+    /** 部门完成度统计（按部门 sort 排序）。 */
     @PostMapping("/{id}/dept-finish-overview")
     public ApiResponse<List<KngCoursewareDtos.DeptFinish>> deptFinishOverview(
             @PathVariable String id,
@@ -91,6 +100,7 @@ public class CoursewareController {
         return ApiResponse.success(coursewareService.deptFinishOverview(id, request));
     }
 
+    /** 转码列表（转码中/失败 Tab + 处理中角标）。 */
     @PostMapping("/transcode/list")
     public ApiResponse<KngCoursewareDtos.TranscodeResponse> transcodeList(
             @RequestParam(defaultValue = "1") int page,
@@ -99,6 +109,7 @@ public class CoursewareController {
         return ApiResponse.success(coursewareService.transcodeList(page, pageSize, query));
     }
 
+    /** 字幕列表（占位实现，返回空集合）。 */
     @PostMapping("/subtitles/list")
     public ApiResponse<KngCoursewareDtos.SubtitleResponse> subtitleList(
             @RequestBody(required = false) KngCoursewareDtos.SubtitleQuery query) {

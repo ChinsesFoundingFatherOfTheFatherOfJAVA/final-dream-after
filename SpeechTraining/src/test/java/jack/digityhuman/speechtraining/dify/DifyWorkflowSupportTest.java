@@ -59,7 +59,7 @@ class DifyWorkflowSupportTest {
         agents.put("fast", fast);
         agents.put("slow", slow);
         properties.setAgents(agents);
-        DifyWorkflowSupport support = new DifyWorkflowSupport(properties);
+        DifyWorkflowSupportImpl support = new DifyWorkflowSupportImpl(properties);
 
         assertThrows(ResourceAccessException.class, () -> support.runWorkflow("fast", Map.of()));
         Map<String, Object> outputs = support.runWorkflow("slow", Map.of());

@@ -1,7 +1,7 @@
 package jack.digityhuman.speechtraining.service;
 
 import com.baomidou.mybatisplus.spring.service.IService;
-import jack.digityhuman.speechtraining.common.PageResult;
+import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.speechtraining.dto.req.FlowSaveReq;
 import jack.digityhuman.speechtraining.dto.req.ProjectQueryParam;
 import jack.digityhuman.speechtraining.dto.req.ProjectSaveReq;

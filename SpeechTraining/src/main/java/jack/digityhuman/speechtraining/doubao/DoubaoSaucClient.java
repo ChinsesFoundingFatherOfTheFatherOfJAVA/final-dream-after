@@ -3,7 +3,7 @@ package jack.digityhuman.speechtraining.doubao;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.common.WavHeader;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

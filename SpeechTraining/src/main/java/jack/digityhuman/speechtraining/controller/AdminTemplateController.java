@@ -1,7 +1,7 @@
 package jack.digityhuman.speechtraining.controller;
 
-import jack.digityhuman.speechtraining.common.ApiResponse;
-import jack.digityhuman.speechtraining.common.PageResult;
+import jack.digityhuman.common.api.ApiResponse;
+import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.speechtraining.dto.req.FlowSaveReq;
 import jack.digityhuman.speechtraining.dto.req.TemplateQueryParam;
 import jack.digityhuman.speechtraining.dto.req.TemplateSaveReq;
@@ -19,27 +19,32 @@ public class AdminTemplateController {
 
     private final SpeechTemplateService templateService;
 
+    /** 话术模板列表（分页）。 */
     @GetMapping("/list")
     public ApiResponse<PageResult<TemplateListResp>> list(TemplateQueryParam param) {
         return ApiResponse.success(templateService.listTemplates(param));
     }
 
+    /** 模板详情（含流程节点/连线）。 */
     @GetMapping("/{id}")
     public ApiResponse<TemplateDetailResp> detail(@PathVariable Long id) {
         return ApiResponse.success(templateService.getTemplateDetail(id));
     }
 
+    /** 创建模板。 */
     @PostMapping
     public ApiResponse<Long> create(@RequestBody TemplateSaveReq req) {
         return ApiResponse.success(templateService.createTemplate(req));
     }
 
+    /** 编辑模板。 */
     @PutMapping("/{id}")
     public ApiResponse<Void> update(@PathVariable Long id, @RequestBody TemplateSaveReq req) {
         templateService.updateTemplate(id, req);
         return ApiResponse.success();
     }
 
+    /** 删除模板。 */
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {
         templateService.deleteTemplate(id);

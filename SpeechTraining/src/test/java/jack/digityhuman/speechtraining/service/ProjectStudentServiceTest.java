@@ -1,17 +1,16 @@
 package jack.digityhuman.speechtraining.service;
 
 import jack.digityhuman.speechtraining.auth.SpeechAuthContext;
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.dto.req.InviteStudentsReq;
 import jack.digityhuman.speechtraining.dto.resp.ProjectStudentRows;
 import jack.digityhuman.speechtraining.entity.ProjectStudent;
-import jack.digityhuman.speechtraining.entity.StaffUser;
 import jack.digityhuman.speechtraining.mapper.ProjectStudentMapper;
-import jack.digityhuman.speechtraining.mapper.StaffUserMapper;
-import jack.digityhuman.speechtraining.mapper.SysDepartmentReadMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingProjectMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingReportMapper;
 import jack.digityhuman.speechtraining.service.impl.ProjectStudentServiceImpl;
+import jack.digityhuman.staffmanagement.api.OrgQueryService;
+import jack.digityhuman.staffmanagement.api.dto.SysUserDTO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -38,18 +37,16 @@ class ProjectStudentServiceTest {
     @Mock
     private ProjectStudentMapper projectStudentMapper;
     @Mock
-    private StaffUserMapper staffUserMapper;
+    private OrgQueryService orgQueryService;
     @Mock
     private TrainingReportMapper trainingReportMapper;
-    @Mock
-    private SysDepartmentReadMapper departmentMapper;
 
     private ProjectStudentService service;
 
     @BeforeEach
     void setUp() {
         service = new ProjectStudentServiceImpl(accessControlService, projectMapper, projectStudentMapper,
-                staffUserMapper, trainingReportMapper, departmentMapper);
+                orgQueryService, trainingReportMapper);
     }
 
     @Test
@@ -67,10 +64,10 @@ class ProjectStudentServiceTest {
     void inviteIsIdempotentAndValidatesEveryUserExists() {
         InviteStudentsReq req = new InviteStudentsReq();
         req.setUserIds(List.of("u1", "u2", "u3"));
-        StaffUser u1 = user("u1");
-        StaffUser u2 = user("u2");
-        StaffUser u3 = user("u3");
-        when(staffUserMapper.selectByAccounts(any())).thenReturn(List.of(u1, u2, u3));
+        SysUserDTO u1 = user("u1");
+        SysUserDTO u2 = user("u2");
+        SysUserDTO u3 = user("u3");
+        when(orgQueryService.listUsersByAccounts(any())).thenReturn(List.of(u1, u2, u3));
         ProjectStudent existing = new ProjectStudent();
         existing.setUserId("u2");
         when(projectStudentMapper.selectList(any())).thenReturn(List.of(existing));
@@ -91,15 +88,15 @@ class ProjectStudentServiceTest {
     void inviteRejectsUnknownUser() {
         InviteStudentsReq req = new InviteStudentsReq();
         req.setUserIds(List.of("missing"));
-        when(staffUserMapper.selectByAccounts(any())).thenReturn(List.of());
+        when(orgQueryService.listUsersByAccounts(any())).thenReturn(List.of());
 
         assertThatThrownBy(() -> service.invite(9L, req))
                 .isInstanceOf(BizException.class)
                 .hasMessage("学员不存在");
     }
 
-    private static StaffUser user(String account) {
-        StaffUser user = new StaffUser();
+    private static SysUserDTO user(String account) {
+        SysUserDTO user = new SysUserDTO();
         user.setAccount(account);
         return user;
     }

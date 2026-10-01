@@ -1,6 +1,6 @@
 package jack.digityhuman.atualcombattraining.service;
 
-import jack.digityhuman.atualcombattraining.common.PageResult;
+import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.atualcombattraining.dto.req.ThemeListReq;
 import jack.digityhuman.atualcombattraining.dto.resp.ScenarioUnitResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ThemeDetailResp;

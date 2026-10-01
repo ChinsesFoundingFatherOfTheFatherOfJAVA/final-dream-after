@@ -2,7 +2,7 @@ package jack.digityhuman.speechtraining.service.impl;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.dto.resp.ProjectCardResp;
 import jack.digityhuman.speechtraining.dto.resp.StudentPageData;
 import jack.digityhuman.speechtraining.entity.ProjectStudent;
@@ -186,7 +186,7 @@ class StudentProjectServiceImplTest {
             return projectStudentMapper;
         }
         if (type.equals(PassStrategyService.class)) {
-            return new PassStrategyService();
+            return new jack.digityhuman.speechtraining.service.PassStrategyServiceImpl();
         }
         throw new IllegalArgumentException("Unsupported dependency: " + type.getName());
     }

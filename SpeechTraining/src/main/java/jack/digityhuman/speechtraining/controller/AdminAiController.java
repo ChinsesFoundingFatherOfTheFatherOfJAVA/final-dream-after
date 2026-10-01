@@ -1,6 +1,6 @@
 package jack.digityhuman.speechtraining.controller;
 
-import jack.digityhuman.speechtraining.common.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import jack.digityhuman.speechtraining.dto.req.AiScoringReq;
 import jack.digityhuman.speechtraining.dto.req.AiScriptGenReq;
 import jack.digityhuman.speechtraining.dto.req.AvatarGenReq;
@@ -23,12 +23,14 @@ public class AdminAiController {
     private final DifyScoringService scoringService;
     private final AvatarGenService avatarGenService;
 
+    /** AI 生成话术流程（场景描述 + 轮次）。 */
     @PostMapping("/generate-script")
     public ApiResponse<AiScriptGenResp> generateScript(@RequestBody AiScriptGenReq req) {
         return ApiResponse.success(scriptGenService.generateScript(
                 req.getDescription(), req.getRounds(), req.getFirstSpeaker()));
     }
 
+    /** AI 生成话术流程（参考资料文件上传：PDF/docx 文本提取后拼接描述）。 */
     @PostMapping("/generate-script/upload")
     public ApiResponse<AiScriptGenResp> generateScriptWithFile(
             @RequestParam("description") String description,
@@ -37,6 +39,7 @@ public class AdminAiController {
         return ApiResponse.success(scriptGenService.generateScriptWithFile(description, file, firstSpeaker));
     }
 
+    /** AI 单轮评分（标准话术 + 要点 + 学员回答）。 */
     @PostMapping("/score")
     public ApiResponse<AiScoringResp> score(@RequestBody AiScoringReq req) {
         return ApiResponse.success(scoringService.score(

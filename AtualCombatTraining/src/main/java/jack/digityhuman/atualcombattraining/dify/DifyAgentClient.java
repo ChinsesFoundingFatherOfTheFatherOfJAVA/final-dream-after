@@ -1,7 +1,7 @@
 package jack.digityhuman.atualcombattraining.dify;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import jack.digityhuman.atualcombattraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.common.JsonSupport;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;

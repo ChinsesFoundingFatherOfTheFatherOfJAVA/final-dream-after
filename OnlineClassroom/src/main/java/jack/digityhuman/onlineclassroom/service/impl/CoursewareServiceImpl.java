@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jack.digityhuman.onlineclassroom.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.onlineclassroom.dto.KngCoursewareDtos;
 import jack.digityhuman.onlineclassroom.dto.KngReadDtos;
 import jack.digityhuman.onlineclassroom.dto.KngSettingDtos;
@@ -14,8 +14,6 @@ import jack.digityhuman.onlineclassroom.entity.KngCoursewareAttachment;
 import jack.digityhuman.onlineclassroom.entity.KngCoursewareFile;
 import jack.digityhuman.onlineclassroom.entity.KngSetting;
 import jack.digityhuman.onlineclassroom.entity.KngStudyRecord;
-import jack.digityhuman.onlineclassroom.entity.SysDepartmentRead;
-import jack.digityhuman.onlineclassroom.entity.SysUserRead;
 import jack.digityhuman.onlineclassroom.mapper.KngCatalogMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngCoursewareAttachmentMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngCoursewareFileMapper;
@@ -23,9 +21,10 @@ import jack.digityhuman.onlineclassroom.mapper.KngCoursewareMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngRefMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngSettingMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngStudyRecordMapper;
-import jack.digityhuman.onlineclassroom.mapper.SysDepartmentReadMapper;
-import jack.digityhuman.onlineclassroom.mapper.SysUserReadMapper;
 import jack.digityhuman.onlineclassroom.service.CoursewareService;
+import jack.digityhuman.staffmanagement.api.OrgQueryService;
+import jack.digityhuman.staffmanagement.api.dto.SysDepartmentDTO;
+import jack.digityhuman.staffmanagement.api.dto.SysUserDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -67,9 +66,10 @@ public class CoursewareServiceImpl implements CoursewareService {
     private final KngSettingMapper settingMapper;
     private final KngRefMapper refMapper;
     private final KngStudyRecordMapper studyRecordMapper;
-    private final SysUserReadMapper userReadMapper;
-    private final SysDepartmentReadMapper departmentReadMapper;
+    /** 用户/部门数据经 Dubbo 取自 StaffManagement，不再直读 sys_* 表 */
+    private final OrgQueryService orgQueryService;
 
+    /** 课件列表：分页/多条件筛选（目录子树展开、引用状态、时间校验），支持按学习次数排序（全量取回内存排序）。 */
     public KngCoursewareDtos.ListResponse list(
             int pageNo, int pageSize, String orderBy, String orderType,
             KngCoursewareDtos.ListQuery query) {
@@ -127,6 +127,7 @@ public class CoursewareServiceImpl implements CoursewareService {
         return response;
     }
 
+    /** 课件详情：基础字段 + 目录路径/时长换算/贡献人姓名补齐 + 文件与附件列表。 */
     public KngCoursewareDtos.Detail detail(String id) {
         KngCourseware courseware = require(id);
         KngCoursewareDtos.Detail detail = new KngCoursewareDtos.Detail();
@@ -165,6 +166,7 @@ public class CoursewareServiceImpl implements CoursewareService {
         return detail;
     }
 
+    /** 新建课件：雪花 id、初始状态草稿、平台编号顺延，创建人姓名经 Dubbo 补齐；同事务写文件与附件行。 */
     @Transactional
     public KngCoursewareDtos.IdStatusResponse create(
             KngCoursewareDtos.SaveRequest request, String userId) {
@@ -186,6 +188,7 @@ public class CoursewareServiceImpl implements CoursewareService {
         return new KngCoursewareDtos.IdStatusResponse(courseware.getId(), courseware.getStatus());
     }
 
+    /** 编辑课件：只允许覆盖可编辑字段，创建信息/状态/平台编号保持不变；同事务重建文件与附件行。 */
     @Transactional
     public KngCoursewareDtos.IdResponse update(String id, KngCoursewareDtos.SaveRequest request, String userId) {
         validateSave(request);
@@ -210,6 +213,7 @@ public class CoursewareServiceImpl implements CoursewareService {
         return new KngCoursewareDtos.IdResponse(id);
     }
 
+    /** 学习记录分页：部门子树/人员关键词先展开为 id 集合再过滤，行级补齐学员姓名与部门展示名。 */
     public KngCoursewareDtos.StudyRecordResponse studyRecords(
             String coursewareId, int pageNo, int pageSize, KngCoursewareDtos.StudyRecordQuery query) {
         require(coursewareId);
@@ -221,12 +225,12 @@ public class CoursewareServiceImpl implements CoursewareService {
         List<String> deptIds = List.of();
         if (StringUtils.hasText(filter.deptId())) {
             if (filter.hasChild() != null && filter.hasChild() == 1) {
-                SysDepartmentRead department = departmentReadMapper.selectById(filter.deptId());
+                SysDepartmentDTO department = departmentById(filter.deptId());
                 if (department == null) {
                     deptIds = List.of(filter.deptId());
                 } else {
                     String prefix = department.getDeptPath() + "_";
-                    deptIds = departmentReadMapper.selectAllOrdered().stream()
+                    deptIds = orgQueryService.listAllDepartments().stream()
                             .filter(item -> item.getDeptPath().equals(department.getDeptPath())
                                     || item.getDeptPath().startsWith(prefix))
                             .map(item -> String.valueOf(item.getId()))
@@ -238,7 +242,9 @@ public class CoursewareServiceImpl implements CoursewareService {
         }
         List<String> userIds = List.of();
         if (StringUtils.hasText(filter.keyword())) {
-            userIds = userReadMapper.selectIdsByKeyword(filter.keyword().trim());
+            userIds = orgQueryService.listUserIdsByKeyword(filter.keyword().trim()).stream()
+                    .map(String::valueOf)
+                    .toList();
             if (userIds.isEmpty()) {
                 return new KngCoursewareDtos.StudyRecordResponse();
             }
@@ -251,9 +257,9 @@ public class CoursewareServiceImpl implements CoursewareService {
         List<KngStudyRecord> pageRecords = studyRecordMapper.selectRecordPage(
                 coursewareId, filter, resolvedDeptIds, resolvedUserIds,
                 (safePage - 1) * safeSize, safeSize);
-        Map<String, SysUserRead> users = userMap(pageRecords.stream()
+        Map<String, SysUserDTO> users = userMap(pageRecords.stream()
                 .map(KngStudyRecord::getUserId).distinct().toList());
-        Map<String, SysDepartmentRead> departments = departmentMap(pageRecords.stream()
+        Map<String, SysDepartmentDTO> departments = departmentMap(pageRecords.stream()
                 .map(KngStudyRecord::getDeptId).filter(StringUtils::hasText).distinct().toList());
         List<KngCoursewareDtos.StudyRecordItem> records = pageRecords.stream()
                 .map(record -> toStudyRecordItem(record, users, departments))
@@ -264,6 +270,7 @@ public class CoursewareServiceImpl implements CoursewareService {
         return response;
     }
 
+    /** 学习概览：近 7 天学习数 / 累计学习数 / 完课数三项计数。 */
     public KngCoursewareDtos.StudyOverview studyOverview(String coursewareId) {
         require(coursewareId);
         KngReadDtos.StudyOverviewRow counts = studyRecordMapper.selectOverview(
@@ -274,6 +281,7 @@ public class CoursewareServiceImpl implements CoursewareService {
                 counts.getNumOfFinish());
     }
 
+    /** 完课用时分布：1 天内 / 1 周内 / 1 月内 / 3 月内 / 更久五档计数。 */
     public KngCoursewareDtos.FinishTimeOverview finishTimeOverview(String coursewareId) {
         require(coursewareId);
         KngReadDtos.FinishTimeRow counts = studyRecordMapper.selectFinishTimeOverview(coursewareId);
@@ -285,27 +293,29 @@ public class CoursewareServiceImpl implements CoursewareService {
                 counts.getNumInMoreThrMon());
     }
 
+    /** 学习记录筛选用的一级部门下拉。 */
     public List<KngCoursewareDtos.DeptBrief> deptFirstLevel() {
-        return departmentReadMapper.selectFirstLevel().stream()
+        return orgQueryService.listFirstLevelDepartments().stream()
                 .map(item -> new KngCoursewareDtos.DeptBrief(
                         String.valueOf(item.getId()), item.getDeptName()))
                 .toList();
     }
 
+    /** 部门完成度统计：各部门学习/完课计数，按部门 sort 排序输出。 */
     public List<KngCoursewareDtos.DeptFinish> deptFinishOverview(
             String coursewareId, KngCoursewareDtos.DeptFinishRequest request) {
         require(coursewareId);
         List<String> deptIds = request == null || request.deptIds() == null
                 ? List.of() : request.deptIds().stream().filter(StringUtils::hasText).distinct().toList();
         List<KngReadDtos.StudyDeptCountRow> counts = studyRecordMapper.selectDeptCounts(coursewareId, deptIds);
-        Map<String, SysDepartmentRead> departments = deptIds.isEmpty()
-                ? departmentMap(departmentReadMapper.selectAllOrdered().stream()
+        Map<String, SysDepartmentDTO> departments = deptIds.isEmpty()
+                ? departmentMap(orgQueryService.listAllDepartments().stream()
                 .map(item -> String.valueOf(item.getId())).toList())
                 : departmentMap(deptIds);
         return counts.stream()
                 .filter(item -> departments.containsKey(item.getDeptId()))
                 .sorted(Comparator.comparing(item -> {
-                    SysDepartmentRead department = departments.get(item.getDeptId());
+                    SysDepartmentDTO department = departments.get(item.getDeptId());
                     return department.getSort() == null ? Integer.MAX_VALUE : department.getSort();
                 }))
                 .map(item -> new KngCoursewareDtos.DeptFinish(
@@ -316,6 +326,7 @@ public class CoursewareServiceImpl implements CoursewareService {
                 .toList();
     }
 
+    /** 转码列表（转码中/失败两个 Tab），附带转码中总数角标。 */
     public KngCoursewareDtos.TranscodeResponse transcodeList(
             int pageNo, int pageSize, KngCoursewareDtos.TranscodeQuery query) {
         KngCoursewareDtos.TranscodeQuery filter = query == null
@@ -347,6 +358,7 @@ public class CoursewareServiceImpl implements CoursewareService {
         return response;
     }
 
+    /** 字幕列表：占位实现，返回空集合（媒体能力待办见课件管理模块文档）。 */
     public KngCoursewareDtos.SubtitleResponse subtitleList(KngCoursewareDtos.SubtitleQuery query) {
         KngCoursewareDtos.SubtitleResponse response = new KngCoursewareDtos.SubtitleResponse();
         response.setTotal(0);
@@ -354,6 +366,7 @@ public class CoursewareServiceImpl implements CoursewareService {
         return response;
     }
 
+    /** 取单条课件，不存在抛"课件不存在"（供本服务与 CoursewareOpService 共用）。 */
     public KngCourseware require(String id) {
         KngCourseware courseware = StringUtils.hasText(id) ? coursewareMapper.selectById(id) : null;
         if (courseware == null) {
@@ -362,6 +375,7 @@ public class CoursewareServiceImpl implements CoursewareService {
         return courseware;
     }
 
+    /** 课件文件行（按 sort,id 升序）。 */
     public List<KngCoursewareFile> files(String coursewareId) {
         return fileMapper.selectList(Wrappers.<KngCoursewareFile>lambdaQuery()
                 .eq(KngCoursewareFile::getCoursewareId, coursewareId)
@@ -369,6 +383,7 @@ public class CoursewareServiceImpl implements CoursewareService {
                 .orderByAsc(KngCoursewareFile::getId));
     }
 
+    /** 课件附件行（按创建时间,id 升序）。 */
     public List<KngCoursewareAttachment> attachments(String coursewareId) {
         return attachmentMapper.selectList(Wrappers.<KngCoursewareAttachment>lambdaQuery()
                 .eq(KngCoursewareAttachment::getCoursewareId, coursewareId)
@@ -376,6 +391,7 @@ public class CoursewareServiceImpl implements CoursewareService {
                 .orderByAsc(KngCoursewareAttachment::getId));
     }
 
+    /** 目录子树展开：取全量目录在内存里递归收集（含自身 id），用于"含子目录"筛选。 */
     public List<String> descendantCatalogIds(String catalogId) {
         List<KngCatalog> catalogs = catalogMapper.selectList(Wrappers.<KngCatalog>lambdaQuery());
         Map<String, List<String>> children = catalogs.stream()
@@ -427,35 +443,56 @@ public class CoursewareServiceImpl implements CoursewareService {
         return result;
     }
 
-    private Map<String, SysUserRead> userMap(List<String> userIds) {
+    private Map<String, SysUserDTO> userMap(List<String> userIds) {
         if (userIds.isEmpty()) {
             return Map.of();
         }
-        Map<String, SysUserRead> result = new HashMap<>();
-        for (SysUserRead user : userReadMapper.selectByIds(userIds)) {
+        Map<String, SysUserDTO> result = new HashMap<>();
+        for (SysUserDTO user : orgQueryService.listUsersByIds(toLongIds(userIds))) {
             result.put(String.valueOf(user.getId()), user);
         }
         return result;
     }
 
-    private Map<String, SysDepartmentRead> departmentMap(List<String> deptIds) {
+    private Map<String, SysDepartmentDTO> departmentMap(List<String> deptIds) {
         if (deptIds.isEmpty()) {
             return Map.of();
         }
-        Map<String, SysDepartmentRead> result = new HashMap<>();
-        for (SysDepartmentRead department : departmentReadMapper.selectByIds(deptIds)) {
+        Map<String, SysDepartmentDTO> result = new HashMap<>();
+        for (SysDepartmentDTO department : orgQueryService.listDepartmentsByIds(toLongIds(deptIds))) {
             result.put(String.valueOf(department.getId()), department);
+        }
+        return result;
+    }
+
+    private SysDepartmentDTO departmentById(String deptId) {
+        List<Long> parsed = toLongIds(List.of(deptId));
+        return parsed.isEmpty() ? null : orgQueryService.getDepartment(parsed.get(0));
+    }
+
+    /** 学习记录/请求里存的用户与部门 id 是字符串，容忍 "0"、空串等非数字值（调用侧自己兜底显示"系统"）。 */
+    private static List<Long> toLongIds(Iterable<String> values) {
+        List<Long> result = new ArrayList<>();
+        for (String value : values) {
+            if (!StringUtils.hasText(value)) {
+                continue;
+            }
+            try {
+                result.add(Long.parseLong(value.trim()));
+            } catch (NumberFormatException ignored) {
+                // 非数字 id 不可能命中 sys 表，直接跳过
+            }
         }
         return result;
     }
 
     private KngCoursewareDtos.StudyRecordItem toStudyRecordItem(
             KngStudyRecord record,
-            Map<String, SysUserRead> users,
-            Map<String, SysDepartmentRead> departments) {
+            Map<String, SysUserDTO> users,
+            Map<String, SysDepartmentDTO> departments) {
         KngCoursewareDtos.StudyRecordItem item = new KngCoursewareDtos.StudyRecordItem();
-        SysUserRead user = users.get(record.getUserId());
-        SysDepartmentRead department = departments.get(record.getDeptId());
+        SysUserDTO user = users.get(record.getUserId());
+        SysDepartmentDTO department = departments.get(record.getDeptId());
         item.setUserId(record.getUserId());
         item.setName(user == null ? null : user.getName());
         item.setAccount(user == null ? null : user.getAccount());
@@ -730,7 +767,7 @@ public class CoursewareServiceImpl implements CoursewareService {
             contributor.setAccount("--");
             return contributor;
         }
-        List<SysUserRead> rows = userReadMapper.selectByIds(List.of(userId));
+        List<SysUserDTO> rows = userMap(List.of(userId)).values().stream().toList();
         if (rows.isEmpty()) {
             contributor.setName("系统");
             contributor.setAccount("--");
@@ -743,7 +780,7 @@ public class CoursewareServiceImpl implements CoursewareService {
 
     private String userName(String userId) {
         if (!StringUtils.hasText(userId)) return "系统";
-        List<SysUserRead> users = userReadMapper.selectByIds(List.of(userId));
+        List<SysUserDTO> users = orgQueryService.listUsersByIds(toLongIds(List.of(userId)));
         return users.isEmpty() ? "系统" : users.get(0).getName();
     }
 

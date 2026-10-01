@@ -2,15 +2,15 @@ package jack.digityhuman.onlineclassroom.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import jack.digityhuman.onlineclassroom.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.onlineclassroom.dto.KngCatalogDtos;
 import jack.digityhuman.onlineclassroom.entity.KngCatalog;
 import jack.digityhuman.onlineclassroom.entity.KngCatalogPermission;
-import jack.digityhuman.onlineclassroom.entity.SysUserRead;
 import jack.digityhuman.onlineclassroom.mapper.KngCatalogMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngCatalogPermissionMapper;
-import jack.digityhuman.onlineclassroom.mapper.SysUserReadMapper;
 import jack.digityhuman.onlineclassroom.service.CatalogService;
+import jack.digityhuman.staffmanagement.api.OrgQueryService;
+import jack.digityhuman.staffmanagement.api.dto.SysUserDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,7 +42,8 @@ public class CatalogServiceImpl implements CatalogService {
 
     private final KngCatalogMapper catalogMapper;
     private final KngCatalogPermissionMapper permissionMapper;
-    private final SysUserReadMapper userReadMapper;
+    /** 创建人/更新人姓名经 Dubbo 取自 StaffManagement，不再直读 sys_user 表 */
+    private final OrgQueryService orgQueryService;
 
     /** 分类整树；展开/搜索/统计口径切换全部由前端在本地完成。 */
     public List<KngCatalogDtos.TreeNode> tree() {
@@ -482,7 +483,7 @@ public class CatalogServiceImpl implements CatalogService {
             brief.setAccount("--");
             return brief;
         }
-        List<SysUserRead> users = userReadMapper.selectByIds(List.of(userId));
+        List<SysUserDTO> users = orgQueryService.listUsersByIds(parseUserId(userId));
         if (users.isEmpty()) {
             brief.setName("系统");
             brief.setAccount("--");
@@ -491,6 +492,18 @@ public class CatalogServiceImpl implements CatalogService {
         brief.setName(users.get(0).getName());
         brief.setAccount(users.get(0).getAccount());
         return brief;
+    }
+
+    /** created_by 存的是字符串 id，容忍非数字值（按"查无此人"处理）。 */
+    private List<Long> parseUserId(String userId) {
+        if (!StringUtils.hasText(userId)) {
+            return List.of();
+        }
+        try {
+            return List.of(Long.parseLong(userId.trim()));
+        } catch (NumberFormatException exception) {
+            return List.of();
+        }
     }
 
     private List<KngCatalogDtos.PermissionItem> permissionItems(String catalogId) {

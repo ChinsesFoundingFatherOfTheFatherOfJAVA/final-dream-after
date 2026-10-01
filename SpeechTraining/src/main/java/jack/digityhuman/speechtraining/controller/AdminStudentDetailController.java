@@ -1,7 +1,7 @@
 package jack.digityhuman.speechtraining.controller;
 
-import jack.digityhuman.speechtraining.common.ApiResponse;
-import jack.digityhuman.speechtraining.common.PageResult;
+import jack.digityhuman.common.api.ApiResponse;
+import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.speechtraining.dto.resp.ProjectStatisticsResp;
 import jack.digityhuman.speechtraining.service.ProjectStatisticsService;
 import lombok.RequiredArgsConstructor;

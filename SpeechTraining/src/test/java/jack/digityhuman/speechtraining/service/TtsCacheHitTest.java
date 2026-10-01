@@ -35,9 +35,9 @@ class TtsCacheHitTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        // 用临时目录实例化 FileStorageService（反射注入目录字段，@Value 在纯单测中不生效）
-        jack.digityhuman.speechtraining.common.FileStorageService fileStorageService =
-                new jack.digityhuman.speechtraining.common.FileStorageService();
+        // 用临时目录实例化 FileStorageServiceImpl（反射注入目录字段，@Value 在纯单测中不生效）
+        jack.digityhuman.speechtraining.common.FileStorageServiceImpl fileStorageService =
+                new jack.digityhuman.speechtraining.common.FileStorageServiceImpl();
         setField(fileStorageService, "coverImageDir", tempDir.resolve("coverImage").toString());
         setField(fileStorageService, "avatarDir", tempDir.resolve("avatar").toString());
         setField(fileStorageService, "audioDir", tempDir.resolve("audio").toString());
@@ -46,10 +46,10 @@ class TtsCacheHitTest {
         init.setAccessible(true);
         init.invoke(fileStorageService);
 
-        ttsCacheService = new TtsCacheService(fileStorageService);
+        ttsCacheService = new TtsCacheServiceImpl(fileStorageService);
 
         // SpeechService 子类覆写 doSynthesize，统计真实合成次数
-        speechService = new SpeechService(ttsCacheService, voiceMapProperties, doubaoSaucClient) {
+        speechService = new SpeechServiceImpl(ttsCacheService, voiceMapProperties, doubaoSaucClient) {
             @Override
             byte[] doSynthesize(String text, String voice, int speed) {
                 synthesizeCount.incrementAndGet();
@@ -65,7 +65,7 @@ class TtsCacheHitTest {
     @Test
     void 同键并发只合成一次() throws Exception {
         int callers = 5;
-        SpeechService slow = new SpeechService(ttsCacheService, voiceMapProperties, doubaoSaucClient) {
+        SpeechService slow = new SpeechServiceImpl(ttsCacheService, voiceMapProperties, doubaoSaucClient) {
             @Override
             byte[] doSynthesize(String text, String voice, int speed) {
                 synthesizeCount.incrementAndGet();

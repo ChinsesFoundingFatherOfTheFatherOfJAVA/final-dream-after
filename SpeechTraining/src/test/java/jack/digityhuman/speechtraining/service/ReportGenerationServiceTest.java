@@ -1,7 +1,7 @@
 package jack.digityhuman.speechtraining.service;
 
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.common.DimensionMetricConfig;
-import jack.digityhuman.speechtraining.common.BizException;
 import jack.digityhuman.speechtraining.dify.DifyReportScoringService;
 import jack.digityhuman.speechtraining.entity.ScoringDimension;
 import jack.digityhuman.speechtraining.entity.TrainingReportDimension;
@@ -58,11 +58,11 @@ class ReportGenerationServiceTest {
     @Mock
     private ToneScoringService toneScoringService;
 
-    private ReportGenerationService service;
+    private ReportGenerationServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new ReportGenerationService(reportMapper, reportDimensionMapper, sessionMapper,
+        service = new ReportGenerationServiceImpl(reportMapper, reportDimensionMapper, sessionMapper,
                 messageMapper, nodeMapper, scoringDimensionMapper, virtualTrainerMapper,
                 forbiddenWordChecker, difyReportScoringService, new SpeechSpeedCalculator(), acousticMapper,
                 toneScoringService);
@@ -111,7 +111,7 @@ class ReportGenerationServiceTest {
                 Map.of("seq", 1, "speech_speed", 192, "pause_count", 1, "pause_total_ms", 2_300),
                 Map.of("seq", 2, "speech_speed", 205));
 
-        List<ReportGenerationService.DimensionPlan> plans =
+        List<ReportGenerationServiceImpl.DimensionPlan> plans =
                 service.planDimensions(List.of(dim), List.of(192, 205), List.of(),
                         new ForbiddenWordChecker.ForbiddenResult(0, Map.of()));
         String json = service.toDimensionsJson(plans, rounds);
@@ -124,7 +124,7 @@ class ReportGenerationServiceTest {
     @Test
     void 纯文字会话_混合维度不注入声学参考() {
         ScoringDimension dim = dimension("表达流利", 3, null);
-        List<ReportGenerationService.DimensionPlan> plans =
+        List<ReportGenerationServiceImpl.DimensionPlan> plans =
                 service.planDimensions(List.of(dim), List.of(), List.of(),
                         new ForbiddenWordChecker.ForbiddenResult(0, Map.of()));
 
@@ -138,7 +138,7 @@ class ReportGenerationServiceTest {
     void 语音依据维度_无语音时不计分且提示权重已计入总分() {
         ScoringDimension dim = dimension("语速适中", 2, null);
 
-        List<ReportGenerationService.DimensionPlan> plans =
+        List<ReportGenerationServiceImpl.DimensionPlan> plans =
                 service.planDimensions(List.of(dim), List.of(), List.of(),
                         new ForbiddenWordChecker.ForbiddenResult(0, Map.of()));
 
@@ -151,7 +151,7 @@ class ReportGenerationServiceTest {
     void 定分维度_即使有语音轮也不注入声学参考() {
         ScoringDimension dim = dimension("表达流利", 3,
                 "{\"metric\":\"speech_speed\",\"params\":{\"bestMin\":160,\"bestMax\":240}}");
-        List<ReportGenerationService.DimensionPlan> plans =
+        List<ReportGenerationServiceImpl.DimensionPlan> plans =
                 service.planDimensions(List.of(dim), List.of(150), List.of(),
                         new ForbiddenWordChecker.ForbiddenResult(0, Map.of()));
 
@@ -210,7 +210,7 @@ class ReportGenerationServiceTest {
                         "本轮从热情角度的语音表现评分为 88 分，主要依据：结尾上扬。",
                         List.of(), List.of()));
 
-        List<ReportGenerationService.DimensionPlan> plans =
+        List<ReportGenerationServiceImpl.DimensionPlan> plans =
                 service.planDimensions(List.of(dim), List.of(), toneRounds,
                         new ForbiddenWordChecker.ForbiddenResult(0, Map.of()));
         String json = service.toDimensionsJson(plans, List.of(Map.of("seq", 1, "student_answer", "你好")));
@@ -229,7 +229,7 @@ class ReportGenerationServiceTest {
                 new ToneScoringService.ToneRoundInput(2L, Path.of("audio", "asr", "2.wav"), "你好", 2));
         when(toneScoringService.measureTone(any(), any())).thenReturn(null);
 
-        List<ReportGenerationService.DimensionPlan> plans =
+        List<ReportGenerationServiceImpl.DimensionPlan> plans =
                 service.planDimensions(List.of(dim), List.of(), toneRounds,
                         new ForbiddenWordChecker.ForbiddenResult(0, Map.of()));
 

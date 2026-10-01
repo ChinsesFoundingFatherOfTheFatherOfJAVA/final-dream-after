@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jack.digityhuman.atualcombattraining.common.AssistantActions;
 import jack.digityhuman.atualcombattraining.common.AssistantIdentity;
-import jack.digityhuman.atualcombattraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.common.BizTypes;
 import jack.digityhuman.atualcombattraining.common.JsonSupport;
 import jack.digityhuman.atualcombattraining.dify.DifyAgentClient;

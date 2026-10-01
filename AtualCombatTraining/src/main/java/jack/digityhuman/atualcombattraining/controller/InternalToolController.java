@@ -1,7 +1,7 @@
 package jack.digityhuman.atualcombattraining.controller;
 
-import jack.digityhuman.atualcombattraining.common.ApiResponse;
-import jack.digityhuman.atualcombattraining.common.BizException;
+import jack.digityhuman.common.api.ApiResponse;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.dto.req.ArtifactPatchesReq;
 import jack.digityhuman.atualcombattraining.dto.req.CreateTopicReq;
 import jack.digityhuman.atualcombattraining.dto.req.GenerateCasesReq;

@@ -4,7 +4,7 @@ import jack.digityhuman.staffmanagement.common.ListVo;
 import jack.digityhuman.staffmanagement.department.service.DepartmentService;
 import jack.digityhuman.staffmanagement.department.vo.DepartmentNodeVo;
 import jack.digityhuman.staffmanagement.entity.SysDepartment;
-import jack.digityhuman.staffmanagement.web.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;

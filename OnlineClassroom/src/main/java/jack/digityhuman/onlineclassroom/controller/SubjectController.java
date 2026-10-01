@@ -1,6 +1,6 @@
 package jack.digityhuman.onlineclassroom.controller;
 
-import jack.digityhuman.onlineclassroom.common.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import jack.digityhuman.onlineclassroom.dto.KngSubjectDtos;
 import jack.digityhuman.onlineclassroom.service.SubjectService;
 import lombok.RequiredArgsConstructor;

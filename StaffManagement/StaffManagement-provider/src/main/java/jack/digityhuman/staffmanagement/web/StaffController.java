@@ -1,5 +1,6 @@
 package jack.digityhuman.staffmanagement.web;
 
+import jack.digityhuman.common.api.ApiResponse;
 import jack.digityhuman.staffmanagement.api.StaffQueryService;
 import jack.digityhuman.staffmanagement.api.dto.DepartmentStaffDTO;
 import jack.digityhuman.staffmanagement.api.dto.EmployeeDTO;

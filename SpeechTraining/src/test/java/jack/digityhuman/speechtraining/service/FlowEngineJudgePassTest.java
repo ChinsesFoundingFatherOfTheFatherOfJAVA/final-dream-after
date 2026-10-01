@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FlowEngineJudgePassTest {
 
     /** judgePass 只依赖入参，不触达任何协作者，故依赖全部传 null */
-    private final FlowEngineService service = new FlowEngineService(
+    private final FlowEngineServiceImpl service = new FlowEngineServiceImpl(
             null, null, null, null, null, null, null, null, null, null, null, null, null);
 
     private static List<KeyPoint> points(String... contents) {

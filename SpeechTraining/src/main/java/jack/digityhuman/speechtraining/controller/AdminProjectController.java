@@ -1,8 +1,8 @@
 package jack.digityhuman.speechtraining.controller;
 
-import jack.digityhuman.speechtraining.common.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
+import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.speechtraining.common.FileStorageService;
-import jack.digityhuman.speechtraining.common.PageResult;
 import jack.digityhuman.speechtraining.common.ProjectFormParser;
 import jack.digityhuman.speechtraining.dto.req.FlowSaveReq;
 import jack.digityhuman.speechtraining.dto.req.ProjectQueryParam;
@@ -26,23 +26,27 @@ public class AdminProjectController {
     private final FileStorageService fileStorageService;
     private final ProjectFormParser projectFormParser;
 
+    /** 项目列表（状态/关键词筛选 + 分页）。 */
     @GetMapping("/list")
     public ApiResponse<PageResult<ProjectListResp>> list(ProjectQueryParam param) {
         return ApiResponse.success(projectService.listProjects(param));
     }
 
+    /** 项目详情。 */
     @GetMapping("/{id}")
     public ApiResponse<ProjectDetailResp> detail(@PathVariable Long id) {
         return ApiResponse.success(projectService.getProjectDetail(id));
     }
 
     /** 创建项目（JSON 方式） */
+    /** 创建项目（JSON 方式）。 */
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public ApiResponse<Long> create(@RequestBody ProjectSaveReq req) {
         return ApiResponse.success(projectService.createProject(req));
     }
 
     /** 创建项目（FormData 方式，支持上传封面与陪练者形象图片） */
+    /** 创建项目（FormData 方式，支持上传封面与陪练者形象图片）。 */
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<Long> createWithCover(MultipartHttpServletRequest request) {
         ProjectSaveReq req = projectFormParser.parse(request);
@@ -51,6 +55,7 @@ public class AdminProjectController {
     }
 
     /** 更新项目（JSON 方式） */
+    /** 编辑项目（JSON 方式）。 */
     @PutMapping(value = "/{id}", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ApiResponse<Void> update(@PathVariable Long id, @RequestBody ProjectSaveReq req) {
         projectService.updateProject(id, req);
@@ -58,6 +63,7 @@ public class AdminProjectController {
     }
 
     /** 更新项目（FormData 方式，支持上传封面与陪练者形象图片） */
+    /** 编辑项目（FormData 方式，支持更新封面与陪练者形象图片）。 */
     @PutMapping(value = "/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<Void> updateWithCover(@PathVariable Long id, MultipartHttpServletRequest request) {
         ProjectSaveReq req = projectFormParser.parse(request);
@@ -86,29 +92,34 @@ public class AdminProjectController {
         }
     }
 
+    /** 发布项目（流程校验通过后才可发布）。 */
     @PostMapping("/{id}/publish")
     public ApiResponse<Void> publish(@PathVariable Long id) {
         projectService.publishProject(id);
         return ApiResponse.success();
     }
 
+    /** 撤回项目（撤回后学员端不可见）。 */
     @PostMapping("/{id}/withdraw")
     public ApiResponse<Void> withdraw(@PathVariable Long id) {
         projectService.withdrawProject(id);
         return ApiResponse.success();
     }
 
+    /** 删除项目（仅创建者可操作）。 */
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {
         projectService.deleteProject(id);
         return ApiResponse.success();
     }
 
+    /** 读取项目流程图数据（节点+连线）。 */
     @GetMapping("/{id}/nodes")
     public ApiResponse<FlowDataResp> getNodes(@PathVariable Long id) {
         return ApiResponse.success(projectService.getFlowData(id));
     }
 
+    /** 保存项目流程图数据（整体替换节点与连线）。 */
     @PostMapping("/{id}/nodes")
     public ApiResponse<Void> saveNodes(@PathVariable Long id, @RequestBody FlowSaveReq req) {
         projectService.saveFlow(id, req);

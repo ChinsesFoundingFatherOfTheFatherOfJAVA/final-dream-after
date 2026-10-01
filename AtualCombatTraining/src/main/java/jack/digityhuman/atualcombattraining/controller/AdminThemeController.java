@@ -1,7 +1,7 @@
 package jack.digityhuman.atualcombattraining.controller;
 
-import jack.digityhuman.atualcombattraining.common.ApiResponse;
-import jack.digityhuman.atualcombattraining.common.PageResult;
+import jack.digityhuman.common.api.ApiResponse;
+import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.atualcombattraining.dto.req.ThemeListReq;
 import jack.digityhuman.atualcombattraining.dto.req.ThemeSettingsSaveReq;
 import jack.digityhuman.atualcombattraining.dto.resp.RollbackResp;

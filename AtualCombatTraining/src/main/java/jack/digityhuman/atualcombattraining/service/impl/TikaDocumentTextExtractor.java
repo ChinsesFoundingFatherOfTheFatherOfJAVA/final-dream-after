@@ -1,6 +1,6 @@
 package jack.digityhuman.atualcombattraining.service.impl;
 
-import jack.digityhuman.atualcombattraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.service.DocumentTextExtractor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.tika.Tika;

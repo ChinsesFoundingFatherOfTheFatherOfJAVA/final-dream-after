@@ -21,7 +21,7 @@ class SpeechJwtServiceTest {
 
     @Test
     void parsesStaffManagementTokenClaims() {
-        SpeechJwtService service = new SpeechJwtService(SECRET);
+        SpeechJwtService service = new SpeechJwtServiceImpl(SECRET);
         String token = token();
 
         Optional<SpeechAuthContext.Principal> principal = service.parse(token);
@@ -32,7 +32,7 @@ class SpeechJwtServiceTest {
 
     @Test
     void rejectsTokenSignedWithAnotherSecret() {
-        SpeechJwtService service = new SpeechJwtService(SECRET);
+        SpeechJwtService service = new SpeechJwtServiceImpl(SECRET);
         SecretKey otherKey = Keys.hmacShaKeyFor(
                 "another-secret-that-is-long-enough-for-hs256-signing".getBytes(StandardCharsets.UTF_8));
         String token = Jwts.builder()

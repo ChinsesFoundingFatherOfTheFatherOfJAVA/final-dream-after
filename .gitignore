@@ -1,0 +1,24 @@
+# ---- 构建产物 ----
+target/
+
+# ---- IDE ----
+.idea/
+*.iml
+.vscode/
+
+# ---- Mimosa / 工具链 hook 状态（绝不入库） ----
+.mimosa/
+
+# ---- 日志 ----
+*.log
+
+# ---- 运行时上传/生成文件目录（应用运行期写入，绝不入库） ----
+act-files/
+.runtime-kng-files/
+coverImage/
+audio/
+avatar/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db

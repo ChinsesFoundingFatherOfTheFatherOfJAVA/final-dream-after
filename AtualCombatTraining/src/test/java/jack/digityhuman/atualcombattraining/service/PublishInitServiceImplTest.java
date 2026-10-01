@@ -1,6 +1,6 @@
 package jack.digityhuman.atualcombattraining.service;
 
-import jack.digityhuman.atualcombattraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.dto.resp.PublishResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ScriptProgressResp;
 import jack.digityhuman.atualcombattraining.entity.ActAiArtifact;

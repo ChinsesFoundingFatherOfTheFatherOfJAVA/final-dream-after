@@ -23,6 +23,18 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
 
     List<SysUser> selectRowsByIds(@Param("ids") List<Long> ids);
 
+    /** 按账号批量取整行（不含 password），供 Dubbo 契约 {@code listUsersByAccounts} 使用。 */
+    List<SysUser> selectRowsByAccounts(@Param("accounts") List<String> accounts);
+
+    /**
+     * 在职候选用户（Dubbo 契约 {@code listActiveCandidates}）：{@code status=1}，
+     * 可选按部门全路径前缀（本部门 + 全部下级）圈定，可选按姓名/账号/工号模糊，按姓名、账号排序。
+     */
+    List<SysUser> selectActiveCandidates(@Param("deptPath") String deptPath, @Param("keyword") String keyword);
+
+    /** 按部门全路径统计启用用户数（{@code status=1}），供 Dubbo 契约 {@code countUsersGroupByDeptPath} 使用。 */
+    List<DeptPathCountRow> countActiveByDeptPath();
+
     /**
      * 岗位 distinct + 人数（FP-03 岗位选择弹窗）。
      *

@@ -4,7 +4,7 @@ import jack.digityhuman.staffmanagement.common.ListVo;
 import jack.digityhuman.staffmanagement.sync.service.OracleSyncService;
 import jack.digityhuman.staffmanagement.sync.vo.SyncLogVo;
 import jack.digityhuman.staffmanagement.user.service.UserAdminService;
-import jack.digityhuman.staffmanagement.web.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;

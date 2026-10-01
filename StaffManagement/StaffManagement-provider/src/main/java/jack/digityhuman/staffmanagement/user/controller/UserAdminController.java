@@ -6,7 +6,7 @@ import jack.digityhuman.staffmanagement.user.dto.UserStatusRequest;
 import jack.digityhuman.staffmanagement.user.service.UserAdminService;
 import jack.digityhuman.staffmanagement.user.vo.UserQuery;
 import jack.digityhuman.staffmanagement.user.vo.UserRowVo;
-import jack.digityhuman.staffmanagement.web.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;

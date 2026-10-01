@@ -1,6 +1,6 @@
 package jack.digityhuman.speechtraining.service;
 
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.common.FileStorageService;
 import jack.digityhuman.speechtraining.dify.DifyScoringService;
 import jack.digityhuman.speechtraining.dto.resp.AiScoringResp;
@@ -53,11 +53,11 @@ class FlowEngineWritePhaseTest {
     @Mock
     private FileStorageService fileStorageService;
 
-    private FlowEngineService service;
+    private FlowEngineServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new FlowEngineService(sessionMapper, messageMapper, projectMapper,
+        service = new FlowEngineServiceImpl(sessionMapper, messageMapper, projectMapper,
                 nodeMapper, edgeMapper, virtualTrainerMapper, reportMapper, acousticMapper,
                 difyScoringService, userContext, reportGenerationService, fileStorageService,
                 new TransactionTemplate(mock(PlatformTransactionManager.class)));

@@ -1,6 +1,6 @@
 package jack.digityhuman.atualcombattraining.controller;
 
-import jack.digityhuman.atualcombattraining.common.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import jack.digityhuman.atualcombattraining.dto.resp.PublishResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ScriptProgressResp;
 import jack.digityhuman.atualcombattraining.service.PublishInitService;

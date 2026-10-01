@@ -1,14 +1,11 @@
 package jack.digityhuman.onlineclassroom.service.impl;
 
 import jack.digityhuman.onlineclassroom.dto.KngSubjectDtos;
-import jack.digityhuman.onlineclassroom.dto.KngReadDtos;
-import jack.digityhuman.onlineclassroom.entity.SysDepartmentRead;
-import jack.digityhuman.onlineclassroom.entity.SysRoleRead;
-import jack.digityhuman.onlineclassroom.mapper.SysDepartmentReadMapper;
-import jack.digityhuman.onlineclassroom.mapper.SysRoleReadMapper;
-import jack.digityhuman.onlineclassroom.mapper.SysUserReadMapper;
-import jack.digityhuman.onlineclassroom.mapper.SysUserRoleReadMapper;
 import jack.digityhuman.onlineclassroom.service.SubjectService;
+import jack.digityhuman.staffmanagement.api.OrgQueryService;
+import jack.digityhuman.staffmanagement.api.dto.StringCountDTO;
+import jack.digityhuman.staffmanagement.api.dto.SysDepartmentDTO;
+import jack.digityhuman.staffmanagement.api.dto.SysRoleDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -19,25 +16,25 @@ import java.util.Map;
 
 /**
  * 添加用户权限抽屉的数据源：部门 / 岗位 / 角色。
+ *
+ * <p>数据一律经 Dubbo 取自 StaffManagement 的 {@link OrgQueryService}，
+ * 不再直读 {@code sys_*} 表。
  */
 @Service
 @RequiredArgsConstructor
 public class SubjectServiceImpl implements SubjectService {
 
-    private final SysDepartmentReadMapper departmentMapper;
-    private final SysUserReadMapper userMapper;
-    private final SysRoleReadMapper roleMapper;
-    private final SysUserRoleReadMapper userRoleMapper;
+    private final OrgQueryService orgQueryService;
 
     public List<KngSubjectDtos.DeptNode> deptTree() {
-        List<SysDepartmentRead> rows = departmentMapper.selectAllOrdered();
+        List<SysDepartmentDTO> rows = orgQueryService.listAllDepartments();
         Map<String, Integer> directCounts = new HashMap<>();
-        for (KngReadDtos.DeptPathCountRow row : userMapper.countGroupByDeptPath()) {
-            directCounts.put(row.getDeptPath(), row.getUserCount());
+        for (StringCountDTO row : orgQueryService.countUsersGroupByDeptPath()) {
+            directCounts.put(row.getKey(), (int) row.getCount());
         }
 
         Map<String, KngSubjectDtos.DeptNode> byCode = new HashMap<>();
-        for (SysDepartmentRead row : rows) {
+        for (SysDepartmentDTO row : rows) {
             KngSubjectDtos.DeptNode node = new KngSubjectDtos.DeptNode();
             node.setId(String.valueOf(row.getId()));
             node.setName(row.getDeptName());
@@ -45,7 +42,7 @@ public class SubjectServiceImpl implements SubjectService {
             byCode.put(row.getDeptPath(), node);
         }
         List<KngSubjectDtos.DeptNode> roots = new ArrayList<>();
-        for (SysDepartmentRead row : rows) {
+        for (SysDepartmentDTO row : rows) {
             KngSubjectDtos.DeptNode node = byCode.get(row.getDeptPath());
             KngSubjectDtos.DeptNode parent = row.getParentPath() == null ? null : byCode.get(row.getParentPath());
             if (parent == null) {
@@ -62,16 +59,15 @@ public class SubjectServiceImpl implements SubjectService {
         int safePage = Math.max(1, page);
         int safeSize = Math.max(1, Math.min(pageSize, 100));
         String keyword = name == null ? "" : name.trim();
-        long total = userMapper.countDistinctPositions(keyword);
-        List<KngSubjectDtos.PositionRow> records = userMapper.selectPositionPage(
-                        keyword, (safePage - 1) * safeSize, safeSize)
-                .stream().map(source -> {
+        var stats = orgQueryService.pagePositionStats(
+                keyword.isEmpty() ? null : keyword, safePage, safeSize);
+        List<KngSubjectDtos.PositionRow> records = stats.getRecords().stream().map(source -> {
             KngSubjectDtos.PositionRow row = new KngSubjectDtos.PositionRow();
-            row.setName(source.getName());
-            row.setUserCount(source.getUserCount());
+            row.setName(source.getKey());
+            row.setUserCount((int) source.getCount());
             return row;
         }).toList();
-        return new KngSubjectDtos.PageResult<>(total, records);
+        return new KngSubjectDtos.PageResult<>(stats.getTotal(), records);
     }
 
     public KngSubjectDtos.PageResult<KngSubjectDtos.RoleRow> roles(
@@ -79,15 +75,15 @@ public class SubjectServiceImpl implements SubjectService {
         int safePage = Math.max(1, page);
         int safeSize = Math.max(1, Math.min(pageSize, 100));
         String keyword = name == null ? "" : name.trim();
-        long total = roleMapper.countByKeyword(keyword);
-        List<SysRoleRead> roles = roleMapper.selectPage(
-                keyword, (safePage - 1) * safeSize, safeSize);
-        Map<String, Integer> roleCounts = new HashMap<>();
+        var pageResult = orgQueryService.pageRoles(
+                keyword.isEmpty() ? null : keyword, safePage, safeSize);
+        List<SysRoleDTO> roles = pageResult.getRecords();
+        Map<Long, Long> roleCounts = new HashMap<>();
         if (!roles.isEmpty()) {
-            List<String> roleIds = roles.stream()
-                    .map(role -> String.valueOf(role.getId()))
+            List<Long> roleIds = roles.stream()
+                    .map(SysRoleDTO::getId)
                     .toList();
-            for (KngReadDtos.RoleCountRow row : userRoleMapper.countByRoleIds(roleIds)) {
+            for (var row : orgQueryService.countUsersByRoleIds(roleIds)) {
                 roleCounts.put(row.getRoleId(), row.getUserCount());
             }
         }
@@ -96,9 +92,9 @@ public class SubjectServiceImpl implements SubjectService {
             row.setId(String.valueOf(role.getId()));
             row.setName(role.getName());
             row.setRemark(role.getRemark());
-            row.setUserCount(roleCounts.getOrDefault(String.valueOf(role.getId()), 0));
+            row.setUserCount(roleCounts.getOrDefault(role.getId(), 0L).intValue());
             return row;
         }).toList();
-        return new KngSubjectDtos.PageResult<>(total, records);
+        return new KngSubjectDtos.PageResult<>(pageResult.getTotal(), records);
     }
 }

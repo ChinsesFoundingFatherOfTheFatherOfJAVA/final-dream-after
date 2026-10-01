@@ -1,22 +1,15 @@
 package jack.digityhuman.speechtraining.service.impl;
 
 import jack.digityhuman.speechtraining.auth.SpeechAuthContext;
-import jack.digityhuman.speechtraining.common.BizException;
-import jack.digityhuman.speechtraining.entity.StaffUser;
-import jack.digityhuman.speechtraining.entity.SysPermissionRead;
-import jack.digityhuman.speechtraining.entity.SysRolePermissionRead;
-import jack.digityhuman.speechtraining.entity.SysUserRoleRead;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.entity.TrainingProject;
-import jack.digityhuman.speechtraining.mapper.StaffUserMapper;
-import jack.digityhuman.speechtraining.mapper.SysPermissionReadMapper;
-import jack.digityhuman.speechtraining.mapper.SysRolePermissionReadMapper;
-import jack.digityhuman.speechtraining.mapper.SysUserRoleReadMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingProjectMapper;
 import jack.digityhuman.speechtraining.service.AccessControlService;
+import jack.digityhuman.staffmanagement.api.OrgQueryService;
+import jack.digityhuman.staffmanagement.api.dto.AuthSnapshotDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 
@@ -30,10 +23,8 @@ public class AccessControlServiceImpl implements AccessControlService {
     private static final List<String> ACT_PERMISSIONS =
             List.of("act:speech", "act:template", "act:training");
 
-    private final StaffUserMapper staffUserMapper;
-    private final SysUserRoleReadMapper userRoleMapper;
-    private final SysRolePermissionReadMapper rolePermissionMapper;
-    private final SysPermissionReadMapper permissionMapper;
+    /** 角色与权限码经 Dubbo 取自 StaffManagement，不再直读 sys_user_role/sys_role_permission/sys_permission */
+    private final OrgQueryService orgQueryService;
     private final TrainingProjectMapper projectMapper;
 
     public SpeechAuthContext.Principal requirePrincipal() {
@@ -76,30 +67,10 @@ public class AccessControlServiceImpl implements AccessControlService {
     }
 
     private List<String> permissionCodes(String account) {
-        StaffUser user = staffUserMapper.selectActiveByAccount(account);
-        if (user == null) {
+        AuthSnapshotDTO snapshot = orgQueryService.getAuthSnapshot(account);
+        if (snapshot.getUserId() == null || !Objects.equals(snapshot.getStatus(), 1)) {
             return List.of();
         }
-        List<Long> roleIds = userRoleMapper.selectByUserId(user.getId()).stream()
-                .map(SysUserRoleRead::getRoleId)
-                .distinct()
-                .toList();
-        if (roleIds.isEmpty()) {
-            return List.of();
-        }
-        List<Long> permissionIds = rolePermissionMapper.selectByRoleIds(roleIds).stream()
-                .map(SysRolePermissionRead::getPermissionId)
-                .distinct()
-                .toList();
-        if (permissionIds.isEmpty()) {
-            return List.of();
-        }
-        List<String> codes = permissionMapper.selectByIds(permissionIds).stream()
-                .map(SysPermissionRead::getCode)
-                .filter(Objects::nonNull)
-                .distinct()
-                .sorted(Comparator.naturalOrder())
-                .toList();
-        return codes;
+        return snapshot.getPermissionCodes();
     }
 }

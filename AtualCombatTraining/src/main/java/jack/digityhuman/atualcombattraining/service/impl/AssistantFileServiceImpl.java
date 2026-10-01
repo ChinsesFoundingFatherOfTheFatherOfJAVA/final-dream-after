@@ -1,6 +1,6 @@
 package jack.digityhuman.atualcombattraining.service.impl;
 
-import jack.digityhuman.atualcombattraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.config.AssistantProperties;
 import jack.digityhuman.atualcombattraining.dto.resp.FileUploadResp;
 import jack.digityhuman.atualcombattraining.service.AssistantFileService;

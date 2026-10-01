@@ -1,6 +1,6 @@
 package jack.digityhuman.onlineclassroom.service;
 
-import jack.digityhuman.onlineclassroom.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -28,16 +28,19 @@ public class StorageService {
         }
     }
 
+    /** 上传文件根目录（/audio、/avatar 等落盘均在其下）。 */
     public Path root() {
         return root;
     }
 
+    /** 某次分片上传的临时目录（按 uploadId 隔离）。 */
     public Path tempDir(String uploadId) {
         Path path = root.resolve(".tmp").resolve(uploadId).normalize();
         ensureInsideRoot(path);
         return path;
     }
 
+    /** 落盘单个分片到临时目录。 */
     public void storeChunk(String uploadId, int chunkIndex, InputStream inputStream) {
         Path dir = tempDir(uploadId);
         try {
@@ -50,6 +53,7 @@ public class StorageService {
         }
     }
 
+    /** 按序号合并分片为最终文件（写入 upload 根目录，扩展名由调用方给定）。 */
     public Path mergeChunks(String uploadId, String extension, int totalChunks) {
         String month = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMM"));
         String fileName = java.util.UUID.randomUUID().toString().replace("-", "")
@@ -79,6 +83,7 @@ public class StorageService {
         }
     }
 
+    /** 把落库的存储相对路径安全解析为绝对路径（防越界，非法返回 null）。 */
     public Path resolveStoredPath(String storagePath) {
         String relative = storagePath == null ? "" : storagePath.trim();
         if (relative.startsWith("/kng-files/")) {
@@ -91,6 +96,7 @@ public class StorageService {
         return path;
     }
 
+    /** 删除存储文件；引用与否由调用方判定，IO 失败静默保留（文件留着比误删安全）。 */
     public void deleteIfUnreferenced(String storagePath) {
         if (storagePath == null || storagePath.isBlank()) return;
         try {

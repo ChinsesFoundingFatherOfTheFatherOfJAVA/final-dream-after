@@ -51,7 +51,7 @@ class ToneScoringServiceTest {
     void setUp() throws IOException {
         restTemplate = new RestTemplate();
         server = MockRestServiceServer.bindTo(restTemplate).build();
-        service = new ToneScoringService(restTemplate, fileStorageService);
+        service = new ToneScoringServiceImpl(restTemplate, fileStorageService);
         ReflectionTestUtils.setField(service, "enabled", true);
         ReflectionTestUtils.setField(service, "baseUrl", URL);
         ReflectionTestUtils.setField(service, "model", "qwen3.8-omni-flash");

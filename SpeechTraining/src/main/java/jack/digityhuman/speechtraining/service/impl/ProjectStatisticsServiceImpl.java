@@ -1,22 +1,18 @@
 package jack.digityhuman.speechtraining.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import jack.digityhuman.speechtraining.common.BizException;
-import jack.digityhuman.speechtraining.common.PageResult;
+import jack.digityhuman.common.api.BizException;
+import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.speechtraining.dto.req.ProjectStudentQueryReq;
 import jack.digityhuman.speechtraining.dto.resp.ProjectStatisticsResp;
 import jack.digityhuman.speechtraining.entity.ProjectStudent;
 import jack.digityhuman.speechtraining.entity.ScoringDimension;
-import jack.digityhuman.speechtraining.entity.StaffUser;
-import jack.digityhuman.speechtraining.entity.SysDepartmentRead;
 import jack.digityhuman.speechtraining.entity.TrainingProject;
 import jack.digityhuman.speechtraining.entity.TrainingReport;
 import jack.digityhuman.speechtraining.entity.TrainingReportDimension;
 import jack.digityhuman.speechtraining.entity.TrainingSession;
 import jack.digityhuman.speechtraining.mapper.ProjectStudentMapper;
 import jack.digityhuman.speechtraining.mapper.ScoringDimensionMapper;
-import jack.digityhuman.speechtraining.mapper.StaffUserMapper;
-import jack.digityhuman.speechtraining.mapper.SysDepartmentReadMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingProjectMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingReportDimensionMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingReportMapper;
@@ -24,6 +20,9 @@ import jack.digityhuman.speechtraining.mapper.TrainingSessionMapper;
 import jack.digityhuman.speechtraining.service.AccessControlService;
 import jack.digityhuman.speechtraining.service.PassStrategyService;
 import jack.digityhuman.speechtraining.service.ProjectStatisticsService;
+import jack.digityhuman.staffmanagement.api.OrgQueryService;
+import jack.digityhuman.staffmanagement.api.dto.SysDepartmentDTO;
+import jack.digityhuman.staffmanagement.api.dto.SysUserDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -56,13 +55,14 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
     private final TrainingProjectMapper projectMapper;
     private final ProjectStudentMapper projectStudentMapper;
     private final ScoringDimensionMapper scoringDimensionMapper;
-    private final StaffUserMapper staffUserMapper;
+    /** 组织架构数据（用户/部门）经 Dubbo 取自 StaffManagement，不再直读 sys_* 表 */
+    private final OrgQueryService orgQueryService;
     private final TrainingReportMapper trainingReportMapper;
     private final TrainingReportDimensionMapper reportDimensionMapper;
     private final TrainingSessionMapper trainingSessionMapper;
-    private final SysDepartmentReadMapper departmentMapper;
     private final PassStrategyService passStrategyService;
 
+    /** 整体概览三卡：总学员数 / 学习人次 / 人均练习次数 / 完课人数与完课率（实时聚合，不落表）。 */
     public ProjectStatisticsResp.Summary summary(Long projectId) {
         TrainingProject project = requireManageAndProject(projectId);
         List<StudentAggregate> students = studentAggregates(project);
@@ -81,6 +81,7 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         return response;
     }
 
+    /** 按次平均分：以学员第 N 次报告为单位横向平均，观察"练得越多分越高"的趋势。 */
     public ProjectStatisticsResp.TimesAverages timesAverages(Long projectId) {
         TrainingProject project = requireManageAndProject(projectId);
         Map<Integer, List<BigDecimal>> byTimes = new LinkedHashMap<>();
@@ -105,6 +106,7 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         return response;
     }
 
+    /** 维度雷达：全体报告的维度均分（overall）与每名学员首次报告的维度均分（first），对比成长幅度。 */
     public ProjectStatisticsResp.Radar radar(Long projectId) {
         TrainingProject project = requireManageAndProject(projectId);
         List<String> dimensions = enabledDimensions(projectId).stream()
@@ -126,6 +128,7 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         return response;
     }
 
+    /** 活跃分布：按练习发起时段（0-23 时）统计会话数，观察学员训练时间偏好。 */
     public ProjectStatisticsResp.Active active(Long projectId) {
         TrainingProject project = requireManageAndProject(projectId);
         Set<String> assigned = assignedUserIds(projectId).stream().collect(Collectors.toSet());
@@ -148,6 +151,7 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         return response;
     }
 
+    /** 学员模式列表：按学员聚合练习次数/最高分/完课状态，支持关键词、部门子树、岗位、完课状态筛选与分页。 */
     public PageResult<ProjectStatisticsResp.StudentRow> students(
             Long projectId, ProjectStudentQueryReq req) {
         TrainingProject project = requireManageAndProject(projectId);
@@ -159,6 +163,7 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         return page(rows, query.getPage(), query.getPageSize());
     }
 
+    /** 部门模式列表：同一套学员聚合按部门全路径分组，部门名列展示用 "->" 还原层级。 */
     public PageResult<ProjectStatisticsResp.DeptRow> departments(
             Long projectId, ProjectStudentQueryReq req) {
         TrainingProject project = requireManageAndProject(projectId);
@@ -177,18 +182,21 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         return page(rows, query.getPage(), query.getPageSize());
     }
 
+    /** 学员概览（管理端）：单学员的姓名/部门/最高分/报告数/完课状态。 */
     public ProjectStatisticsResp.Tops tops(Long projectId, String userId) {
         TrainingProject project = requireManageAndProject(projectId);
-        StaffUser user = requireAssignedUser(projectId, userId);
+        SysUserDTO user = requireAssignedUser(projectId, userId);
         return buildTops(project, user, aggregateMap(project).get(userId));
     }
 
+    /** 学员概览（学员端同款）：口径同 {@link #tops}，仅鉴权放宽为"本人已指派"。 */
     public ProjectStatisticsResp.Tops topsForStudent(Long projectId, String userId) {
         TrainingProject project = requireProject(projectId);
-        StaffUser user = requireAssignedUser(projectId, userId);
+        SysUserDTO user = requireAssignedUser(projectId, userId);
         return buildTops(project, user, aggregateMap(project).get(userId));
     }
 
+    /** 逐次练习分析（管理端）：指定学员每次报告的总分或指定维度得分序列。 */
     public ProjectStatisticsResp.PracticeAnalysis practiceAnalysis(
             Long projectId, String userId, String dimension) {
         requireManageAndProject(projectId);
@@ -196,6 +204,7 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         return buildPracticeAnalysis(projectId, userId, dimension);
     }
 
+    /** 逐次练习分析（学员端同款）：口径同 {@link #practiceAnalysis}，鉴权放宽为本人。 */
     public ProjectStatisticsResp.PracticeAnalysis practiceAnalysisForStudent(
             Long projectId, String userId, String dimension) {
         requireProject(projectId);
@@ -203,6 +212,7 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         return buildPracticeAnalysis(projectId, userId, dimension);
     }
 
+    /** 练习记录（管理端）：按报告维度明细展开的逐次记录分页。 */
     public PageResult<ProjectStatisticsResp.AttendRecordRow> attendRecords(
             Long projectId, String userId, int page, int pageSize) {
         requireManageAndProject(projectId);
@@ -210,6 +220,7 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         return buildAttendRecords(projectId, userId, page, pageSize);
     }
 
+    /** 练习记录（学员端同款）：口径同 {@link #attendRecords}，鉴权放宽为本人。 */
     public PageResult<ProjectStatisticsResp.AttendRecordRow> attendRecordsForStudent(
             Long projectId, String userId, int page, int pageSize) {
         requireProject(projectId);
@@ -268,7 +279,7 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
     }
 
     private ProjectStatisticsResp.Tops buildTops(
-            TrainingProject project, StaffUser user, StudentAggregate aggregate) {
+            TrainingProject project, SysUserDTO user, StudentAggregate aggregate) {
         ProjectStatisticsResp.Tops response = new ProjectStatisticsResp.Tops();
         response.setFullname(user.getName());
         response.setUserNo(defaultUserNo(user.getEmployeeNo(), user.getAccount()));
@@ -315,15 +326,15 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         if (assignedIds.isEmpty()) {
             return Map.of();
         }
-        Map<String, StaffUser> users = staffUserMapper.selectByAccounts(assignedIds).stream()
-                .collect(Collectors.toMap(StaffUser::getAccount, Function.identity(), (left, right) -> left));
+        Map<String, SysUserDTO> users = orgQueryService.listUsersByAccounts(assignedIds).stream()
+                .collect(Collectors.toMap(SysUserDTO::getAccount, Function.identity(), (left, right) -> left));
         Map<String, List<TrainingReport>> reports = reportsForUsers(project.getId(), assignedIds);
         Map<String, Integer> durations = sessionsForUsers(project.getId(), assignedIds);
         Map<String, Integer> ranks = highestRanks(reports);
 
         Map<String, StudentAggregate> result = new LinkedHashMap<>();
         for (String userId : assignedIds) {
-            StaffUser user = users.get(userId);
+            SysUserDTO user = users.get(userId);
             if (user == null) {
                 continue;
             }
@@ -523,7 +534,7 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         return project;
     }
 
-    private StaffUser requireAssignedUser(Long projectId, String userId) {
+    private SysUserDTO requireAssignedUser(Long projectId, String userId) {
         long assigned = projectStudentMapper.selectCount(
                 new QueryWrapper<ProjectStudent>()
                         .eq("project_id", projectId)
@@ -531,15 +542,14 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         if (assigned <= 0) {
             throw new BizException("学员未指派到该项目");
         }
-        StaffUser user = staffUserMapper.selectOne(
-                new QueryWrapper<StaffUser>().eq("account", userId));
+        SysUserDTO user = orgQueryService.getUserByAccount(userId);
         if (user == null) {
             throw new BizException("学员不存在");
         }
         return user;
     }
 
-    private boolean matchesUserFilters(StaffUser user, ProjectStudentQueryReq query) {
+    private boolean matchesUserFilters(SysUserDTO user, ProjectStudentQueryReq query) {
         if (StringUtils.hasText(query.getKeyword())) {
             String keyword = query.getKeyword().trim().toLowerCase();
             boolean matched = contains(user.getName(), keyword)
@@ -576,7 +586,7 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
 
     private String requireDepartmentPath(String deptId) {
         try {
-            SysDepartmentRead department = departmentMapper.selectById(Long.parseLong(deptId.trim()));
+            SysDepartmentDTO department = orgQueryService.getDepartment(Long.parseLong(deptId.trim()));
             if (department == null || !StringUtils.hasText(department.getDeptPath())) {
                 throw new BizException("部门不存在");
             }
@@ -672,7 +682,7 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
     }
 
     private record StudentAggregate(
-            StaffUser user,
+            SysUserDTO user,
             List<TrainingReport> reports,
             Integer rank,
             int durationSeconds,

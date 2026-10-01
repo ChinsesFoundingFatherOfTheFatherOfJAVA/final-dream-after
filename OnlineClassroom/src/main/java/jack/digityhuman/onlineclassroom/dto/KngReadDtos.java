@@ -35,22 +35,4 @@ public final class KngReadDtos {
         private Integer numInThreeMon;
         private Integer numInMoreThrMon;
     }
-
-    @Data
-    public static class PositionCountRow {
-        private String name;
-        private Integer userCount;
-    }
-
-    @Data
-    public static class DeptPathCountRow {
-        private String deptPath;
-        private Integer userCount;
-    }
-
-    @Data
-    public static class RoleCountRow {
-        private String roleId;
-        private Integer userCount;
-    }
 }

@@ -1,6 +1,6 @@
 package jack.digityhuman.onlineclassroom.controller;
 
-import jack.digityhuman.onlineclassroom.common.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import jack.digityhuman.onlineclassroom.common.CurrentUserService;
 import jack.digityhuman.onlineclassroom.dto.KngSettingDtos;
 import jack.digityhuman.onlineclassroom.service.SettingService;
@@ -23,11 +23,13 @@ public class SettingController {
     private final SettingService settingService;
     private final CurrentUserService currentUserService;
 
+    /** 读取课程设置聚合（各区块配置对象）。 */
     @GetMapping
     public ApiResponse<KngSettingDtos.Response> get() {
         return ApiResponse.success(settingService.getAll());
     }
 
+    /** 保存学分策略区块。 */
     @PutMapping("/score")
     public ApiResponse<Void> saveScore(
             @RequestBody KngSettingDtos.ScoreConf request,
@@ -36,6 +38,7 @@ public class SettingController {
         return ApiResponse.success(null);
     }
 
+    /** 保存防挂机区块。 */
     @PutMapping("/cheat")
     public ApiResponse<Void> saveCheat(
             @RequestBody KngSettingDtos.CheatSaveRequest request,
@@ -44,6 +47,7 @@ public class SettingController {
         return ApiResponse.success(null);
     }
 
+    /** 保存特殊设置抽屉。 */
     @PutMapping("/special")
     public ApiResponse<Void> saveSpecial(
             @RequestBody KngSettingDtos.SpecialRequest request,
@@ -52,6 +56,7 @@ public class SettingController {
         return ApiResponse.success(null);
     }
 
+    /** 保存课程播放区块。 */
     @PutMapping("/play")
     public ApiResponse<Void> savePlay(
             @RequestBody KngSettingDtos.PlayConf request,
@@ -60,6 +65,7 @@ public class SettingController {
         return ApiResponse.success(null);
     }
 
+    /** 保存人脸识别区块。 */
     @PutMapping("/face")
     public ApiResponse<Void> saveFace(
             @RequestBody KngSettingDtos.FaceConf request,

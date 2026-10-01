@@ -1,7 +1,7 @@
 package jack.digityhuman.onlineclassroom.controller;
 
-import jack.digityhuman.onlineclassroom.common.ApiResponse;
-import jack.digityhuman.onlineclassroom.common.BizException;
+import jack.digityhuman.common.api.ApiResponse;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.onlineclassroom.common.CurrentUserService;
 import jack.digityhuman.onlineclassroom.dto.KngCoursewareDtos;
 import jack.digityhuman.onlineclassroom.entity.KngCoursewareFile;
@@ -40,29 +40,34 @@ public class CoursewareOpController {
     private final StorageService storageService;
     private final CurrentUserService currentUserService;
 
+    /** 下架单课件。 */
     @PostMapping("/{id}/take-down")
     public ApiResponse<KngCoursewareDtos.CountResponse> takeDown(@PathVariable String id) {
         return ApiResponse.success(operationService.takeDown(id));
     }
 
+    /** 批量下架。 */
     @PostMapping("/batch/take-down")
     public ApiResponse<KngCoursewareDtos.CountResponse> batchTakeDown(
             @RequestBody KngCoursewareDtos.IdsRequest request) {
         return ApiResponse.success(operationService.batchTakeDown(request));
     }
 
+    /** 批量上架。 */
     @PostMapping("/batch/put-on")
     public ApiResponse<KngCoursewareDtos.CountResponse> batchPutOn(
             @RequestBody KngCoursewareDtos.IdsRequest request) {
         return ApiResponse.success(operationService.batchPutOn(request));
     }
 
+    /** 批量移动到目标分类。 */
     @PostMapping("/batch/move")
     public ApiResponse<KngCoursewareDtos.CountResponse> move(
             @RequestBody KngCoursewareDtos.MoveRequest request) {
         return ApiResponse.success(operationService.move(request));
     }
 
+    /** 复制课件（标题加副本后缀并去重）。 */
     @PostMapping("/{id}/copy")
     public ApiResponse<KngCoursewareDtos.IdResponse> copy(
             @PathVariable String id,
@@ -72,11 +77,13 @@ public class CoursewareOpController {
                 id, request, currentUserService.userId(authorization)));
     }
 
+    /** 删除单课件（未被引用时才执行，级联清理文件/附件）。 */
     @DeleteMapping("/{id}")
     public ApiResponse<KngCoursewareDtos.CountResponse> delete(@PathVariable String id) {
         return ApiResponse.success(operationService.delete(id));
     }
 
+    /** 批量删除。 */
     @PostMapping("/batch/delete")
     public ApiResponse<KngCoursewareDtos.CountResponse> batchDelete(
             @RequestBody KngCoursewareDtos.IdsRequest request) {

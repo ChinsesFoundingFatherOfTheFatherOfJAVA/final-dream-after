@@ -18,7 +18,7 @@ class FileStorageServiceTest {
 
     @Test
     void 本地上传形象图落到avatar目录并返回访问路径() {
-        FileStorageService service = new FileStorageService();
+        FileStorageServiceImpl service = new FileStorageServiceImpl();
         ReflectionTestUtils.setField(service, "coverImageDir", tempDir.resolve("coverImage").toString());
         ReflectionTestUtils.setField(service, "coverImageUrlPrefix", "/coverImage");
         ReflectionTestUtils.setField(service, "audioDir", tempDir.resolve("audio").toString());

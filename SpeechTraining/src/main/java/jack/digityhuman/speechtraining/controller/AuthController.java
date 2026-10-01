@@ -1,7 +1,7 @@
 package jack.digityhuman.speechtraining.controller;
 
 import jack.digityhuman.speechtraining.auth.SpeechAuthContext;
-import jack.digityhuman.speechtraining.common.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import jack.digityhuman.speechtraining.service.AccessControlService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;

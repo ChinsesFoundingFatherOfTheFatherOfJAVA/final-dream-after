@@ -2,7 +2,7 @@ package jack.digityhuman.onlineclassroom.service.impl;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jack.digityhuman.onlineclassroom.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.onlineclassroom.dto.KngSettingDtos;
 import jack.digityhuman.onlineclassroom.entity.KngSetting;
 import jack.digityhuman.onlineclassroom.mapper.KngSettingMapper;
@@ -32,6 +32,7 @@ public class SettingServiceImpl implements SettingService {
 
     private final KngSettingMapper settingMapper;
 
+    /** 读取课程设置聚合（单行 id=1，区块 JSON 反序列化为各配置对象）。 */
     public KngSettingDtos.Response getAll() {
         KngSetting setting = settingMapper.selectById(1);
         return new KngSettingDtos.Response(
@@ -42,6 +43,7 @@ public class SettingServiceImpl implements SettingService {
     }
 
     @Transactional
+    /** 保存学分策略区块（study_score 等），独立保存不影响其他区块。 */
     public void saveScore(KngSettingDtos.ScoreConf request, String userId) {
         validateScore(request);
         KngSetting setting = loadRow();
@@ -50,6 +52,7 @@ public class SettingServiceImpl implements SettingService {
     }
 
     @Transactional
+    /** 保存防挂机区块：与旧配置合并校验后整体写回 cheat_conf JSON。 */
     public void saveCheat(KngSettingDtos.CheatSaveRequest request, String userId) {
         KngSetting setting = loadRow();
         KngSettingDtos.CheatConf old = readCheat(setting.getCheatConf());
@@ -59,6 +62,7 @@ public class SettingServiceImpl implements SettingService {
     }
 
     @Transactional
+    /** 保存特殊设置抽屉（在防挂机 JSON 内的独立开关位，合并写回）。 */
     public void saveSpecial(KngSettingDtos.SpecialRequest request, String userId) {
         if (request == null || request.audioBackgroundPlay() == null) {
             throw new BizException("请选择是否允许后台播放");
@@ -78,6 +82,7 @@ public class SettingServiceImpl implements SettingService {
     }
 
     @Transactional
+    /** 保存课程播放区块（倍速/拖拽/续播等播放器行为配置）。 */
     public void savePlay(KngSettingDtos.PlayConf request, String userId) {
         if (request == null || request.speedEnabled() == null) {
             throw new BizException("请选择是否开启倍速播放");
@@ -94,6 +99,7 @@ public class SettingServiceImpl implements SettingService {
     }
 
     @Transactional
+    /** 保存人脸识别区块（抓拍频次/比对策略等）。 */
     public void saveFace(KngSettingDtos.FaceConf request, String userId) {
         if (request == null || request.enabled() == null) {
             throw new BizException("请选择是否开启人脸识别");

@@ -1,7 +1,7 @@
 package jack.digityhuman.atualcombattraining.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import jack.digityhuman.atualcombattraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.dto.req.ThemeSettingsSaveReq;
 import jack.digityhuman.atualcombattraining.dto.resp.RollbackResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ThemeSaveResp;

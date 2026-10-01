@@ -3,7 +3,7 @@ package jack.digityhuman.staffmanagement.role.controller;
 import jack.digityhuman.staffmanagement.common.ListVo;
 import jack.digityhuman.staffmanagement.role.service.PermissionService;
 import jack.digityhuman.staffmanagement.role.vo.PermissionNodeVo;
-import jack.digityhuman.staffmanagement.web.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;

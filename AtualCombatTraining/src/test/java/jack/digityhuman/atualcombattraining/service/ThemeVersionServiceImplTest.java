@@ -1,6 +1,6 @@
 package jack.digityhuman.atualcombattraining.service;
 
-import jack.digityhuman.atualcombattraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.dto.req.ThemeSettingsSaveReq;
 import jack.digityhuman.atualcombattraining.dto.resp.ThemeSaveResp;
 import jack.digityhuman.atualcombattraining.entity.ActTheme;

@@ -1,6 +1,6 @@
 package jack.digityhuman.speechtraining.service;
 
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.common.FileStorageService;
 import jack.digityhuman.speechtraining.dify.DifyScoringService;
 import jack.digityhuman.speechtraining.dto.resp.StartSessionResp;
@@ -50,8 +50,8 @@ class FlowEngineRoutingTest {
     @Mock
     private FileStorageService fileStorageService;
 
-    private FlowEngineService newService() {
-        return new FlowEngineService(sessionMapper, messageMapper, projectMapper,
+    private FlowEngineServiceImpl newService() {
+        return new FlowEngineServiceImpl(sessionMapper, messageMapper, projectMapper,
                 nodeMapper, edgeMapper, virtualTrainerMapper, reportMapper, acousticMapper,
                 difyScoringService, userContext, reportGenerationService, fileStorageService,
                 new TransactionTemplate(mock(PlatformTransactionManager.class)));
@@ -80,7 +80,7 @@ class FlowEngineRoutingTest {
     /** 1:3 权重应大致按 1/4 : 3/4 分布（4000 次的二项分布标准差约 27，断言区间留了十倍余量） */
     @Test
     void 权重路由按权重比例分布() {
-        FlowEngineService service = newService();
+        FlowEngineServiceImpl service = newService();
         when(edgeMapper.selectList(any())).thenReturn(List.of(edge(20L, 1), edge(21L, 3)));
         when(nodeMapper.selectById(20L)).thenReturn(round(20L, "A"));
         when(nodeMapper.selectById(21L)).thenReturn(round(21L, "B"));
@@ -97,7 +97,7 @@ class FlowEngineRoutingTest {
     /** 权重缺失/非正数按 1 处理，不能让整条出边变成永不命中或除零 */
     @Test
     void 非法权重按一等权处理() {
-        FlowEngineService service = newService();
+        FlowEngineServiceImpl service = newService();
         when(edgeMapper.selectList(any())).thenReturn(List.of(edge(20L, null), edge(21L, 0)));
         when(nodeMapper.selectById(20L)).thenReturn(round(20L, "A"));
         when(nodeMapper.selectById(21L)).thenReturn(round(21L, "B"));
@@ -113,7 +113,7 @@ class FlowEngineRoutingTest {
 
     @Test
     void 没有出边时明确报错而不是静默卡住() {
-        FlowEngineService service = newService();
+        FlowEngineServiceImpl service = newService();
         when(edgeMapper.selectList(any())).thenReturn(List.of());
 
         BizException e = assertThrows(BizException.class, () -> service.routeByWeight(100L, 10L));
@@ -157,7 +157,7 @@ class FlowEngineRoutingTest {
         when(virtualTrainerMapper.selectOne(any())).thenReturn(null);
 
         // 出边顺序是 [权重1的B, 权重3的A]：随机数落在 [1,4) 才选中分支A（nextInt 是可覆写的随机入口）
-        FlowEngineService service = new FlowEngineService(sessionMapper, messageMapper, projectMapper,
+        FlowEngineServiceImpl service = new FlowEngineServiceImpl(sessionMapper, messageMapper, projectMapper,
                 nodeMapper, edgeMapper, virtualTrainerMapper, reportMapper, acousticMapper,
                 difyScoringService, userContext, reportGenerationService, fileStorageService,
                 new TransactionTemplate(mock(PlatformTransactionManager.class))) {

@@ -1,20 +1,20 @@
 package jack.digityhuman.speechtraining.service.impl;
 
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.dto.resp.ProjectRankResp;
 import jack.digityhuman.speechtraining.entity.ProjectStudent;
 import jack.digityhuman.speechtraining.entity.ScoringDimension;
-import jack.digityhuman.speechtraining.entity.StaffUser;
 import jack.digityhuman.speechtraining.entity.TrainingReport;
 import jack.digityhuman.speechtraining.entity.TrainingReportDimension;
 import jack.digityhuman.speechtraining.mapper.ProjectStudentMapper;
 import jack.digityhuman.speechtraining.mapper.ScoringDimensionMapper;
-import jack.digityhuman.speechtraining.mapper.StaffUserMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingReportDimensionMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingReportMapper;
 import jack.digityhuman.speechtraining.service.AccessControlService;
 import jack.digityhuman.speechtraining.service.ProjectRankService;
 import jack.digityhuman.speechtraining.service.UserContext;
+import jack.digityhuman.staffmanagement.api.OrgQueryService;
+import jack.digityhuman.staffmanagement.api.dto.SysUserDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -34,7 +34,8 @@ public class ProjectRankServiceImpl implements ProjectRankService {
     private final AccessControlService accessControlService;
     private final ProjectStudentMapper projectStudentMapper;
     private final ScoringDimensionMapper scoringDimensionMapper;
-    private final StaffUserMapper staffUserMapper;
+    /** 学员姓名/部门经 Dubbo 取自 StaffManagement，不再直读 sys_user 表 */
+    private final OrgQueryService orgQueryService;
     private final TrainingReportMapper trainingReportMapper;
     private final TrainingReportDimensionMapper reportDimensionMapper;
     private final UserContext userContext;
@@ -139,13 +140,13 @@ public class ProjectRankServiceImpl implements ProjectRankService {
             return List.of();
         }
 
-        Map<String, StaffUser> users = new HashMap<>();
-        for (StaffUser user : staffUserMapper.selectByAccounts(new ArrayList<>(scores.keySet()))) {
+        Map<String, SysUserDTO> users = new HashMap<>();
+        for (SysUserDTO user : orgQueryService.listUsersByAccounts(new ArrayList<>(scores.keySet()))) {
             users.put(user.getAccount(), user);
         }
         List<ProjectRankResp.RankItem> rows = new ArrayList<>();
         for (Map.Entry<String, BigDecimal> entry : scores.entrySet()) {
-            StaffUser user = users.get(entry.getKey());
+            SysUserDTO user = users.get(entry.getKey());
             ProjectRankResp.RankItem item = new ProjectRankResp.RankItem();
             item.setUserId(entry.getKey());
             item.setFullname(user == null ? null : user.getName());

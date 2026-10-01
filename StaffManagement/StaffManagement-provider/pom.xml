@@ -19,6 +19,12 @@
             <groupId>jack.digityHuman</groupId>
             <artifactId>StaffManagement-api</artifactId>
         </dependency>
+        <!-- 全站公共基础（ApiResponse / GlobalExceptionHandler / MP 分页插件），见 D:\JACK\plan\后端架构总纲.md -->
+        <dependency>
+            <groupId>jack.digityHuman</groupId>
+            <artifactId>after-end-common</artifactId>
+            <version>0.0.1-SNAPSHOT</version>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

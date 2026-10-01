@@ -1,7 +1,7 @@
 package jack.digityhuman.speechtraining.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.dto.resp.PracticeRecordResp;
 import jack.digityhuman.speechtraining.dto.resp.ProjectCardResp;
 import jack.digityhuman.speechtraining.dto.resp.StudentPageData;

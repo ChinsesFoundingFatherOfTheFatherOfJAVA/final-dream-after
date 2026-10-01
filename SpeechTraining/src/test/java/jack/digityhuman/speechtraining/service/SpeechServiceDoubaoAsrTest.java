@@ -1,6 +1,6 @@
 package jack.digityhuman.speechtraining.service;
 
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.doubao.DoubaoSaucClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,11 +32,11 @@ class SpeechServiceDoubaoAsrTest {
     @Mock
     private DoubaoSaucClient doubaoSaucClient;
 
-    private SpeechService speechService;
+    private SpeechServiceImpl speechService;
 
     @BeforeEach
     void setUp() {
-        speechService = new SpeechService(ttsCacheService, voiceMapProperties, doubaoSaucClient);
+        speechService = new SpeechServiceImpl(ttsCacheService, voiceMapProperties, doubaoSaucClient);
     }
 
     @Test

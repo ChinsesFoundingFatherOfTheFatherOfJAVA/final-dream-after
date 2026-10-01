@@ -1,6 +1,6 @@
 package jack.digityhuman.speechtraining.service;
 
-import jack.digityhuman.speechtraining.common.PageResult;
+import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.speechtraining.dto.req.ProjectStudentQueryReq;
 import jack.digityhuman.speechtraining.dto.resp.ProjectStatisticsResp;
 

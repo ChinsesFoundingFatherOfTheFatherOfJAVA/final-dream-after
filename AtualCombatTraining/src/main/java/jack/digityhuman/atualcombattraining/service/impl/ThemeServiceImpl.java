@@ -2,8 +2,8 @@ package jack.digityhuman.atualcombattraining.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import jack.digityhuman.atualcombattraining.common.BizException;
-import jack.digityhuman.atualcombattraining.common.PageResult;
+import jack.digityhuman.common.api.BizException;
+import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.atualcombattraining.dto.req.ThemeListReq;
 import jack.digityhuman.atualcombattraining.dto.resp.ScenarioUnitResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ThemeDetailResp;

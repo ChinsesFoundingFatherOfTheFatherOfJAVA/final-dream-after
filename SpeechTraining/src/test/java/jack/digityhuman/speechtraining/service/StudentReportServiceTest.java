@@ -2,7 +2,7 @@ package jack.digityhuman.speechtraining.service;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.entity.TrainingMessageLike;
 import jack.digityhuman.speechtraining.entity.TrainingNode;
 import jack.digityhuman.speechtraining.entity.TrainingProject;

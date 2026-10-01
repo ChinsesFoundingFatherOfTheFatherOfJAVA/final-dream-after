@@ -2,6 +2,7 @@ package jack.digityhuman.speechtraining.common;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.dto.req.ProjectSaveReq;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

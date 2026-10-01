@@ -1,7 +1,7 @@
 package jack.digityhuman.onlineclassroom.service;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import jack.digityhuman.onlineclassroom.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.onlineclassroom.entity.KngUploadChunk;
 import jack.digityhuman.onlineclassroom.mapper.KngUploadChunkMapper;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +31,7 @@ public class UploadService {
     private final KngUploadChunkMapper chunkMapper;
     private final StorageService storageService;
 
+    /** 初始化分片上传：秒传检查（同哈希直接返回已完成），否则登记元数据并返回 uploadId。 */
     @Transactional
     public InitResult init(InitRequest request) {
         if (request == null || !StringUtils.hasText(request.fileName())) {
@@ -71,6 +72,7 @@ public class UploadService {
         return new InitResult(uploadId, uploaded, false, null);
     }
 
+    /** 接收单个分片：按序写入临时目录，重复上传同序号分片幂等覆盖。 */
     @Transactional
     public void uploadChunk(String uploadId, int chunkIndex, MultipartFile file) {
         if (!StringUtils.hasText(uploadId)) {
@@ -113,6 +115,7 @@ public class UploadService {
     }
 
     @Transactional
+    /** 合并分片：校验分片完整性后按序拼接为最终文件，清理临时分片并落盘元数据。 */
     public MergeResult merge(MergeRequest request) {
         if (request == null || !StringUtils.hasText(request.uploadId())) {
             throw new BizException("上传标识不能为空");

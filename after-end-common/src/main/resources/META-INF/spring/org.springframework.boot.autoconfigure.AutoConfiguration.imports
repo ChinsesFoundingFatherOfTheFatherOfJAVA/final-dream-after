@@ -1,0 +1,3 @@
+jack.digityhuman.common.web.CommonWebAutoConfiguration
+jack.digityhuman.common.mybatis.MybatisPlusCommonAutoConfiguration
+jack.digityhuman.common.jackson.IdAsStringAutoConfiguration

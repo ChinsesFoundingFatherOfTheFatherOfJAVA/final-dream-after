@@ -1,8 +1,8 @@
 package jack.digityhuman.speechtraining.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import jack.digityhuman.speechtraining.common.ApiResponse;
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.ApiResponse;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.dto.req.SendMessageReq;
 import jack.digityhuman.speechtraining.dto.req.TtsReq;
 import jack.digityhuman.speechtraining.dto.resp.SendMessageResp;

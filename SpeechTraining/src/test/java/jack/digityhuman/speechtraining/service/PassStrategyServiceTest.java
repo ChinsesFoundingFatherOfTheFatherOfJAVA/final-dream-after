@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PassStrategyServiceTest {
 
-    private final PassStrategyService service = new PassStrategyService();
+    private final PassStrategyService service = new PassStrategyServiceImpl();
 
     @Test
     void dailyTrainingUsesCompletionStandardAndIgnoresPassStrategy() {

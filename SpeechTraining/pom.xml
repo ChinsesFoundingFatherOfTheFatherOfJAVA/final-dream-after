@@ -126,6 +126,37 @@
             <version>0.12.6</version>
             <scope>runtime</scope>
         </dependency>
+
+        <!--
+          组织架构数据（用户/部门/角色/权限）改为 Dubbo 消费 StaffManagement 的 OrgQueryService，
+          不再直读它的 sys_* 表。只依赖契约 jar；版本口径与 StaffManagement 一致：
+          显式声明两个入口坐标、不 import dubbo-bom（它会把 spring-core 5.x 塞进依赖管理，
+          与 Boot 4 的 spring-core 7 冲突）。
+        -->
+        <dependency>
+            <groupId>jack.digityHuman</groupId>
+            <artifactId>StaffManagement-api</artifactId>
+            <version>0.0.1-SNAPSHOT</version>
+        </dependency>
+        <!--
+          全站公共基础：ApiResponse / BizException / GlobalExceptionHandler / PageResult /
+          MyBatis-Plus 分页插件统一由 after-end-common 经 AutoConfiguration 装配，本工程不再自持一份。
+        -->
+        <dependency>
+            <groupId>jack.digityHuman</groupId>
+            <artifactId>after-end-common</artifactId>
+            <version>0.0.1-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.dubbo</groupId>
+            <artifactId>dubbo-spring-boot-starter</artifactId>
+            <version>3.3.6</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.dubbo</groupId>
+            <artifactId>dubbo-registry-nacos</artifactId>
+            <version>3.3.6</version>
+        </dependency>
     </dependencies>
     <build>
         <plugins>

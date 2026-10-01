@@ -1,13 +1,13 @@
 package jack.digityhuman.onlineclassroom.service;
 
-import jack.digityhuman.onlineclassroom.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.onlineclassroom.dto.KngCatalogDtos;
 import jack.digityhuman.onlineclassroom.entity.KngCatalog;
 import jack.digityhuman.onlineclassroom.entity.KngCatalogPermission;
 import jack.digityhuman.onlineclassroom.mapper.KngCatalogMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngCatalogPermissionMapper;
-import jack.digityhuman.onlineclassroom.mapper.SysUserReadMapper;
 import jack.digityhuman.onlineclassroom.service.impl.CatalogServiceImpl;
+import jack.digityhuman.staffmanagement.api.OrgQueryService;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
@@ -35,7 +35,7 @@ class CatalogServiceTest {
         when(catalogMapper.selectList(any())).thenReturn(List.of(parent, child));
 
         CatalogService service = new CatalogServiceImpl(catalogMapper,
-                mock(KngCatalogPermissionMapper.class), mock(SysUserReadMapper.class));
+                mock(KngCatalogPermissionMapper.class), mock(OrgQueryService.class));
 
         List<KngCatalogDtos.TreeNode> tree = service.tree();
 
@@ -53,7 +53,7 @@ class CatalogServiceTest {
         when(catalogMapper.selectList(any())).thenReturn(List.of(parent));
 
         CatalogService service = new CatalogServiceImpl(catalogMapper,
-                mock(KngCatalogPermissionMapper.class), mock(SysUserReadMapper.class));
+                mock(KngCatalogPermissionMapper.class), mock(OrgQueryService.class));
 
         assertThatThrownBy(() -> service.batchCreate(
                 new KngCatalogDtos.BatchRequest("p", "分类A\n  子分类B"), "1"))
@@ -71,7 +71,7 @@ class CatalogServiceTest {
         when(permissionMapper.selectList(any())).thenReturn(List.of());
 
         CatalogService service = new CatalogServiceImpl(catalogMapper,
-                permissionMapper, mock(SysUserReadMapper.class));
+                permissionMapper, mock(OrgQueryService.class));
 
         KngCatalogDtos.CountResponse result = service.batchCreate(
                 new KngCatalogDtos.BatchRequest("p", "分类A\n 子分类A1"), "1");

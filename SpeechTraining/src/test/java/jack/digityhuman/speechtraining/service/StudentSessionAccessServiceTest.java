@@ -1,6 +1,6 @@
 package jack.digityhuman.speechtraining.service;
 
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.entity.TrainingSession;
 import jack.digityhuman.speechtraining.mapper.TrainingSessionMapper;
 import org.junit.jupiter.api.Test;
@@ -15,7 +15,7 @@ class StudentSessionAccessServiceTest {
     private final TrainingSessionMapper sessionMapper = mock(TrainingSessionMapper.class);
     private final UserContext userContext = mock(UserContext.class);
     private final StudentSessionAccessService service =
-            new StudentSessionAccessService(sessionMapper, userContext);
+            new StudentSessionAccessServiceImpl(sessionMapper, userContext);
 
     @Test
     void returnsSessionOwnedByCurrentStudent() {

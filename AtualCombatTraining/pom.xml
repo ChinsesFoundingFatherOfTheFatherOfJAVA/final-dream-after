@@ -47,6 +47,15 @@
             <groupId>com.alibaba.cloud</groupId>
             <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
         </dependency>
+        <!--
+          全站公共基础：ApiResponse / BizException / GlobalExceptionHandler / PageResult /
+          MyBatis-Plus 分页插件统一由 after-end-common 经 AutoConfiguration 装配，本工程不再自持一份。
+        -->
+        <dependency>
+            <groupId>jack.digityHuman</groupId>
+            <artifactId>after-end-common</artifactId>
+            <version>0.0.1-SNAPSHOT</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc</artifactId>

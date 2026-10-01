@@ -1,6 +1,6 @@
 package jack.digityhuman.speechtraining.service;
 
-import jack.digityhuman.speechtraining.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.common.FileStorageService;
 import jack.digityhuman.speechtraining.dify.DifyScoringService;
 import jack.digityhuman.speechtraining.dto.resp.AiScoringResp;
@@ -61,12 +61,12 @@ class FlowEngineVoiceShortCircuitTest {
     @Mock
     private FileStorageService fileStorageService;
 
-    private FlowEngineService flowEngineService;
+    private FlowEngineServiceImpl flowEngineService;
 
     @BeforeEach
     void setUp() {
         // 单测里没有真实事务：TransactionTemplate 只负责把写阶段回调执行掉（平台事务管理器为 mock）
-        flowEngineService = new FlowEngineService(sessionMapper, messageMapper, projectMapper,
+        flowEngineService = new FlowEngineServiceImpl(sessionMapper, messageMapper, projectMapper,
                 nodeMapper, edgeMapper, virtualTrainerMapper, reportMapper, acousticMapper,
                 difyScoringService, userContext, reportGenerationService, fileStorageService,
                 new TransactionTemplate(mock(PlatformTransactionManager.class)));

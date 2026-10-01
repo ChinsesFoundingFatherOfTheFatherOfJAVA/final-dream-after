@@ -1,11 +1,14 @@
 package jack.digityhuman.speechtraining.common;
 
+import jack.digityhuman.common.api.ApiResponse;
+import jack.digityhuman.common.api.BizException;
+import jack.digityhuman.common.web.GlobalExceptionHandler;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 统一异常响应的语义码测试。
+ * 统一异常响应的语义码测试（处理器由 after-end-common 提供）。
  */
 class GlobalExceptionHandlerTest {
 

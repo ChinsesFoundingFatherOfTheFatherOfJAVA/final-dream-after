@@ -5,7 +5,7 @@ import jack.digityhuman.staffmanagement.role.dto.RoleMemberQuery;
 import jack.digityhuman.staffmanagement.role.dto.UserIdsRequest;
 import jack.digityhuman.staffmanagement.role.service.RoleMemberService;
 import jack.digityhuman.staffmanagement.role.vo.RoleMemberVo;
-import jack.digityhuman.staffmanagement.web.ApiResponse;
+import jack.digityhuman.common.api.ApiResponse;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;

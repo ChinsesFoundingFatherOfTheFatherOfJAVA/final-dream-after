@@ -1,7 +1,7 @@
 package jack.digityhuman.onlineclassroom.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jack.digityhuman.onlineclassroom.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.onlineclassroom.dto.KngSettingDtos;
 import jack.digityhuman.onlineclassroom.entity.KngSetting;
 import jack.digityhuman.onlineclassroom.mapper.KngSettingMapper;

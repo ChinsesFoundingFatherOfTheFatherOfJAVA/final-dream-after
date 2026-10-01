@@ -2,22 +2,21 @@ package jack.digityhuman.onlineclassroom.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import jack.digityhuman.onlineclassroom.common.BizException;
+import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.onlineclassroom.dto.KngCoursewareDtos;
 import jack.digityhuman.onlineclassroom.entity.KngCatalog;
 import jack.digityhuman.onlineclassroom.entity.KngCourseware;
 import jack.digityhuman.onlineclassroom.entity.KngCoursewareAttachment;
 import jack.digityhuman.onlineclassroom.entity.KngCoursewareFile;
 import jack.digityhuman.onlineclassroom.entity.KngRef;
-import jack.digityhuman.onlineclassroom.entity.SysUserRead;
 import jack.digityhuman.onlineclassroom.mapper.KngCatalogMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngCoursewareAttachmentMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngCoursewareFileMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngCoursewareMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngRefMapper;
-import jack.digityhuman.onlineclassroom.mapper.SysUserReadMapper;
 import jack.digityhuman.onlineclassroom.service.CoursewareOpService;
 import jack.digityhuman.onlineclassroom.service.CoursewareService;
+import jack.digityhuman.staffmanagement.api.OrgQueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,8 +40,10 @@ public class CoursewareOpServiceImpl implements CoursewareOpService {
     private final KngCoursewareAttachmentMapper attachmentMapper;
     private final KngCatalogMapper catalogMapper;
     private final KngRefMapper refMapper;
-    private final SysUserReadMapper userReadMapper;
+    /** 操作人姓名经 Dubbo 取自 StaffManagement，不再直读 sys_user 表 */
+    private final OrgQueryService orgQueryService;
 
+    /** 下架单课件：仅已发布(2)可下架，状态置 3 并清在架标记。 */
     @Transactional
     public KngCoursewareDtos.CountResponse takeDown(String id) {
         KngCourseware courseware = coursewareService.require(id);
@@ -56,6 +57,7 @@ public class CoursewareOpServiceImpl implements CoursewareOpService {
         return new KngCoursewareDtos.CountResponse(1);
     }
 
+    /** 批量下架：逐个校验状态，返回实际下架数量，非法项跳过。 */
     @Transactional
     public KngCoursewareDtos.CountResponse batchTakeDown(KngCoursewareDtos.IdsRequest request) {
         List<String> ids = ids(request == null ? null : request.ids());
@@ -75,6 +77,7 @@ public class CoursewareOpServiceImpl implements CoursewareOpService {
         return new KngCoursewareDtos.CountResponse(ids.size());
     }
 
+    /** 批量上架：仅下架(3)状态可重新上架。 */
     @Transactional
     public KngCoursewareDtos.CountResponse batchPutOn(KngCoursewareDtos.IdsRequest request) {
         List<String> ids = ids(request == null ? null : request.ids());
@@ -94,6 +97,7 @@ public class CoursewareOpServiceImpl implements CoursewareOpService {
         return new KngCoursewareDtos.CountResponse(ids.size());
     }
 
+    /** 移动课件到目标分类（批量），同时刷新目录冗余名。 */
     @Transactional
     public KngCoursewareDtos.CountResponse move(KngCoursewareDtos.MoveRequest request) {
         List<String> ids = ids(request == null ? null : request.ids());
@@ -112,6 +116,7 @@ public class CoursewareOpServiceImpl implements CoursewareOpService {
         return new KngCoursewareDtos.CountResponse(ids.size());
     }
 
+    /** 复制课件：深拷贝主记录与文件/附件行，标题加"(副本)"后缀并在同分类内去重。 */
     @Transactional
     public KngCoursewareDtos.IdResponse copy(
             String id, KngCoursewareDtos.CopyRequest request, String userId) {
@@ -183,6 +188,7 @@ public class CoursewareOpServiceImpl implements CoursewareOpService {
         return new KngCoursewareDtos.IdResponse(copy.getId());
     }
 
+    /** 删除单课件：先校验未被引用（assertNotReferenced），再级联删除文件与附件行（硬删）。 */
     @Transactional
     public KngCoursewareDtos.CountResponse delete(String id) {
         coursewareService.require(id);
@@ -195,6 +201,7 @@ public class CoursewareOpServiceImpl implements CoursewareOpService {
         return new KngCoursewareDtos.CountResponse(1);
     }
 
+    /** 批量删除：逐个复用 {@link #delete}，返回实际删除数量。 */
     @Transactional
     public KngCoursewareDtos.CountResponse batchDelete(KngCoursewareDtos.IdsRequest request) {
         List<String> ids = ids(request == null ? null : request.ids());
@@ -262,7 +269,12 @@ public class CoursewareOpServiceImpl implements CoursewareOpService {
 
     private String userName(String userId) {
         if (!StringUtils.hasText(userId)) return "系统";
-        List<SysUserRead> users = userReadMapper.selectByIds(List.of(userId));
-        return users.isEmpty() ? "系统" : users.get(0).getName();
+        try {
+            List<jack.digityhuman.staffmanagement.api.dto.SysUserDTO> users =
+                    orgQueryService.listUsersByIds(List.of(Long.parseLong(userId.trim())));
+            return users.isEmpty() ? "系统" : users.get(0).getName();
+        } catch (NumberFormatException exception) {
+            return "系统";
+        }
     }
 }

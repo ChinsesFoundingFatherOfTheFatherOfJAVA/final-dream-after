@@ -1,23 +1,22 @@
 package jack.digityhuman.speechtraining.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import jack.digityhuman.speechtraining.common.BizException;
-import jack.digityhuman.speechtraining.common.PageResult;
+import jack.digityhuman.common.api.BizException;
+import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.speechtraining.dto.req.InviteStudentsReq;
 import jack.digityhuman.speechtraining.dto.req.ProjectStudentQueryReq;
 import jack.digityhuman.speechtraining.dto.resp.ProjectStudentRows;
 import jack.digityhuman.speechtraining.entity.ProjectStudent;
-import jack.digityhuman.speechtraining.entity.StaffUser;
-import jack.digityhuman.speechtraining.entity.SysDepartmentRead;
 import jack.digityhuman.speechtraining.entity.TrainingProject;
 import jack.digityhuman.speechtraining.entity.TrainingReport;
 import jack.digityhuman.speechtraining.mapper.ProjectStudentMapper;
-import jack.digityhuman.speechtraining.mapper.StaffUserMapper;
-import jack.digityhuman.speechtraining.mapper.SysDepartmentReadMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingProjectMapper;
 import jack.digityhuman.speechtraining.mapper.TrainingReportMapper;
 import jack.digityhuman.speechtraining.service.AccessControlService;
 import jack.digityhuman.speechtraining.service.ProjectStudentService;
+import jack.digityhuman.staffmanagement.api.OrgQueryService;
+import jack.digityhuman.staffmanagement.api.dto.SysDepartmentDTO;
+import jack.digityhuman.staffmanagement.api.dto.SysUserDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,9 +47,9 @@ public class ProjectStudentServiceImpl implements ProjectStudentService {
     private final AccessControlService accessControlService;
     private final TrainingProjectMapper projectMapper;
     private final ProjectStudentMapper projectStudentMapper;
-    private final StaffUserMapper staffUserMapper;
+    /** 组织架构数据（用户/部门）经 Dubbo 取自 StaffManagement，不再直读 sys_* 表 */
+    private final OrgQueryService orgQueryService;
     private final TrainingReportMapper trainingReportMapper;
-    private final SysDepartmentReadMapper departmentMapper;
 
     public PageResult<ProjectStudentRows.ProjectStudentRow> list(Long projectId, ProjectStudentQueryReq req) {
         accessControlService.requireManage();
@@ -67,8 +66,8 @@ public class ProjectStudentServiceImpl implements ProjectStudentService {
             return new PageResult<>(List.of(), 0);
         }
 
-        Map<String, StaffUser> users = staffUserMapper.selectByAccounts(assignedUserIds).stream()
-                .collect(Collectors.toMap(StaffUser::getAccount, user -> user, (left, right) -> left));
+        Map<String, SysUserDTO> users = orgQueryService.listUsersByAccounts(assignedUserIds).stream()
+                .collect(Collectors.toMap(SysUserDTO::getAccount, user -> user, (left, right) -> left));
         List<TrainingReport> reports = trainingReportMapper.selectList(
                 new QueryWrapper<TrainingReport>()
                         .eq("project_id", projectId)
@@ -79,7 +78,7 @@ public class ProjectStudentServiceImpl implements ProjectStudentService {
 
         List<ProjectStudentRows.ProjectStudentRow> rows = new ArrayList<>();
         for (String userId : assignedUserIds) {
-            StaffUser user = users.get(userId);
+            SysUserDTO user = users.get(userId);
             if (user == null || !matchesUserFilters(user, query)) {
                 continue;
             }
@@ -111,7 +110,7 @@ public class ProjectStudentServiceImpl implements ProjectStudentService {
             throw new BizException("请选择学员");
         }
 
-        List<StaffUser> users = staffUserMapper.selectByAccounts(userIds);
+        List<SysUserDTO> users = orgQueryService.listUsersByAccounts(userIds);
         if (users.size() != userIds.size()) {
             throw new BizException("学员不存在");
         }
@@ -171,8 +170,8 @@ public class ProjectStudentServiceImpl implements ProjectStudentService {
                 .stream()
                 .map(ProjectStudent::getUserId)
                 .collect(Collectors.toSet());
-        List<ProjectStudentRows.CandidateRow> rows = staffUserMapper
-                .selectActiveCandidates(deptPath, StringUtils.hasText(keyword) ? keyword.trim() : null)
+        List<ProjectStudentRows.CandidateRow> rows = orgQueryService
+                .listActiveCandidates(deptPath, StringUtils.hasText(keyword) ? keyword.trim() : null)
                 .stream()
                 .filter(user -> !assigned.contains(user.getAccount()))
                 .map(this::toCandidateRow)
@@ -185,7 +184,7 @@ public class ProjectStudentServiceImpl implements ProjectStudentService {
 
     private ProjectStudentRows.ProjectStudentRow toStudentRow(
             TrainingProject project,
-            StaffUser user,
+            SysUserDTO user,
             List<TrainingReport> reports) {
         List<TrainingReport> ordered = reports.stream()
                 .sorted(Comparator
@@ -220,7 +219,7 @@ public class ProjectStudentServiceImpl implements ProjectStudentService {
         return row;
     }
 
-    private boolean matchesUserFilters(StaffUser user, ProjectStudentQueryReq query) {
+    private boolean matchesUserFilters(SysUserDTO user, ProjectStudentQueryReq query) {
         if (StringUtils.hasText(query.getKeyword())) {
             String keyword = query.getKeyword().trim().toLowerCase();
             boolean matched = contains(user.getName(), keyword)
@@ -294,7 +293,7 @@ public class ProjectStudentServiceImpl implements ProjectStudentService {
         return passTimes >= 1;
     }
 
-    private ProjectStudentRows.CandidateRow toCandidateRow(StaffUser user) {
+    private ProjectStudentRows.CandidateRow toCandidateRow(SysUserDTO user) {
         ProjectStudentRows.CandidateRow row = new ProjectStudentRows.CandidateRow();
         row.setUserId(user.getAccount());
         row.setFullname(user.getName());
@@ -320,7 +319,7 @@ public class ProjectStudentServiceImpl implements ProjectStudentService {
 
     private String requireDepartmentPath(String deptId) {
         try {
-            SysDepartmentRead department = departmentMapper.selectById(Long.parseLong(deptId.trim()));
+            SysDepartmentDTO department = orgQueryService.getDepartment(Long.parseLong(deptId.trim()));
             if (department == null || !StringUtils.hasText(department.getDeptPath())) {
                 throw new BizException("部门不存在");
             }
