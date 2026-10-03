@@ -20,6 +20,14 @@ public final class KngReadDtos {
         private Integer finishCount;
     }
 
+    /** 课件维度"近7天/总数"两计数（课程章节学习统计按任务课件聚合使用）。 */
+    @Data
+    public static class StudyRecentCountRow {
+        private String coursewareId;
+        private Integer totalCount;
+        private Integer recentCount;
+    }
+
     @Data
     public static class StudyOverviewRow {
         private Integer numOf7days;

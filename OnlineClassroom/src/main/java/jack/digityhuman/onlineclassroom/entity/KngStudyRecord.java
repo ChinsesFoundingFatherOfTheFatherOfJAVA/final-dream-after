@@ -24,5 +24,7 @@ public class KngStudyRecord {
     private BigDecimal studyLenHours;
     private Integer finishCostDays;
     private Integer finishMethod;
+    /** 学习进度%（课程内学习详情页新增列，学员端写入，管理端只读展示，当前恒 null） */
+    private BigDecimal studySchedule;
     private LocalDateTime createdAt;
 }

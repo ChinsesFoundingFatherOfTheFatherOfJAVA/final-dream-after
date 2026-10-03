@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="jack.digityhuman.onlineclassroom.mapper.KngCourseMapper">
+
+    <!-- 课程列表动态条件：与课件列表同构（去 type/quoted），keyword 对名称/分类名/上传者 OR 模糊。
+         catalogIds 由 Service 做目录子树展开后传入，这里只做 IN；外部输入一律 #{}，单表不 JOIN。 -->
+    <sql id="courseFilters">
+        <where>
+            <if test="query != null and query.keyword != null and query.keyword != ''">
+                and (
+                    title like concat('%', #{query.keyword}, '%')
+                    or catalog_name like concat('%', #{query.keyword}, '%')
+                    or created_by_name like concat('%', #{query.keyword}, '%')
+                )
+            </if>
+            <if test="query != null and query.status != null">
+                and status = #{query.status}
+            </if>
+            <if test="query != null and query.onSale != null">
+                and on_sale = #{query.onSale}
+            </if>
+            <if test="catalogIds != null and catalogIds.size() > 0">
+                and catalog_id in
+                <foreach collection="catalogIds" item="catalogId" open="(" separator="," close=")">
+                    #{catalogId}
+                </foreach>
+            </if>
+            <if test="query != null and query.uploadTimeStart != null and query.uploadTimeStart != ''">
+                and created_at &gt;= #{query.uploadTimeStart}
+            </if>
+            <if test="query != null and query.uploadTimeEnd != null and query.uploadTimeEnd != ''">
+                and created_at &lt; date_add(#{query.uploadTimeEnd}, interval 1 day)
+            </if>
+            <if test="query != null and query.updateTimeStart != null and query.updateTimeStart != ''">
+                and updated_at &gt;= #{query.updateTimeStart}
+            </if>
+            <if test="query != null and query.updateTimeEnd != null and query.updateTimeEnd != ''">
+                and updated_at &lt; date_add(#{query.updateTimeEnd}, interval 1 day)
+            </if>
+        </where>
+    </sql>
+
+    <select id="countByQuery" resultType="long">
+        select count(*)
+        from kng_course
+        <include refid="courseFilters"/>
+    </select>
+
+    <!-- 排序字段由 Service 白名单收敛（仅 updateTime/createdAt/platformNo 三种 token 能传进来），
+         XML 再按 token 分支映射到列，杜绝字符串拼接进 SQL。 -->
+    <select id="selectPageByQuery" resultType="jack.digityhuman.onlineclassroom.entity.KngCourse">
+        select *
+        from kng_course
+        <include refid="courseFilters"/>
+        <choose>
+            <when test="orderBy == 'createdAt' and orderType == 'asc'">
+                order by created_at asc
+            </when>
+            <when test="orderBy == 'createdAt' and orderType == 'desc'">
+                order by created_at desc
+            </when>
+            <when test="orderBy == 'platformNo' and orderType == 'asc'">
+                order by platform_no asc
+            </when>
+            <when test="orderBy == 'platformNo' and orderType == 'desc'">
+                order by platform_no desc
+            </when>
+            <when test="orderBy == 'updateTime' and orderType == 'asc'">
+                order by updated_at asc
+            </when>
+            <otherwise>
+                order by updated_at desc
+            </otherwise>
+        </choose>
+        limit #{offset}, #{limit}
+    </select>
+
+    <select id="selectAllByQuery" resultType="jack.digityhuman.onlineclassroom.entity.KngCourse">
+        select *
+        from kng_course
+        <include refid="courseFilters"/>
+        order by updated_at desc
+    </select>
+
+    <!-- 平台课程编号计数：前缀匹配走 #{} 绑定，like 前缀由 Service 拼（仅日期+固定字面量，无用户输入）。
+         与课件编号计数（KngCoursewareMapper.xml 同名方法，查 kng_courseware）相互独立、两表各自递增。 -->
+    <select id="countPlatformNoByPrefix" resultType="int">
+        select count(*)
+        from kng_course
+        where platform_no like concat(#{prefix}, '%')
+    </select>
+</mapper>

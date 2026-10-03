@@ -36,6 +36,8 @@ public final class KngCoursewareDtos {
         private Integer status;
         private String statusDesc;
         private Integer onSale;
+        /** 隐藏标记（05 增补A：独立于 status 的置灰标记，可恢复） */
+        private Boolean hidden;
         private String updateTime;
         private Integer studyCount;
         private String platformNo;
@@ -83,6 +85,8 @@ public final class KngCoursewareDtos {
         private String catalogPath;
         private Integer status;
         private String platformNo;
+        /** 隐藏标记（05 增补A：详情响应追加，与列表同口径） */
+        private Boolean hidden;
         private Integer standardMinutes;
         private Integer standardSeconds;
         private Boolean standardDurationFollow;
@@ -133,6 +137,8 @@ public final class KngCoursewareDtos {
         private Integer finishCostDays;
         private Integer finishMethod;
         private String finishMethodDesc;
+        /** 学习进度%（课程内学习详情新增列，来源 kng_study_record.study_schedule，学员端写入当前恒 null；课件模块接口同字段为空不影响原前端） */
+        private BigDecimal studySchedule;
     }
 
     @Data
@@ -223,6 +229,10 @@ public final class KngCoursewareDtos {
     }
 
     public record CopyRequest(String targetCatalogId) {
+    }
+
+    /** 课件隐藏/取消隐藏请求（05 增补A；hidden 与 status 互不影响，任意状态可隐藏/取消）。 */
+    public record HiddenRequest(Boolean hidden) {
     }
 
     public record CountResponse(int count) {

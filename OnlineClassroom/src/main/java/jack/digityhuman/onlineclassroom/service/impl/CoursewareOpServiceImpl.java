@@ -14,6 +14,7 @@ import jack.digityhuman.onlineclassroom.mapper.KngCoursewareAttachmentMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngCoursewareFileMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngCoursewareMapper;
 import jack.digityhuman.onlineclassroom.mapper.KngRefMapper;
+import jack.digityhuman.onlineclassroom.service.CourseRefService;
 import jack.digityhuman.onlineclassroom.service.CoursewareOpService;
 import jack.digityhuman.onlineclassroom.service.CoursewareService;
 import jack.digityhuman.staffmanagement.api.OrgQueryService;
@@ -35,6 +36,8 @@ import java.util.Objects;
 public class CoursewareOpServiceImpl implements CoursewareOpService {
 
     private final CoursewareService coursewareService;
+    /** kng_ref 引用维护门面（课程模块 CS-10 启用后，课件删除检查走统一口径） */
+    private final CourseRefService courseRefService;
     private final KngCoursewareMapper coursewareMapper;
     private final KngCoursewareFileMapper fileMapper;
     private final KngCoursewareAttachmentMapper attachmentMapper;
@@ -42,6 +45,18 @@ public class CoursewareOpServiceImpl implements CoursewareOpService {
     private final KngRefMapper refMapper;
     /** 操作人姓名经 Dubbo 取自 StaffManagement，不再直读 sys_user 表 */
     private final OrgQueryService orgQueryService;
+
+    /**
+     * 隐藏/取消隐藏课件（05 增补A）：只更新 hidden 列，独立于 status 状态机，
+     * 任意状态（未发布/发布中/已发布/已下架）均可隐藏或取消，不触碰上架位。
+     */
+    @Transactional
+    public void hide(String id, Boolean hidden) {
+        KngCourseware courseware = coursewareService.require(id);
+        courseware.setHidden(Boolean.TRUE.equals(hidden) ? 1 : 0);
+        courseware.setUpdatedAt(LocalDateTime.now());
+        coursewareMapper.updateById(courseware);
+    }
 
     /** 下架单课件：仅已发布(2)可下架，状态置 3 并清在架标记。 */
     @Transactional
@@ -237,11 +252,17 @@ public class CoursewareOpServiceImpl implements CoursewareOpService {
         return new KngCoursewareDtos.DownloadRecordResponse(0, List.of());
     }
 
+    /**
+     * 课件删除引用检查（CS-10）：存在课程引用（kng_ref ref_type=1）时阻止删除，
+     * 提示带课程名快照（ref_name）——需求文档 01 §CS-10 的文案"课件已被课程《xxx》引用，无法删除"。
+     * 原 v1.0 实现未区分 ref_type 且文案不含课程名，本方法在课程模块上线后升级为精确口径。
+     */
     private void assertNotReferenced(String id) {
-        Long count = refMapper.selectCount(Wrappers.<KngRef>lambdaQuery()
-                .eq(KngRef::getCoursewareId, id));
-        if (count != null && count > 0) {
-            throw new BizException("课件已被课程引用，无法删除");
+        List<KngRef> refs = courseRefService.listCourseRefs(id);
+        if (!refs.isEmpty()) {
+            String courseName = StringUtils.hasText(refs.get(0).getRefName())
+                    ? refs.get(0).getRefName() : "未知课程";
+            throw new BizException("课件已被课程《" + courseName + "》引用，无法删除");
         }
     }
 

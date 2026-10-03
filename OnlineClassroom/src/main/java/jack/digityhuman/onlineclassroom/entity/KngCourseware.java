@@ -19,6 +19,8 @@ public class KngCourseware {
     private String catalogId;
     private Integer status;
     private Integer onSale;
+    /** 隐藏标记,独立于status（05 增补：更多菜单"隐藏"，可恢复，不影响上下架状态机） */
+    private Integer hidden;
     private Integer standardMinutes;
     private Integer standardSeconds;
     private Integer standardDurationFollow;

@@ -87,4 +87,67 @@
         </if>
         group by dept_id
     </select>
+
+    <!-- ==================== 课程维度：课件 id 集合过滤口径（列表非空由 Service 保证） ==================== -->
+
+    <!-- 近 7 天口径沿用上方 selectOverview 的 start_study_time >= now-7d -->
+    <select id="selectRecentAndTotalByCoursewareIds" resultType="jack.digityhuman.onlineclassroom.dto.KngReadDtos$StudyRecentCountRow">
+        select
+            courseware_id,
+            count(*) total_count,
+            coalesce(sum(case when start_study_time &gt;= #{sevenDaysAgo} then 1 else 0 end), 0) recent_count
+        from kng_study_record
+        where courseware_id in
+        <foreach collection="coursewareIds" item="coursewareId" open="(" separator="," close=")">
+            #{coursewareId}
+        </foreach>
+        group by courseware_id
+    </select>
+
+    <select id="selectOverviewByCoursewareIds" resultType="jack.digityhuman.onlineclassroom.dto.KngReadDtos$StudyOverviewRow">
+        select
+            coalesce(sum(case when start_study_time &gt;= #{sevenDaysAgo} then 1 else 0 end), 0) num_of7days,
+            count(*) num_oftotal,
+            coalesce(sum(case when study_status = 1 then 1 else 0 end), 0) num_of_finish
+        from kng_study_record
+        where courseware_id in
+        <foreach collection="coursewareIds" item="coursewareId" open="(" separator="," close=")">
+            #{coursewareId}
+        </foreach>
+    </select>
+
+    <select id="selectFinishTimeOverviewByCoursewareIds" resultType="jack.digityhuman.onlineclassroom.dto.KngReadDtos$FinishTimeRow">
+        select
+            coalesce(sum(case when finish_cost_days &lt;= 1 then 1 else 0 end), 0) num_in_one_day,
+            coalesce(sum(case when finish_cost_days between 2 and 7 then 1 else 0 end), 0) num_in_one_week,
+            coalesce(sum(case when finish_cost_days between 8 and 30 then 1 else 0 end), 0) num_in_one_mon,
+            coalesce(sum(case when finish_cost_days between 31 and 90 then 1 else 0 end), 0) num_in_three_mon,
+            coalesce(sum(case when finish_cost_days &gt; 90 then 1 else 0 end), 0) num_in_more_thr_mon
+        from kng_study_record
+        where study_status = 1
+          and courseware_id in
+        <foreach collection="coursewareIds" item="coursewareId" open="(" separator="," close=")">
+            #{coursewareId}
+        </foreach>
+    </select>
+
+    <select id="selectDeptCountsByCoursewareIds" resultType="jack.digityhuman.onlineclassroom.dto.KngReadDtos$StudyDeptCountRow">
+        select
+            dept_id,
+            count(distinct user_id) study_count,
+            count(distinct case when study_status = 1 then user_id end) finish_count
+        from kng_study_record
+        where dept_id is not null
+          and courseware_id in
+        <foreach collection="coursewareIds" item="coursewareId" open="(" separator="," close=")">
+            #{coursewareId}
+        </foreach>
+        <if test="deptIds != null and deptIds.size() > 0">
+            and dept_id in
+            <foreach collection="deptIds" item="deptId" open="(" separator="," close=")">
+                #{deptId}
+            </foreach>
+        </if>
+        group by dept_id
+    </select>
 </mapper>

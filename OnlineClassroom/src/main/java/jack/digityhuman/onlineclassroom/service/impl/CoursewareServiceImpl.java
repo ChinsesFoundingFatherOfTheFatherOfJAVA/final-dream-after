@@ -139,6 +139,8 @@ public class CoursewareServiceImpl implements CoursewareService {
         detail.setCatalogPath(catalogPath(courseware.getCatalogId()));
         detail.setStatus(courseware.getStatus());
         detail.setPlatformNo(courseware.getPlatformNo());
+        // 隐藏标记（05 增补A：详情响应追加，与列表同口径）
+        detail.setHidden(isTrue(courseware.getHidden()));
         detail.setStandardMinutes(courseware.getStandardMinutes());
         detail.setStandardSeconds(courseware.getStandardSeconds());
         detail.setStandardDurationFollow(isTrue(courseware.getStandardDurationFollow()));
@@ -427,6 +429,8 @@ public class CoursewareServiceImpl implements CoursewareService {
         row.setUpdateTime(formatDate(item.getUpdatedAt()));
         row.setStudyCount(studyCount);
         row.setPlatformNo(item.getPlatformNo());
+        // 隐藏标记（05 增补A：列表置灰 + "已隐藏"标签的数据来源；XML 为 select *，列随实体带入）
+        row.setHidden(isTrue(item.getHidden()));
         row.setCoverUrl(item.getCoverUrl());
         row.setCreatedByName(item.getCreatedByName());
         return row;
@@ -509,6 +513,8 @@ public class CoursewareServiceImpl implements CoursewareService {
         item.setFinishMethod(record.getFinishMethod());
         item.setFinishMethodDesc(Objects.equals(record.getFinishMethod(), 1) ? "培训"
                 : Objects.equals(record.getFinishMethod(), 2) ? "自学" : null);
+        // 学习进度%（课程内学习详情新增列）：学员端写入当前恒 null，课件侧接口带出该字段对原前端无影响
+        item.setStudySchedule(record.getStudySchedule());
         return item;
     }
 
@@ -684,7 +690,9 @@ public class CoursewareServiceImpl implements CoursewareService {
         }
     }
 
-    private BigDecimal studyScoreCalc(KngCourseware courseware) {
+    /** 课件学分展示值：单独设置直接返回，否则按课程设置策略折算（供课程详情聚合任务学分之和复用）。 */
+    @Override
+    public BigDecimal studyScoreCalc(KngCourseware courseware) {
         if (courseware.getStudyScore() != null) {
             return courseware.getStudyScore();
         }

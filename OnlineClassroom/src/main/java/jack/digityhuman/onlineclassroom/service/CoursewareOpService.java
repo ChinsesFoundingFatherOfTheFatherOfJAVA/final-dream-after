@@ -9,6 +9,9 @@ import java.util.List;
 public interface CoursewareOpService {
     KngCoursewareDtos.CountResponse takeDown(String id);
 
+    /** 隐藏/取消隐藏（05 增补A）：hidden 独立于 status，任意状态可切换。 */
+    void hide(String id, Boolean hidden);
+
     KngCoursewareDtos.CountResponse batchTakeDown(KngCoursewareDtos.IdsRequest request);
 
     KngCoursewareDtos.CountResponse batchPutOn(KngCoursewareDtos.IdsRequest request);

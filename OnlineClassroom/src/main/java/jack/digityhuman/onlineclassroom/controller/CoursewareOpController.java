@@ -46,6 +46,15 @@ public class CoursewareOpController {
         return ApiResponse.success(operationService.takeDown(id));
     }
 
+    /** 隐藏/取消隐藏课件（05 增补A；hidden 与下架互不影响，任意状态可切换）。 */
+    @PostMapping("/{id}/hide")
+    public ApiResponse<Void> hide(
+            @PathVariable String id,
+            @RequestBody(required = false) KngCoursewareDtos.HiddenRequest request) {
+        operationService.hide(id, request == null ? null : request.hidden());
+        return ApiResponse.success(null);
+    }
+
     /** 批量下架。 */
     @PostMapping("/batch/take-down")
     public ApiResponse<KngCoursewareDtos.CountResponse> batchTakeDown(

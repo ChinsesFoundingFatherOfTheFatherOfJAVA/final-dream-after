@@ -44,4 +44,10 @@ public interface CoursewareService {
     List<KngCoursewareAttachment> attachments(String coursewareId);
 
     List<String> descendantCatalogIds(String catalogId);
+
+    /**
+     * 课件学分展示值（studyScore 有值直接返回，否则按课程设置"跟随策略"折算）。
+     * 供课程详情聚合任务学分之和复用，避免策略逻辑在两个 Service 间重复。
+     */
+    java.math.BigDecimal studyScoreCalc(KngCourseware courseware);
 }
