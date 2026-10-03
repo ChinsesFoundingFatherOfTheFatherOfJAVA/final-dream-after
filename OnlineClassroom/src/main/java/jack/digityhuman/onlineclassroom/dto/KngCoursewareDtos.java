@@ -105,6 +105,12 @@ public final class KngCoursewareDtos {
         private Boolean speedEnabled;
         private Boolean speedHoursCalc;
         private Boolean aiSubtitleEnabled;
+        /** MT-01/02/03 元数据与产物（03 §1 详情响应修订：hlsPath/subtitlesFlag/media 三列） */
+        private Integer mediaWidth;
+        private Integer mediaHeight;
+        private String mediaCodec;
+        private String hlsPath;
+        private Boolean subtitlesFlag;
         private Contributor contributor;
         private String createdByName;
         private String createTime;
@@ -211,6 +217,14 @@ public final class KngCoursewareDtos {
         private Boolean speedEnabled;
         private Boolean speedHoursCalc;
         private Boolean aiSubtitleEnabled;
+        /**
+         * MT-01 元数据列：merge 响应 mediaMeta 的透传值，随发布写入 kng_courseware 三列；
+         * mediaDurationSeconds 仅用于"表单标准时长为空/0 时兜底回填"，不覆盖用户已填值。
+         */
+        private Integer mediaWidth;
+        private Integer mediaHeight;
+        private String mediaCodec;
+        private Integer mediaDurationSeconds;
         private List<SavedFile> files = new ArrayList<>();
         private List<SavedFile> links = new ArrayList<>();
         private List<SavedAttachment> attachmentPaths = new ArrayList<>();

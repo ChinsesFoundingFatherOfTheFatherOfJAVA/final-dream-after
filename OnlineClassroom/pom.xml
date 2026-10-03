@@ -141,6 +141,22 @@
             <artifactId>dubbo-registry-nacos</artifactId>
             <version>3.3.6</version>
         </dependency>
+
+        <!--
+          AI 字幕与转码专项（媒体处理模块 02 §2）：
+          dashscope 用于百炼 paraformer-v2 异步转写（ASR 引擎），版本与 SpeechTraining 对齐；
+          oss SDK 用于字幕管线的 wav 临时对象上传/预签名/删除（kng-asr-tmp/，用完即删）。
+        -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>dashscope-sdk-java</artifactId>
+            <version>2.20.6</version>
+        </dependency>
+        <dependency>
+            <groupId>com.aliyun.oss</groupId>
+            <artifactId>aliyun-sdk-oss</artifactId>
+            <version>3.17.4</version>
+        </dependency>
     </dependencies>
 
     <build>

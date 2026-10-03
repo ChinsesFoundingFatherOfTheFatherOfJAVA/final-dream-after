@@ -6,10 +6,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.onlineclassroom.dto.KngCoursewareDtos;
+import jack.digityhuman.onlineclassroom.dto.KngMediaDtos;
 import jack.digityhuman.onlineclassroom.dto.KngReadDtos;
 import jack.digityhuman.onlineclassroom.dto.KngSettingDtos;
 import jack.digityhuman.onlineclassroom.entity.KngCatalog;
 import jack.digityhuman.onlineclassroom.entity.KngCourseware;
+import jack.digityhuman.onlineclassroom.entity.KngMediaJob;
 import jack.digityhuman.onlineclassroom.entity.KngCoursewareAttachment;
 import jack.digityhuman.onlineclassroom.entity.KngCoursewareFile;
 import jack.digityhuman.onlineclassroom.entity.KngSetting;
@@ -32,7 +34,6 @@ import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -68,6 +69,8 @@ public class CoursewareServiceImpl implements CoursewareService {
     private final KngStudyRecordMapper studyRecordMapper;
     /** 用户/部门数据经 Dubbo 取自 StaffManagement，不再直读 sys_* 表 */
     private final OrgQueryService orgQueryService;
+    /** 媒体任务门面（AI字幕与转码专项）：发布投递 transcode job、转码/字幕管理页数据源 */
+    private final jack.digityhuman.onlineclassroom.service.MediaJobService mediaJobService;
 
     /** 课件列表：分页/多条件筛选（目录子树展开、引用状态、时间校验），支持按学习次数排序（全量取回内存排序）。 */
     public KngCoursewareDtos.ListResponse list(
@@ -159,6 +162,12 @@ public class CoursewareServiceImpl implements CoursewareService {
         detail.setSpeedEnabled(isTrue(courseware.getSpeedEnabled()));
         detail.setSpeedHoursCalc(isTrue(courseware.getSpeedHoursCalc()));
         detail.setAiSubtitleEnabled(isTrue(courseware.getAiSubtitleEnabled()));
+        // MT-01/02/03（03 §1 详情响应修订）：媒体元数据、HLS 产物路径与字幕生成标记
+        detail.setMediaWidth(courseware.getMediaWidth());
+        detail.setMediaHeight(courseware.getMediaHeight());
+        detail.setMediaCodec(courseware.getMediaCodec());
+        detail.setHlsPath(courseware.getHlsPath());
+        detail.setSubtitlesFlag(isTrue(courseware.getSubtitlesFlag()));
         detail.setContributor(findUser(courseware.getContributorId()));
         detail.setCreatedByName(courseware.getCreatedByName());
         detail.setCreateTime(format(courseware.getCreatedAt()));
@@ -168,7 +177,11 @@ public class CoursewareServiceImpl implements CoursewareService {
         return detail;
     }
 
-    /** 新建课件：雪花 id、初始状态草稿、平台编号顺延，创建人姓名经 Dubbo 补齐；同事务写文件与附件行。 */
+    /**
+     * 新建课件（即发布，03 §1 修订）：雪花 id、平台编号顺延，创建人姓名经 Dubbo 补齐；同事务写文件与附件行。
+     * 发布状态机改造（MT-02）：视频/音频类 status=1 发布中，事务提交后投递 transcode job，
+     * 转码 success 驱动 status=2（取代原 PublishSimulateJob 定时模拟）；非媒体类直接 status=2 已发布。
+     */
     @Transactional
     public KngCoursewareDtos.IdStatusResponse create(
             KngCoursewareDtos.SaveRequest request, String userId) {
@@ -176,7 +189,8 @@ public class CoursewareServiceImpl implements CoursewareService {
         KngCourseware courseware = new KngCourseware();
         courseware.setId(IdWorker.getIdStr());
         apply(courseware, request, true);
-        courseware.setStatus(1);
+        boolean media = isMediaType(request.getType());
+        courseware.setStatus(media ? 1 : 2);
         courseware.setOnSale(1);
         courseware.setPlatformNo(nextPlatformNo());
         courseware.setCreatedBy(userId);
@@ -187,10 +201,18 @@ public class CoursewareServiceImpl implements CoursewareService {
         coursewareMapper.insert(courseware);
         replaceFiles(courseware.getId(), request);
         replaceAttachments(courseware.getId(), request);
+        if (media) {
+            // afterCommit 投递：避免事务回滚留下脏 job（02 §6）
+            mediaJobService.submitTranscodeAfterCommit(courseware.getId(), userId);
+        }
         return new KngCoursewareDtos.IdStatusResponse(courseware.getId(), courseware.getStatus());
     }
 
-    /** 编辑课件：只允许覆盖可编辑字段，创建信息/状态/平台编号保持不变；同事务重建文件与附件行。 */
+    /**
+     * 编辑课件：只允许覆盖可编辑字段，创建信息/状态/平台编号保持不变；同事务重建文件与附件行。
+     * 字幕开关补充（03 §末）：ai_subtitle_enabled false→true 且课件已发布且为媒体类时，
+     * 无活跃字幕 job 则自动投递（不需手动 regenerate）。
+     */
     @Transactional
     public KngCoursewareDtos.IdResponse update(String id, KngCoursewareDtos.SaveRequest request, String userId) {
         validateSave(request);
@@ -201,6 +223,7 @@ public class CoursewareServiceImpl implements CoursewareService {
         String originalCreatedByName = courseware.getCreatedByName();
         LocalDateTime originalCreatedAt = courseware.getCreatedAt();
         Integer originalFinishStandard = courseware.getFinishStandardPercent();
+        boolean originalSubtitleEnabled = isTrue(courseware.getAiSubtitleEnabled());
         apply(courseware, request, false);
         courseware.setStatus(originalStatus);
         courseware.setPlatformNo(originalPlatformNo);
@@ -212,6 +235,12 @@ public class CoursewareServiceImpl implements CoursewareService {
         coursewareMapper.updateById(courseware);
         replaceFiles(id, request);
         replaceAttachments(id, request);
+        boolean nowSubtitleEnabled = isTrue(courseware.getAiSubtitleEnabled());
+        if (!originalSubtitleEnabled && nowSubtitleEnabled
+                && Objects.equals(courseware.getStatus(), 2) && isMediaType(courseware.getType())) {
+            // hasActive 幂等校验在 submit 内：已有活跃 job 时投递被拒绝，编辑请求不受影响
+            mediaJobService.submitSubtitleAfterCommit(id, userId);
+        }
         return new KngCoursewareDtos.IdResponse(id);
     }
 
@@ -328,43 +357,48 @@ public class CoursewareServiceImpl implements CoursewareService {
                 .toList();
     }
 
-    /** 转码列表（转码中/失败两个 Tab），附带转码中总数角标。 */
+    /**
+     * 转码列表（转码中/失败两个 Tab），附带转码中总数角标。
+     * 状态机回归（MT-02）：数据源由"课件 status=1"改为 kng_media_job type=transcode 的
+     * pending/running——发布中课件列表口径由真实转码 job 驱动；本方法保持旧路径/旧 DTO 兼容，
+     * 新转码管理页直接消费 POST /media/jobs（同一数据源）。
+     */
     public KngCoursewareDtos.TranscodeResponse transcodeList(
             int pageNo, int pageSize, KngCoursewareDtos.TranscodeQuery query) {
         KngCoursewareDtos.TranscodeQuery filter = query == null
                 ? new KngCoursewareDtos.TranscodeQuery("processing", null) : query;
-        boolean failed = "failed".equalsIgnoreCase(filter.tab());
-        int safePage = Math.max(1, pageNo);
-        int safeSize = Math.min(100, Math.max(1, pageSize));
-        Integer status = failed ? -1 : 1;
-        String keyword = StringUtils.hasText(filter.keyword()) ? filter.keyword().trim() : null;
-        long total = coursewareMapper.countTranscode(status, keyword);
-        List<KngCourseware> page = coursewareMapper.selectTranscodePage(
-                status, keyword, (safePage - 1) * safeSize, safeSize);
-        long processingCount = coursewareMapper.countByStatus(1);
+        KngMediaDtos.JobsResponse jobs = mediaJobService.query(
+                KngMediaJob.TYPE_TRANSCODE, filter.tab(), filter.keyword(), pageNo, pageSize);
         KngCoursewareDtos.TranscodeResponse response = new KngCoursewareDtos.TranscodeResponse();
-        response.setTotal(total);
-        response.setProcessingCount((int) processingCount);
-        response.setRecords(page.stream().map(item -> {
+        response.setTotal(jobs.getTotal());
+        response.setProcessingCount((int) mediaJobService.countProcessing(KngMediaJob.TYPE_TRANSCODE));
+        response.setRecords(jobs.getRecords().stream().map(job -> {
             KngCoursewareDtos.TranscodeItem row = new KngCoursewareDtos.TranscodeItem();
-            row.setId(item.getId());
-            row.setTitle(item.getTitle());
-            row.setCatalogName(item.getCatalogName());
-            row.setUploadTime(format(item.getCreatedAt()));
-            row.setConvertedSeconds(item.getCreatedAt() == null ? 0
-                    : Math.max(0, Duration.between(item.getCreatedAt(), LocalDateTime.now()).toSeconds()));
-            row.setCreatedByName(item.getCreatedByName());
-            row.setRemark("");
+            // 兼容旧前端行语义：id 保持课件 id（重试等操作走新接口按 job id）
+            row.setId(job.getCoursewareId());
+            row.setTitle(job.getCoursewareTitle());
+            row.setCatalogName(job.getCatalogName());
+            row.setUploadTime(job.getUploadTime());
+            row.setConvertedSeconds(job.getElapsedSeconds() == null ? 0 : job.getElapsedSeconds());
+            row.setCreatedByName(job.getCreatedByName());
+            row.setRemark(job.getError() == null ? "" : job.getError());
             return row;
         }).toList());
         return response;
     }
 
-    /** 字幕列表：占位实现，返回空集合（媒体能力待办见课件管理模块文档）。 */
+    /**
+     * 字幕列表（识别中/失败两个 Tab）：占位实现转正（MT-05），数据源 kng_media_job type=subtitle，
+     * 与字幕管理页新接口 POST /media/jobs 同源。
+     */
     public KngCoursewareDtos.SubtitleResponse subtitleList(KngCoursewareDtos.SubtitleQuery query) {
+        KngCoursewareDtos.SubtitleQuery filter = query == null
+                ? new KngCoursewareDtos.SubtitleQuery("processing", null) : query;
+        KngMediaDtos.JobsResponse jobs = mediaJobService.query(
+                KngMediaJob.TYPE_SUBTITLE, filter.tab(), filter.keyword(), 1, 100);
         KngCoursewareDtos.SubtitleResponse response = new KngCoursewareDtos.SubtitleResponse();
-        response.setTotal(0);
-        response.setRecords(List.of());
+        response.setTotal(jobs.getTotal());
+        response.setRecords(List.copyOf(jobs.getRecords()));
         return response;
     }
 
@@ -562,11 +596,38 @@ public class CoursewareServiceImpl implements CoursewareService {
         courseware.setSpeedEnabled(isTrue(request.getSpeedEnabled()) ? 1 : 0);
         courseware.setSpeedHoursCalc(isTrue(request.getSpeedHoursCalc()) ? 1 : 0);
         courseware.setAiSubtitleEnabled(isTrue(request.getAiSubtitleEnabled()) ? 1 : 0);
+        // MT-01：merge mediaMeta 透传值写入元数据三列（非媒体类前端不传，保持 NULL）
+        courseware.setMediaWidth(request.getMediaWidth());
+        courseware.setMediaHeight(request.getMediaHeight());
+        courseware.setMediaCodec(request.getMediaCodec());
+        applyDurationFallback(courseware, request);
         String language = request.getFiles() == null ? null : request.getFiles().stream()
                 .map(KngCoursewareDtos.SavedFile::getLanguage)
                 .filter(StringUtils::hasText)
                 .findFirst().orElse(null);
         courseware.setLanguage(language);
+    }
+
+    /**
+     * MT-01 时长兜底：仅当表单标准时长（分+秒）为空/0 且请求带 mediaDurationSeconds 时回填，
+     * 不覆盖用户已填值（验收口径：手填 10 分钟不被 ffprobe 覆盖）。
+     */
+    private void applyDurationFallback(KngCourseware courseware, KngCoursewareDtos.SaveRequest request) {
+        int minutes = request.getStandardMinutes() == null ? 0 : request.getStandardMinutes();
+        int seconds = request.getStandardSeconds() == null ? 0 : request.getStandardSeconds();
+        Integer mediaDuration = request.getMediaDurationSeconds();
+        if (minutes == 0 && seconds == 0 && mediaDuration != null && mediaDuration > 0) {
+            courseware.setStandardMinutes(mediaDuration / 60);
+            courseware.setStandardSeconds(mediaDuration % 60);
+        } else {
+            courseware.setStandardMinutes(minutes);
+            courseware.setStandardSeconds(seconds);
+        }
+    }
+
+    /** 是否媒体类课件（视频/音频）：转码与字幕管线的适用范围。 */
+    private boolean isMediaType(Integer type) {
+        return Objects.equals(type, 2) || Objects.equals(type, 3);
     }
 
     private void validateSave(KngCoursewareDtos.SaveRequest request) {

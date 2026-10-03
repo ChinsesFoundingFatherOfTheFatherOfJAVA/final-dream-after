@@ -30,6 +30,8 @@ public class UploadService {
 
     private final KngUploadChunkMapper chunkMapper;
     private final StorageService storageService;
+    /** MT-01：合并完成后同步 ffprobe 探测媒体元数据（时长/分辨率/编码），随响应返回供发布表单透传 */
+    private final MediaProbeService mediaProbeService;
 
     /** 初始化分片上传：秒传检查（同哈希直接返回已完成），否则登记元数据并返回 uploadId。 */
     @Transactional
@@ -140,7 +142,11 @@ public class UploadService {
         }
         chunkMapper.delete(Wrappers.<KngUploadChunk>lambdaQuery()
                 .eq(KngUploadChunk::getUploadId, request.uploadId()));
-        return new MergeResult(storagePath, metadata.getFileSize());
+        // MT-01：仅媒体扩展名且 ffprobe 可用时返回元数据；探测失败/非媒体为 null，不影响合并主链路
+        MediaProbeService.MediaMeta mediaMeta =
+                mediaProbeService.probe(storageService.resolveStoredPath(storagePath),
+                        StringUtils.hasText(request.fileName()) ? request.fileName() : metadata.getFileName());
+        return new MergeResult(storagePath, metadata.getFileSize(), mediaMeta);
     }
 
     private KngUploadChunk metadata(String uploadId) {
@@ -190,6 +196,10 @@ public class UploadService {
     public record MergeRequest(String uploadId, String fileName) {
     }
 
-    public record MergeResult(String storagePath, Long fileSize) {
+    /**
+     * 合并结果（03 §1 修订）：mediaMeta = {durationSeconds,width,height,codec}，
+     * 非媒体文件或 ffprobe 不可用时为 null；前端透传给课件保存接口写入元数据列。
+     */
+    public record MergeResult(String storagePath, Long fileSize, MediaProbeService.MediaMeta mediaMeta) {
     }
 }

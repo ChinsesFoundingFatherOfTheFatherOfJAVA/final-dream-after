@@ -42,6 +42,16 @@ public class KngCourseware {
     private String copyOf;
     private String contributorId;
     private String language;
+    /** 视频宽(px)（MT-01：merge 时 ffprobe 探测，发布保存时随表单透传写入；非媒体类为 NULL） */
+    private Integer mediaWidth;
+    /** 视频高(px)（同上） */
+    private Integer mediaHeight;
+    /** 编码格式（ffprobe codec_name，如 h264/aac） */
+    private String mediaCodec;
+    /** HLS m3u8 相对路径（MT-02：转码成功后写入 /kng-files/transcode/{id}/index.m3u8） */
+    private String hlsPath;
+    /** 字幕已生成（MT-03：四语言 SRT 齐全后置 1；字幕管理页与编辑抽屉的开关依据） */
+    private Integer subtitlesFlag;
     private String catalogName;
     private String createdBy;
     private String createdByName;

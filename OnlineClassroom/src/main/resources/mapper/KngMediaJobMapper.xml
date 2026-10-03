@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="jack.digityhuman.onlineclassroom.mapper.KngMediaJobMapper">
+
+    <!-- 任务分页/计数的公共过滤段：单表 kng_media_job，课件维度条件以 id 集合传入（禁跨表 JOIN） -->
+    <sql id="jobFilters">
+        <where>
+            job_type = #{jobType}
+            and status in
+            <foreach collection="statuses" item="status" open="(" separator="," close=")">
+                #{status}
+            </foreach>
+            <if test="coursewareIds != null">
+                and courseware_id in
+                <foreach collection="coursewareIds" item="coursewareId" open="(" separator="," close=")">
+                    #{coursewareId}
+                </foreach>
+            </if>
+        </where>
+    </sql>
+
+    <select id="selectJobPage" resultType="jack.digityhuman.onlineclassroom.entity.KngMediaJob">
+        select *
+        from kng_media_job
+        <include refid="jobFilters"/>
+        order by created_at desc
+        limit #{offset}, #{limit}
+    </select>
+
+    <select id="countJobs" resultType="long">
+        select count(*)
+        from kng_media_job
+        <include refid="jobFilters"/>
+    </select>
+</mapper>

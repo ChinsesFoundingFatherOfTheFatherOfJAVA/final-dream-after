@@ -99,40 +99,6 @@
         order by updated_at desc
     </select>
 
-    <select id="countTranscode" resultType="long">
-        select count(*)
-        from kng_courseware
-        where status = #{status}
-        <if test="keyword != null and keyword != ''">
-            and (
-                title like concat('%', #{keyword}, '%')
-                or catalog_name like concat('%', #{keyword}, '%')
-                or created_by_name like concat('%', #{keyword}, '%')
-            )
-        </if>
-    </select>
-
-    <select id="selectTranscodePage" resultType="jack.digityhuman.onlineclassroom.entity.KngCourseware">
-        select *
-        from kng_courseware
-        where status = #{status}
-        <if test="keyword != null and keyword != ''">
-            and (
-                title like concat('%', #{keyword}, '%')
-                or catalog_name like concat('%', #{keyword}, '%')
-                or created_by_name like concat('%', #{keyword}, '%')
-            )
-        </if>
-        order by created_at desc
-        limit #{offset}, #{limit}
-    </select>
-
-    <select id="countByStatus" resultType="long">
-        select count(*)
-        from kng_courseware
-        where status = #{status}
-    </select>
-
     <select id="countPlatformNoByPrefix" resultType="int">
         select count(*)
         from kng_courseware

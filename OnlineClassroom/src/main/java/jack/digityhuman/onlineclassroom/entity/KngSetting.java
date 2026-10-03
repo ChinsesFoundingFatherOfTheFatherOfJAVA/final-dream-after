@@ -20,6 +20,12 @@ public class KngSetting {
     private String cheatConf;
     private String playConf;
     private String faceConf;
+    /**
+     * 媒体处理运行参数 JSON（媒体处理模块 02 §3）：
+     * {"asrModel":"paraformer-v2","translateModel":"qwen-flash","workerConcurrency":2}；
+     * 与 application.properties 的 media.* 互为兜底——数据库值优先，便于不改配置热切模型。
+     */
+    private String mediaConf;
     private String updatedBy;
     private LocalDateTime updatedAt;
 }

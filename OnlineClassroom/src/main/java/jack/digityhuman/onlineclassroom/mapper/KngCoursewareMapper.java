@@ -30,17 +30,5 @@ public interface KngCoursewareMapper extends BaseMapper<KngCourseware> {
             @Param("catalogIds") List<String> catalogIds,
             @Param("quotedIds") List<String> quotedIds);
 
-    long countTranscode(
-            @Param("status") Integer status,
-            @Param("keyword") String keyword);
-
-    List<KngCourseware> selectTranscodePage(
-            @Param("status") Integer status,
-            @Param("keyword") String keyword,
-            @Param("offset") int offset,
-            @Param("limit") int limit);
-
-    long countByStatus(@Param("status") Integer status);
-
     int countPlatformNoByPrefix(@Param("prefix") String prefix);
 }
