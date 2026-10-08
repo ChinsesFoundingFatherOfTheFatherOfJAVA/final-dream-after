@@ -33,6 +33,76 @@ public class MediaProbeService {
     }
 
     /**
+     * 视频流+音频流编码对（05 FP-05-2）：HLS 转码前预判能否流复制。
+     * 纯音频文件 videoCodec 为 null；无音轨文件 audioCodec 为 null。
+     */
+    public record VideoAudioCodecs(String videoCodec, String audioCodec) {
+    }
+
+    /**
+     * 探测源文件的视频/音频编码（05 FP-05-2 流复制预判专用）。
+     *
+     * <p>与 {@link #probe} 的区别：不做扩展名过滤（调用方是转码 worker，文件类型已确定），
+     * 且必须区分视频流/音频流的编码名。ffprobe 不可用或解析失败返回 null——
+     * 调用方按"无法预判"处理（保守走重编码路径）。
+     */
+    public VideoAudioCodecs probeCodecs(Path absoluteFile) {
+        if (absoluteFile == null || !Files.isRegularFile(absoluteFile)) {
+            return null;
+        }
+        Process process = null;
+        try {
+            ProcessBuilder builder = new ProcessBuilder(
+                    "ffprobe", "-v", "quiet", "-print_format", "json",
+                    "-show_streams", absoluteFile.toString());
+            builder.redirectErrorStream(true);
+            process = builder.start();
+            byte[] output;
+            try (var stream = process.getInputStream()) {
+                output = stream.readAllBytes();
+            }
+            if (!process.waitFor(30, TimeUnit.SECONDS) || process.exitValue() != 0) {
+                process.destroyForcibly();
+                log.warn("ffprobe 编码探测未成功返回，流复制预判降级为重编码: {}", absoluteFile);
+                return null;
+            }
+            return parseCodecs(JSON.readTree(output));
+        } catch (IOException exception) {
+            log.warn("ffprobe 不可用（未安装或不在 PATH），流复制预判降级为重编码: {}", exception.getMessage());
+            return null;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            log.warn("ffprobe 编码探测被中断");
+            return null;
+        } catch (RuntimeException exception) {
+            log.warn("ffprobe 编码输出解析失败: {}", exception.getMessage());
+            return null;
+        } finally {
+            if (process != null) {
+                process.destroyForcibly();
+            }
+        }
+    }
+
+    /** 从 streams 数组提取首个视频流/音频流的 codec_name（缺失的流类型为 null）。 */
+    private VideoAudioCodecs parseCodecs(JsonNode root) {
+        if (root == null || !root.path("streams").isArray()) {
+            return null;
+        }
+        String video = null;
+        String audio = null;
+        for (JsonNode stream : root.path("streams")) {
+            String codecType = stream.path("codec_type").asText("");
+            if ("video".equals(codecType) && video == null) {
+                video = textOrNull(stream.path("codec_name"));
+            } else if ("audio".equals(codecType) && audio == null) {
+                audio = textOrNull(stream.path("codec_name"));
+            }
+        }
+        return new VideoAudioCodecs(video, audio);
+    }
+
+    /**
      * 对落盘媒体文件执行 ffprobe：{@code ffprobe -v quiet -print_format json -show_format -show_streams}。
      *
      * @return 元数据；非媒体扩展名、文件不存在、ffprobe 不可用或输出解析失败均返回 null（静默跳过）

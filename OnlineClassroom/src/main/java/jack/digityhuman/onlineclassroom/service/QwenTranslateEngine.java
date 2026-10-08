@@ -14,16 +14,23 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * qwen 翻译引擎（MT-03）：DashScope OpenAI 兼容接口 chat/completions，media.translate.model（默认 qwen-flash）。
+ * qwen 翻译引擎（MT-03 + 05 FP-05-3）：DashScope OpenAI 兼容接口 chat/completions，
+ * media.translate.model（默认 qwen-flash）。
  *
- * <p>关键对策（02 §6）：prompt 固定"只输出译文 JSON 数组，保持输入序号顺序，不解释"；
- * 输出只取译文文本数组，时间戳/序号由调用方本地回填（不信任模型复制，结构零风险）；
- * 解析失败（非 JSON/长度不符）整批重试 2 次，仍失败抛业务异常置 stage=translate failed。
+ * <p>关键对策（02 §6 + PoC-2 实测定稿）：
+ * <ul>
+ *   <li>prompt 固定"只输出译文 JSON 数组，保持输入序号顺序，不解释"；</li>
+ *   <li>输出只取译文文本数组，时间戳/序号由调用方本地回填（不信任模型复制，结构零风险）；</li>
+ *   <li>批量输出条数对齐不可信（25 条常被并成 26/27）——重试 2 次仍失败<b>自动降级逐条翻译</b>
+ *       （vi 实测批量 3 连败、逐条稳定），不再让整批失败终结 stage；</li>
+ *   <li>逐条单条失败重试 2 次，仍失败抛业务异常并标注"第 N 条"便于人工定位。</li>
+ * </ul>
  */
 @Slf4j
 @Component
@@ -33,7 +40,7 @@ public class QwenTranslateEngine implements TranslateEngine {
             "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
     /** 02 §4 固定 prompt：只要求译文数组 */
     private static final String SYSTEM_PROMPT = "只输出译文 JSON 数组，保持输入序号顺序，不解释";
-    /** 解析失败重试次数（01 §2 非功能需求：qwen 单批失败重试 2 次） */
+    /** 批量/单条失败重试次数（01 §2 非功能需求：qwen 单批失败重试 2 次） */
     private static final int MAX_RETRIES = 2;
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -56,8 +63,7 @@ public class QwenTranslateEngine implements TranslateEngine {
         if (!StringUtils.hasText(apiKey)) {
             throw new BizException("未配置百炼 API Key（DASHSCOPE_API_KEY），无法翻译字幕");
         }
-        BizException lastFailure = null;
-        // 共尝试 1+MAX_RETRIES 次：每次整批重新请求，输出仍不符则判定翻译失败
+        // 共尝试 1+MAX_RETRIES 次：每次整批重新请求，输出仍不符则降级逐条（不再直接失败）
         for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
                 List<String> translated = requestOnce(texts, langLabel);
@@ -69,11 +75,41 @@ public class QwenTranslateEngine implements TranslateEngine {
                 }
                 return translated;
             } catch (BizException exception) {
-                lastFailure = exception;
                 log.warn("qwen 翻译批次失败(第 {} 次) lang={}: {}", attempt + 1, targetLang, exception.getMessage());
             }
         }
-        throw lastFailure == null ? new BizException("qwen 翻译失败") : lastFailure;
+        // FP-05-3：批量对齐不可信（PoC-2 实测 vi 批量 3 连败）→ 统一降级逐条，避免整 stage 失败
+        log.warn("qwen 翻译批量重试耗尽，降级为逐条翻译 lang={} batch={}", targetLang, texts.size());
+        return translateOneByOne(texts, langLabel);
+    }
+
+    /**
+     * 逐条翻译兜底：每条单独请求（输入/输出天然 1:1，绕开模型合并条目的对齐问题）；
+     * 单条重试 2 次仍失败抛"第 N 条"业务异常，失败信息可定位到具体字幕。
+     */
+    private List<String> translateOneByOne(List<String> texts, String langLabel) {
+        List<String> result = new ArrayList<>(texts.size());
+        for (int i = 0; i < texts.size(); i++) {
+            String text = texts.get(i);
+            BizException lastFailure = null;
+            for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                try {
+                    List<String> one = requestOnce(List.of(text), langLabel);
+                    if (one.size() != 1) {
+                        throw new BizException("单条译文条数异常(" + one.size() + ")");
+                    }
+                    result.add(one.get(0));
+                    lastFailure = null;
+                    break;
+                } catch (BizException exception) {
+                    lastFailure = exception;
+                }
+            }
+            if (lastFailure != null) {
+                throw new BizException("qwen 翻译第 " + (i + 1) + " 条失败: " + lastFailure.getMessage());
+            }
+        }
+        return result;
     }
 
     /** 单次 chat/completions 调用：user 消息=目标语言+原文 JSON 数组；解析 choices[0].message.content。 */

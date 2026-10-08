@@ -34,16 +34,20 @@ public class BailianAsrEngine implements AsrEngine {
 
     private final String apiKey;
     private final String model;
+    /** 百炼热词表 ID（05 FP-05-4）：留空不启用；paraformer-v2 热词唯一入口，纠"商机→上机"类口音误识 */
+    private final String vocabularyId;
     private final OssTempService ossTempService;
     private final SrtService srtService;
 
     public BailianAsrEngine(
             @Value("${media.asr.api-key:}") String apiKey,
             @Value("${media.asr.model:paraformer-v2}") String model,
+            @Value("${media.asr.vocabulary-id:}") String vocabularyId,
             OssTempService ossTempService,
             SrtService srtService) {
         this.apiKey = apiKey;
         this.model = model;
+        this.vocabularyId = vocabularyId;
         this.ossTempService = ossTempService;
         this.srtService = srtService;
     }
@@ -74,15 +78,11 @@ public class BailianAsrEngine implements AsrEngine {
     /** asyncCall 提交后自轮询 fetch（5s/30min），成功后取首个子任务的 transcription_url 并下载 JSON。 */
     private String pollUntilDone(String fileUrl) {
         try {
-            TranscriptionParam param = TranscriptionParam.builder()
-                    .apiKey(apiKey)
-                    .model(model)
-                    .fileUrls(List.of(fileUrl))
-                    .build();
             Transcription transcription = new Transcription();
-            TranscriptionResult submitted = transcription.asyncCall(param);
+            TranscriptionResult submitted = transcription.asyncCall(buildParam(fileUrl));
             String taskId = submitted.getTaskId();
-            log.info("百炼转写任务已提交 taskId={} model={}", taskId, model);
+            log.info("百炼转写任务已提交 taskId={} model={} vocabularyId={}",
+                    taskId, model, StringUtils.hasText(vocabularyId) ? "启用" : "无");
 
             TranscriptionQueryParam queryParam = TranscriptionQueryParam.builder()
                     .taskId(taskId)
@@ -112,6 +112,22 @@ public class BailianAsrEngine implements AsrEngine {
             throw new jack.digityhuman.common.api.BizException(
                     "百炼转写调用失败: " + tail(exception.getMessage(), 500));
         }
+    }
+
+    /**
+     * 转写请求参数构造（package-private 供单测断言热词分支）。
+     * FP-05-4：配置了热词表 ID 则随请求传入（录音文件识别 API 的热词唯一入口 vocabulary_id，
+     * 必须与创建热词表时的 target_model 完全一致才生效）；未配置不设置该参数，行为与现状一致。
+     */
+    TranscriptionParam buildParam(String fileUrl) {
+        TranscriptionParam.TranscriptionParamBuilder<?, ?> builder = TranscriptionParam.builder()
+                .apiKey(apiKey)
+                .model(model)
+                .fileUrls(List.of(fileUrl));
+        if (StringUtils.hasText(vocabularyId)) {
+            builder.vocabularyId(vocabularyId);
+        }
+        return builder.build();
     }
 
     /** 结果 JSON 即下即用：取 transcription_url 下载文本（公开只读 JSON）。 */

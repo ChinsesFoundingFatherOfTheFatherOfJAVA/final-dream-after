@@ -22,7 +22,16 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 转码执行器（MT-02）：ffmpeg 单档 HLS + 抽 16k wav + 磁盘余量检查 + 状态回写。
+ * 转码执行器（MT-02 + 05 FP-05-2）：ffmpeg 单档 HLS + 抽 16k wav + 磁盘余量检查 + 状态回写。
+ *
+ * <p>HLS 编码策略（PoC-1 定稿，三级）：
+ * <ol>
+ *   <li>ffprobe 预判：h264 视频 +（无音轨或 aac 音轨）→ {@code -c copy} 流复制（培训视频主流形态，
+ *       PoC-1 实测快 27 倍：10.8s vs 295.5s）；纯音频文件（无视频流）aac 同样可 copy；</li>
+ *   <li>预判不通过（HEVC/VP9/非 AAC 等）→ 直接 libx264+aac 重编码，不试错；</li>
+ *   <li>兜底：copy 路径 ffmpeg 非零退出（像素格式/profile 等边缘不兼容）→ 自动降级重编码重跑一次；
+ *       重编码再失败才落 failed。降级时 log.warn 保留 copy 的 stderr 尾部（统计 fallback 占比用）。</li>
+ * </ol>
  *
  * <p>产物约定（kng.upload.dir 即 /kng-files）：
  * <ul>
@@ -42,6 +51,7 @@ public class TranscodeTask {
     private final KngCoursewareMapper coursewareMapper;
     private final KngCoursewareFileMapper coursewareFileMapper;
     private final MediaJobService mediaJobService;
+    private final MediaProbeService mediaProbeService;
 
     /** 单个 ffmpeg 进程的看门狗（分钟，01 §2：60 分钟） */
     @Value("${media.ffmpeg.timeout-minutes:60}")
@@ -83,12 +93,21 @@ public class TranscodeTask {
         }
 
         try {
-            ffmpeg(List.of("-i", source.toString(),
-                    "-c:v", "libx264", "-c:a", "aac",
-                    "-hls_time", "10", "-hls_playlist_type", "vod",
-                    hlsTmpDir(coursewareId).resolve("index.m3u8").toString()));
+            // FP-05-2：ffprobe 预判流复制可行性（探测失败返回 null → 保守走重编码）
+            boolean streamCopy = shouldStreamCopy(mediaProbeService.probeCodecs(source));
+            try {
+                execFfmpeg(hlsCommand(source, coursewareId, streamCopy));
+            } catch (RuntimeException copyFailure) {
+                if (!streamCopy) {
+                    throw copyFailure;
+                }
+                // 兜底：copy 边缘不兼容（像素格式/profile 等）自动降级重编码重跑一次
+                log.warn("HLS 流复制失败，降级为重编码重跑 coursewareId={} 原因: {}",
+                        coursewareId, copyFailure.getMessage());
+                execFfmpeg(hlsCommand(source, coursewareId, false));
+            }
             publishHlsDirectory(coursewareId);
-            ffmpeg(List.of("-i", source.toString(), "-ar", "16000", "-ac", "1",
+            execFfmpeg(List.of("-i", source.toString(), "-ar", "16000", "-ac", "1",
                     wavFile(coursewareId).toString()));
 
             // 成功回写：hls_path + 课件状态机置已发布（原发布模拟定时任务的更新口径）
@@ -110,9 +129,38 @@ public class TranscodeTask {
     }
 
     /**
-     * ffmpeg 进程执行：合并 stderr 捕获，超时看门狗销毁；非零退出抛业务异常（消息=stderr 尾部 500 字符）。
+     * 流复制判定（PoC-1 定稿）：h264 视频 +（无音轨或 aac 音轨）可 copy；
+     * 纯音频（无视频流）仅 aac 可 copy；探测不到编码（null）保守走重编码。
      */
-    private void ffmpeg(List<String> args) {
+    boolean shouldStreamCopy(MediaProbeService.VideoAudioCodecs codecs) {
+        if (codecs == null) {
+            return false;
+        }
+        if (codecs.videoCodec() == null) {
+            // 纯音频课件：aac 直拷进 HLS 稳定；mp3/amr 等保守重编码为 aac
+            return "aac".equals(codecs.audioCodec());
+        }
+        return "h264".equals(codecs.videoCodec())
+                && (codecs.audioCodec() == null || "aac".equals(codecs.audioCodec()));
+    }
+
+    /** HLS 命令构造：copy 路径不动编码（快路径），重编码路径固定 libx264/aac（与原实现一致）。 */
+    List<String> hlsCommand(Path source, String coursewareId, boolean streamCopy) {
+        Path output = hlsTmpDir(coursewareId).resolve("index.m3u8");
+        if (streamCopy) {
+            return List.of("-i", source.toString(), "-c", "copy",
+                    "-hls_time", "10", "-hls_playlist_type", "vod", output.toString());
+        }
+        return List.of("-i", source.toString(),
+                "-c:v", "libx264", "-c:a", "aac",
+                "-hls_time", "10", "-hls_playlist_type", "vod", output.toString());
+    }
+
+    /**
+     * ffmpeg 进程执行（package-private 供单测 spy 拦截，不真起进程）：合并 stderr 捕获，
+     * 超时看门狗销毁；非零退出抛业务异常（消息=stderr 尾部 500 字符）。
+     */
+    void execFfmpeg(List<String> args) {
         List<String> command = new java.util.ArrayList<>();
         command.add("ffmpeg");
         command.add("-y");
@@ -149,7 +197,7 @@ public class TranscodeTask {
     }
 
     /** HLS 临时目录 → 正式目录的原子替换：先清旧产物再把 .tmp 改名，播放侧永远读到完整产物。 */
-    private void publishHlsDirectory(String coursewareId) throws RuntimeException {
+    void publishHlsDirectory(String coursewareId) throws RuntimeException {
         Path tmp = hlsTmpDir(coursewareId);
         Path target = transcodeDir(coursewareId);
         try {

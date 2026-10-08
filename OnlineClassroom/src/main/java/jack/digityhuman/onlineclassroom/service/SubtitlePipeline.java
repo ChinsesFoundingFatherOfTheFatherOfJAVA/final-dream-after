@@ -32,8 +32,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class SubtitlePipeline {
 
-    /** qwen 批量翻译的批大小（01 §2/02 §4：50 条/批） */
-    private static final int TRANSLATE_BATCH_SIZE = 50;
+    /** qwen 批量翻译的批大小（05 FP-05-3：50→25——PoC-2 实测 50 条模型易合并条目，25 条稳定） */
+    private static final int TRANSLATE_BATCH_SIZE = 25;
     /** 翻译目标语言 → 展示名（ha=繁體中文沿用原平台语言码） */
     private static final Map<String, String> TARGET_LANGUAGES = Map.of(
             "ha", "繁體中文",

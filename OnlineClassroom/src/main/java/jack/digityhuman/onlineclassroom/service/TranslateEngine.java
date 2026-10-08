@@ -8,12 +8,13 @@ import java.util.List;
 public interface TranslateEngine {
 
     /**
-     * 批量翻译一批字幕文本（调用方保证 50 条/批）。
+     * 批量翻译一批字幕文本（调用方保证 25 条/批，05 FP-05-3）。
      *
      * @param texts      原文列表（简中）
      * @param targetLang 目标语言码（ha/en/vi）
      * @param langLabel  目标语言展示名（如 "繁體中文"，供 prompt 指定目标语言）
-     * @return 译文列表（与输入等长同序；时间戳/序号由调用方本地回填，不信任模型复制）
+     * @return 译文列表（与输入等长同序；时间戳/序号由调用方本地回填，不信任模型复制）；
+     *         引擎内部批量失败自动降级逐条，仅单条重试耗尽才抛异常
      */
     List<String> translateBatch(List<String> texts, String targetLang, String langLabel);
 }
