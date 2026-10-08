@@ -27,7 +27,7 @@ import java.util.Date;
 @Service
 public class OssTempService {
 
-    /** 预签名 URL 有效期（分钟）：百炼拉取一次音频即够，取短降低泄漏面 */
+    /** 预签名 URL 有效期（分钟）：千问AI平台拉取一次音频即够，取短降低泄漏面 */
     private static final long PRESIGN_MINUTES = 15;
     private static final String OBJECT_PREFIX = "kng-asr-tmp/";
     /** 分块大小 8MB（PoC-2 实测稳定值，不可随意调大：单块过大会退化成大请求被掐） */
@@ -41,6 +41,7 @@ public class OssTempService {
     private final String accessKeySecret;
     private volatile OSS client;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public OssTempService(
             @Value("${media.oss.endpoint:}") String endpoint,
             @Value("${media.oss.bucket:}") String bucket,
@@ -66,7 +67,7 @@ public class OssTempService {
     }
 
     /**
-     * 上传 wav 临时对象并返回 15 分钟预签名 URL（百炼 fileUrls 输入）。
+     * 上传 wav 临时对象并返回 15 分钟预签名 URL（千问AI平台 fileUrls 输入）。
      *
      * @throws jack.digityhuman.common.api.BizException 未配置 OSS 或上传失败
      */

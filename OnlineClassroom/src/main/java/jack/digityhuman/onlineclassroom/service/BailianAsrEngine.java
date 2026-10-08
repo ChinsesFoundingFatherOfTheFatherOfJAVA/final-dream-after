@@ -16,7 +16,11 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * 百炼异步转写引擎（MT-03 默认 paraformer-v2，media.asr.model 可切 fun-asr）。
+ * 千问AI平台异步转写引擎（MT-03 默认 paraformer-v2，media.asr.model 可切 fun-asr）。
+ *
+ * <p>平台切换（10-08）：百炼欠费，SDK 调用整体切千问AI平台——DashScope SDK 的
+ * {@code Constants.baseHttpApiUrl} 静态值由 media.asr.base-url 配置覆盖
+ * （两平台账号/热词数据共享，已实测验证）。
  *
  * <p>流程：wav 上传 OSS 临时对象 → 预签名 URL（15 分钟）→ DashScope Transcription.asyncCall
  * → 自轮询（5s 间隔 / 30 分钟超时，01 §2 非功能需求）→ 拉取结果 JSON → sentences 映射中间格式；
@@ -34,7 +38,7 @@ public class BailianAsrEngine implements AsrEngine {
 
     private final String apiKey;
     private final String model;
-    /** 百炼热词表 ID（05 FP-05-4）：留空不启用；paraformer-v2 热词唯一入口，纠"商机→上机"类口音误识 */
+    /** 千问AI平台热词表 ID（05 FP-05-4）：留空不启用；paraformer-v2 热词唯一入口，纠"商机→上机"类口音误识 */
     private final String vocabularyId;
     private final OssTempService ossTempService;
     private final SrtService srtService;
@@ -43,6 +47,7 @@ public class BailianAsrEngine implements AsrEngine {
             @Value("${media.asr.api-key:}") String apiKey,
             @Value("${media.asr.model:paraformer-v2}") String model,
             @Value("${media.asr.vocabulary-id:}") String vocabularyId,
+            @Value("${media.asr.base-url:https://maas.qianwenaiapi.com/api/v1}") String baseUrl,
             OssTempService ossTempService,
             SrtService srtService) {
         this.apiKey = apiKey;
@@ -50,13 +55,17 @@ public class BailianAsrEngine implements AsrEngine {
         this.vocabularyId = vocabularyId;
         this.ossTempService = ossTempService;
         this.srtService = srtService;
+        // SDK 全局 base url 覆盖（静态值，进程级）：切千问AI平台；空串保持 SDK 默认（dashscope）
+        if (StringUtils.hasText(baseUrl)) {
+            com.alibaba.dashscope.utils.Constants.baseHttpApiUrl = baseUrl;
+        }
     }
 
     @Override
     public List<SrtService.Sentence> transcribe(Path wav, String coursewareId) {
         if (!StringUtils.hasText(apiKey)) {
             throw new jack.digityhuman.common.api.BizException(
-                    "未配置百炼 API Key（DASHSCOPE_API_KEY），无法生成字幕");
+                    "未配置千问AI平台 API Key（DASHSCOPE_API_KEY），无法生成字幕");
         }
         if (!Files.isRegularFile(wav)) {
             throw new jack.digityhuman.common.api.BizException(
@@ -67,7 +76,7 @@ public class BailianAsrEngine implements AsrEngine {
             presignedUrl = ossTempService.uploadAndPresign(wav, coursewareId);
             String resultJson = pollUntilDone(presignedUrl);
             List<SrtService.Sentence> sentences = srtService.fromAsrJson(resultJson);
-            log.info("百炼转写完成 coursewareId={} model={} sentences={}", coursewareId, model, sentences.size());
+            log.info("千问AI转写完成 coursewareId={} model={} sentences={}", coursewareId, model, sentences.size());
             return sentences;
         } finally {
             // 双保险之一：管线内兜底删除临时对象（另一保险为桶生命周期规则）
@@ -79,15 +88,16 @@ public class BailianAsrEngine implements AsrEngine {
     private String pollUntilDone(String fileUrl) {
         try {
             Transcription transcription = new Transcription();
-            TranscriptionResult submitted = transcription.asyncCall(buildParam(fileUrl));
+            TranscriptionParam param = buildParam(fileUrl);
+            TranscriptionResult submitted = transcription.asyncCall(param);
             String taskId = submitted.getTaskId();
-            log.info("百炼转写任务已提交 taskId={} model={} vocabularyId={}",
+            log.info("千问AI转写任务已提交 taskId={} model={} vocabularyId={}",
                     taskId, model, StringUtils.hasText(vocabularyId) ? "启用" : "无");
 
-            TranscriptionQueryParam queryParam = TranscriptionQueryParam.builder()
-                    .taskId(taskId)
-                    .apiKey(apiKey)
-                    .build();
+            // E2E 联调修正（10-08）：fetch 的 queryParam 必须用官方静态方法从原 param 派生——
+            // 手动 builder 只带 taskId+apiKey 缺 model，SDK 内部构造请求直接 NPE"headers cannot be null"
+            TranscriptionQueryParam queryParam =
+                    TranscriptionQueryParam.FromTranscriptionParam(param, taskId);
             long deadline = System.currentTimeMillis() + POLL_TIMEOUT_MS;
             while (System.currentTimeMillis() < deadline) {
                 Thread.sleep(POLL_INTERVAL_MS);
@@ -98,19 +108,19 @@ public class BailianAsrEngine implements AsrEngine {
                 }
                 if (status == TaskStatus.FAILED || status == TaskStatus.CANCELED) {
                     String message = result.getOutput() == null ? "" : result.getOutput().toString();
-                    throw new jack.digityhuman.common.api.BizException("百炼转写任务失败(" + status + "): " + message);
+                    throw new jack.digityhuman.common.api.BizException("千问AI转写任务失败(" + status + "): " + message);
                 }
             }
-            throw new jack.digityhuman.common.api.BizException("百炼转写轮询超时（30 分钟）");
+            throw new jack.digityhuman.common.api.BizException("千问AI转写轮询超时（30 分钟）");
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw new jack.digityhuman.common.api.BizException("百炼转写轮询被中断");
+            throw new jack.digityhuman.common.api.BizException("千问AI转写轮询被中断");
         } catch (jack.digityhuman.common.api.BizException exception) {
             throw exception;
         } catch (Exception exception) {
             // DashScope SDK 抛出受检/运行时混合异常，统一收敛为业务失败信息入 error_msg
             throw new jack.digityhuman.common.api.BizException(
-                    "百炼转写调用失败: " + tail(exception.getMessage(), 500));
+                    "千问AI转写调用失败: " + tail(exception.getMessage(), 500));
         }
     }
 
@@ -134,16 +144,16 @@ public class BailianAsrEngine implements AsrEngine {
     private String downloadResult(TranscriptionResult result) {
         List<TranscriptionTaskResult> results = result.getResults();
         if (results == null || results.isEmpty()) {
-            throw new jack.digityhuman.common.api.BizException("百炼转写成功但无结果内容");
+            throw new jack.digityhuman.common.api.BizException("千问AI转写成功但无结果内容");
         }
         String transcriptionUrl = results.get(0).getTranscriptionUrl();
         if (!StringUtils.hasText(transcriptionUrl)) {
-            throw new jack.digityhuman.common.api.BizException("百炼转写结果缺少 transcription_url");
+            throw new jack.digityhuman.common.api.BizException("千问AI转写结果缺少 transcription_url");
         }
         try (var stream = java.net.URI.create(transcriptionUrl).toURL().openStream()) {
             return new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
         } catch (java.io.IOException exception) {
-            throw new jack.digityhuman.common.api.BizException("百炼转写结果下载失败: " + exception.getMessage());
+            throw new jack.digityhuman.common.api.BizException("千问AI转写结果下载失败: " + exception.getMessage());
         }
     }
 

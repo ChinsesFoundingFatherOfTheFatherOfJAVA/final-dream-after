@@ -7,7 +7,7 @@ import java.util.List;
 
 /**
  * 语气维度评分（FP-30 Phase 2，PoC 已验证）。
- * 对每条进入评分的语音轮调用百炼音频模型 3 次取中，再按各轮识别字数加权。
+ * 对每条进入评分的语音轮调用千问AI平台音频模型 3 次取中，再按各轮识别字数加权。
  */
 public interface ToneScoringService {
 

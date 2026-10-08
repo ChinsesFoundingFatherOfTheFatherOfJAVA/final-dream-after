@@ -2,8 +2,8 @@ package jack.digityhuman.speechtraining.service;
 
 /**
  * 语音服务（v1.1，FP-24/28）。
- * - TTS：阿里云百炼 CosyVoice v2 同步合成，"文本+声音+语速"哈希缓存
- * - ASR：v1.2 起改用豆包流式语音识别（SAUC 协议），百炼 Paraformer 已下线
+ * - TTS：阿里云千问AI平台 CosyVoice v2 同步合成，"文本+声音+语速"哈希缓存
+ * - ASR：v1.2 起改用豆包流式语音识别（SAUC 协议），千问AI平台 Paraformer 已下线
  */
 public interface SpeechService {
 
@@ -11,7 +11,7 @@ public interface SpeechService {
      * TTS：合成陪练者消息语音（相同"文本+声音+语速"命中缓存直接返回）
      *
      * @param text    待合成文本
-     * @param voiceId 百炼 voice 值或声音角色名（空则用默认音色）
+     * @param voiceId 千问AI平台 voice 值或声音角色名（空则用默认音色）
      * @param speed   语速 0-60（30=正常；百分比映射 speech_rate = 1.0 + (speed-30)*0.1）
      */
     TtsResult tts(String text, String voiceId, Integer speed);

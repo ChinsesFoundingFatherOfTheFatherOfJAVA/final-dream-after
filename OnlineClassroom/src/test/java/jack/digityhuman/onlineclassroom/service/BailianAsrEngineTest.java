@@ -12,8 +12,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 class BailianAsrEngineTest {
 
     private BailianAsrEngine engine(String vocabularyId) {
-        return new BailianAsrEngine("sk-test", "paraformer-v2", vocabularyId,
+        // base-url 传空串 = 不覆盖 SDK 默认（避免单测污染全局静态 Constants）
+        return new BailianAsrEngine("sk-test", "paraformer-v2", vocabularyId, "",
                 new OssTempService("", "", "", ""), null);
+    }
+
+    @Test
+    void baseUrlOverrideAppliedWhenConfigured() {
+        // 平台切换：配置 base-url 时覆盖 SDK 全局 Constants（千问AI平台入口）
+        com.alibaba.dashscope.utils.Constants.baseHttpApiUrl = "https://default.example/api/v1";
+        try {
+            new BailianAsrEngine("sk-test", "paraformer-v2", "",
+                    "https://maas.qianwenaiapi.com/api/v1",
+                    new OssTempService("", "", "", ""), null);
+            assertThat(com.alibaba.dashscope.utils.Constants.baseHttpApiUrl)
+                    .isEqualTo("https://maas.qianwenaiapi.com/api/v1");
+        } finally {
+            com.alibaba.dashscope.utils.Constants.baseHttpApiUrl = "https://default.example/api/v1";
+        }
     }
 
     @Test

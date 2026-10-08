@@ -23,8 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 语音服务实现（v1.1，FP-24/28）。
- * - TTS：阿里云百炼 CosyVoice v2 同步合成，"文本+声音+语速"哈希缓存
- * - ASR：v1.2 起改用豆包流式语音识别（SAUC 协议，见 {@link DoubaoSaucClient}），百炼 Paraformer 已下线
+ * - TTS：阿里云千问AI平台 CosyVoice v2 同步合成，"文本+声音+语速"哈希缓存
+ * - ASR：v1.2 起改用豆包流式语音识别（SAUC 协议，见 {@link DoubaoSaucClient}），千问AI平台 Paraformer 已下线
  */
 @Slf4j
 @Service
@@ -56,7 +56,7 @@ public class SpeechServiceImpl implements SpeechService {
      * TTS：合成陪练者消息语音（相同"文本+声音+语速"命中缓存直接返回）
      *
      * @param text    待合成文本
-     * @param voiceId 百炼 voice 值或声音角色名（空则用默认音色）
+     * @param voiceId 千问AI平台 voice 值或声音角色名（空则用默认音色）
      * @param speed   语速 0-60（30=正常；百分比映射 speech_rate = 1.0 + (speed-30)*0.1）
      */
     @Override
@@ -75,7 +75,7 @@ public class SpeechServiceImpl implements SpeechService {
         }
 
         // 2. 同一缓存键的并发请求只合成一次：后到者等首个结果
-        //    （开局时 N 个学员会对同一句陪练者问题同时发 TTS，不做去重就是 N 次百炼调用）
+        //    （开局时 N 个学员会对同一句陪练者问题同时发 TTS，不做去重就是 N 次千问AI平台调用）
         CompletableFuture<TtsResult> future = new CompletableFuture<>();
         CompletableFuture<TtsResult> running = synthesisInFlight.putIfAbsent(filename, future);
         if (running != null) {
@@ -83,7 +83,7 @@ public class SpeechServiceImpl implements SpeechService {
         }
 
         try {
-            // 3. 调百炼 CosyVoice 同步合成
+            // 3. 调千问AI平台 CosyVoice 同步合成
             byte[] audio = doSynthesize(text, voice, normalizedSpeed);
 
             // 4. 落盘缓存并返回 URL
@@ -112,7 +112,7 @@ public class SpeechServiceImpl implements SpeechService {
     }
 
     /**
-     * 实际调用百炼 TTS（包级可见，便于单测覆写统计调用次数）
+     * 实际调用千问AI平台 TTS（包级可见，便于单测覆写统计调用次数）
      */
     byte[] doSynthesize(String text, String voice, int speed) {
         try {
@@ -128,7 +128,7 @@ public class SpeechServiceImpl implements SpeechService {
             ByteBuffer audio = synthesizer.call(text);
             // SDK 失败时可能吞掉错误返回 null（同步 call 的默认空回调），必须判空
             if (audio == null) {
-                log.error("百炼TTS返回空音频: voice={}, speed={}", voice, speed);
+                log.error("千问AI平台TTS返回空音频: voice={}, speed={}", voice, speed);
                 throw new BizException("语音合成失败，请重试");
             }
             byte[] bytes = new byte[audio.remaining()];
@@ -140,7 +140,7 @@ public class SpeechServiceImpl implements SpeechService {
         } catch (BizException e) {
             throw e;
         } catch (Exception e) {
-            log.error("百炼TTS合成失败: text={}, voice={}", text, voice, e);
+            log.error("千问AI平台TTS合成失败: text={}, voice={}", text, voice, e);
             throw new BizException("语音合成失败，请重试");
         }
     }
@@ -263,8 +263,8 @@ public class SpeechServiceImpl implements SpeechService {
 
     /**
      * 声音解析（三层兜底）：
-     * 1. voice.map 命中（管理端下拉占位值 voice1/2/3、中文角色名 → 百炼 voice 值）
-     * 2. 未命中但符合百炼音色命名（long 前缀，如 longwan_v2）→ 原值透传
+     * 1. voice.map 命中（管理端下拉占位值 voice1/2/3、中文角色名 → 千问AI平台 voice 值）
+     * 2. 未命中但符合千问AI平台音色命名（long 前缀，如 longwan_v2）→ 原值透传
      * 3. 其余未知值（脏数据/占位符）→ 默认音色，避免合成静默失败
      */
     private String resolveVoice(String voiceId) {
@@ -275,7 +275,7 @@ public class SpeechServiceImpl implements SpeechService {
         if (resolved != null && !resolved.equals(voiceId)) {
             return resolved; // 命中映射
         }
-        // 未命中映射：百炼 CosyVoice 音色以 long 开头（longwan_v2/longcheng_v2/...）
+        // 未命中映射：千问AI平台 CosyVoice 音色以 long 开头（longwan_v2/longcheng_v2/...）
         if (voiceId.startsWith("long")) {
             return voiceId;
         }

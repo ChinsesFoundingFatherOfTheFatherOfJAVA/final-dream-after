@@ -18,7 +18,7 @@ import java.util.List;
  * SRT 字幕读写（MT-03/MT-05）。
  *
  * <p>统一标准格式：{@code 序号\nHH:MM:SS,mmm --> HH:MM:SS,mmm\n文本}（与原平台抓包一致）；
- * 负责：百炼 sentences JSON → SRT 转换、SRT 解析回条目、整语言重写落盘。
+ * 负责：千问AI平台 sentences JSON → SRT 转换、SRT 解析回条目、整语言重写落盘。
  * 所有落盘都在 /kng-files/subtitles/{coursewareId}/{lang}.srt（由调用方给定路径）。
  */
 @Slf4j
@@ -33,7 +33,7 @@ public class SrtService {
     public record Sentence(long beginMs, long endMs, String text) {
     }
 
-    /** 百炼 sentences JSON → SRT 条目列表（保持时间戳毫秒精度）。 */
+    /** 千问AI平台 sentences JSON → SRT 条目列表（保持时间戳毫秒精度）。 */
     public List<Sentence> fromAsrJson(String resultJson) {
         try {
             JsonNode root = JSON.readTree(resultJson);
@@ -55,7 +55,7 @@ public class SrtService {
             }
             return sentences;
         } catch (IOException exception) {
-            throw new BizException("百炼转写结果解析失败: " + exception.getMessage());
+            throw new BizException("千问AI转写结果解析失败: " + exception.getMessage());
         }
     }
 

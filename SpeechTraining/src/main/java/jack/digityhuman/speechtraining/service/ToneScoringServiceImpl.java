@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
 
 /**
  * 语气维度评分实现（FP-30 Phase 2，PoC 已验证）。
- * 对每条进入评分的语音轮调用百炼音频模型 3 次取中，再按各轮识别字数加权。
+ * 对每条进入评分的语音轮调用千问AI平台音频模型 3 次取中，再按各轮识别字数加权。
  */
 @Slf4j
 @Service
@@ -243,7 +243,9 @@ public class ToneScoringServiceImpl implements ToneScoringService {
             headers.setBearerAuth(apiKey);
 
             ResponseEntity<Map> response = toneRestTemplate.postForEntity(
-                    baseUrl, new HttpEntity<>(payload, headers), Map.class);
+                    // 平台切换(10-08)：base-url 配置可带/不带 /chat/completions，代码自动补齐
+                    baseUrl.endsWith("/chat/completions") ? baseUrl : baseUrl + "/chat/completions",
+                    new HttpEntity<>(payload, headers), Map.class);
             String responseText = extractResponseText(response.getBody());
             Matcher matcher = JSON_OBJECT.matcher(responseText);
             if (!matcher.find()) {

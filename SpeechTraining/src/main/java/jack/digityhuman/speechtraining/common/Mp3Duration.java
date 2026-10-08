@@ -3,7 +3,7 @@ package jack.digityhuman.speechtraining.common;
 /**
  * MP3 时长解析：跳过 ID3v2 标签后逐帧累加
  * <p>
- * 百炼 CosyVoice 请求的是 256kbps，实测落盘文件是 128kbps/22050Hz（MPEG2 Layer III），
+ * 千问AI平台 CosyVoice 请求的是 256kbps，实测落盘文件是 128kbps/22050Hz（MPEG2 Layer III），
  * 按固定码率折算字节数会把时长算成真实值的一半，而音频时长是口型对齐和各轮语速计算的基准，
  * 因此从帧头读实际参数而不是用常量除字节数。
  */
