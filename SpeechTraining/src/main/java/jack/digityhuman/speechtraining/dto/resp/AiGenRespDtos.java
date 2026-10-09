@@ -55,9 +55,10 @@ public final class AiGenRespDtos {
         private String strategy;
     }
 
-    /** SG-07 话术生成出参。 */
+    /** SG-07 话术生成出参（v1.2：narration=开场旁白，student 先说时非空）。 */
     @Data
     public static class GenScriptResp {
+        private String narration;
         private List<RoundItem> rounds;
         private Long elapsedMs;
     }
@@ -92,6 +93,8 @@ public final class AiGenRespDtos {
         private String standardScript;
         private List<ImportKeyPoint> keyPoints;
         private String analysis;
+        /** 旁白节点内容（v1.2，nodeType=5 专用；其余类型为 null） */
+        private String narration;
         private Integer positionX;
         private Integer positionY;
     }

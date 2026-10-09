@@ -110,10 +110,16 @@ public class AIGenServiceImpl implements AIGenService {
         inputs.put("sceneJson", canonical(req.getScene()));
         inputs.put("outlinesJson", canonical(req.getOutlines()));
         inputs.put("language", language);
+        // v1.2：开启者透传工作流③——提示词按 firstSpeaker 控制第 1 轮发言结构（学员主动开场）
+        inputs.put("firstSpeaker", normalizeSpeaker(req.getFirstSpeaker()));
 
         Map<String, Object> outputs = difyWorkflowSupport.runWorkflow("gen-script", inputs);
+        Map<String, Object> structured = readStructured(outputs);
         AiGenRespDtos.GenScriptResp resp = new AiGenRespDtos.GenScriptResp();
-        resp.setRounds(readRounds(readStructured(outputs)));
+        resp.setRounds(readRounds(structured));
+        // v1.2：开场旁白透传（student 先说时 AI 必填；trainer 为空串）
+        Object narration = structured.get("narration");
+        resp.setNarration(narration == null ? "" : String.valueOf(narration));
         if (resp.getRounds().size() != req.getOutlines().size()) {
             // 模型轮数漂移防线：与大纲环节数不一致直接判失败（前端可重试）
             throw new BizException("AI 生成的对话轮数(" + resp.getRounds().size()
@@ -153,6 +159,28 @@ public class AIGenServiceImpl implements AIGenService {
         startNode.setPositionY(baseY);
         nodes.add(startNode);
 
+        // v1.2 旁白节点：narration 非空时插在开始节点与首个大节点之间（学员先说场景的处境交代）。
+        // 之后的轮次节点下标整体 +1（edges 用 nodes.size() 动态计算，天然正确）。
+        boolean hasNarration = req.getNarration() != null && !req.getNarration().isBlank();
+        if (hasNarration) {
+            AiGenRespDtos.ImportNode narrationNode = new AiGenRespDtos.ImportNode();
+            narrationNode.setNodeType(5);
+            narrationNode.setNodeName("旁白");
+            narrationNode.setNarration(req.getNarration().trim());
+            narrationNode.setPositionX(baseX);
+            narrationNode.setPositionY(baseY + bigNodeStep);
+            nodes.add(narrationNode);
+
+            // 开始→旁白 的边（旁白之后的边由轮次循环 nodes.size() 动态续接）
+            AiGenRespDtos.ImportEdge narrationEdge = new AiGenRespDtos.ImportEdge();
+            narrationEdge.setSource(0);
+            narrationEdge.setTarget(1);
+            narrationEdge.setWeight(1);
+            edges.add(narrationEdge);
+        }
+        // 轮次节点的起始 y 偏移（有旁白时大节点从第 2 格开始）
+        int roundYOffset = hasNarration ? 2 : 1;
+
         for (int i = 0; i < rounds.size(); i++) {
             AiGenDtos.RoundItem round = rounds.get(i);
             AiGenRespDtos.ImportNode node = new AiGenRespDtos.ImportNode();
@@ -173,12 +201,12 @@ public class AIGenServiceImpl implements AIGenService {
             }
             node.setKeyPoints(keyPoints);
             node.setPositionX(baseX);
-            node.setPositionY(baseY + (i + 1) * bigNodeStep);
+            node.setPositionY(baseY + (roundYOffset + i) * bigNodeStep);
             nodes.add(node);
 
             AiGenRespDtos.ImportEdge edge = new AiGenRespDtos.ImportEdge();
-            edge.setSource(i);
-            edge.setTarget(i + 1);
+            edge.setSource(nodes.size() - 2);
+            edge.setTarget(nodes.size() - 1);
             edge.setWeight(1);
             edges.add(edge);
         }
@@ -187,7 +215,7 @@ public class AIGenServiceImpl implements AIGenService {
         endNode.setNodeType(4);
         endNode.setNodeName("结束");
         endNode.setPositionX(baseX);
-        endNode.setPositionY(baseY + (rounds.size() + 1) * bigNodeStep);
+        endNode.setPositionY(baseY + (roundYOffset + rounds.size()) * bigNodeStep);
         nodes.add(endNode);
         AiGenRespDtos.ImportEdge tail = new AiGenRespDtos.ImportEdge();
         tail.setSource(nodes.size() - 2);

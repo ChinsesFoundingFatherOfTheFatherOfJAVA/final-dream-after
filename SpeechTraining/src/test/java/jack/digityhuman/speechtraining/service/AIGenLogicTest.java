@@ -58,6 +58,48 @@ class AIGenLogicTest {
     }
 
     @Test
+    void importScriptInsertsNarrationNodeWhenPresent() {
+        // v1.2：narration 非空 → 开始节点与首个大节点之间插入 nodeType=5 旁白节点
+        AiGenDtos.ImportScriptReq req = new AiGenDtos.ImportScriptReq();
+        req.setFirstSpeaker("student");
+        req.setNarration("你是销售专员张伟，刘总刚走进展厅，请主动上前开场");
+        req.setRounds(List.of(round(1), round(2)));
+
+        AiGenRespDtos.ImportScriptResp resp = service.importScript(req);
+
+        assertThat(resp.getNodes()).hasSize(5); // 开始+旁白+2轮+结束
+        assertThat(resp.getNodes().get(1).getNodeType()).isEqualTo(5);
+        assertThat(resp.getNodes().get(1).getNodeName()).isEqualTo("旁白");
+        assertThat(resp.getNodes().get(1).getNarration()).contains("张伟");
+        assertThat(resp.getNodes().get(2).getNodeType()).isEqualTo(3); // 学员先说大节点
+        assertThat(resp.getNodes().get(2).getPositionY()).isEqualTo(100 + 2 * 260);
+        assertThat(resp.getEdges()).hasSize(4);
+        // 边链：开始0→旁白1→轮2→轮3→结束4
+        assertThat(resp.getEdges().get(0).getSource()).isEqualTo(0);
+        assertThat(resp.getEdges().get(0).getTarget()).isEqualTo(1);
+        assertThat(resp.getEdges().get(1).getSource()).isEqualTo(1);
+        assertThat(resp.getEdges().get(1).getTarget()).isEqualTo(2);
+        assertThat(resp.getEdges().get(3).getTarget()).isEqualTo(4);
+    }
+
+    @Test
+    void importScriptSkipsNarrationWhenBlank() {
+        // v1.2：narration 空/null → 不插旁白节点（陪练者先说场景）
+        AiGenDtos.ImportScriptReq req = new AiGenDtos.ImportScriptReq();
+        req.setFirstSpeaker("trainer");
+        req.setNarration("   ");
+        req.setRounds(List.of(round(1)));
+
+        AiGenRespDtos.ImportScriptResp resp = service.importScript(req);
+
+        assertThat(resp.getNodes()).hasSize(3);
+        assertThat(resp.getNodes().get(1).getNodeType()).isEqualTo(2);
+        assertThat(resp.getEdges()).hasSize(2);
+        assertThat(resp.getEdges().get(0).getSource()).isEqualTo(0);
+        assertThat(resp.getEdges().get(0).getTarget()).isEqualTo(1);
+    }
+
+    @Test
     void importScriptRejectsEmptyRounds() {
         AiGenDtos.ImportScriptReq req = new AiGenDtos.ImportScriptReq();
         req.setFirstSpeaker("trainer");

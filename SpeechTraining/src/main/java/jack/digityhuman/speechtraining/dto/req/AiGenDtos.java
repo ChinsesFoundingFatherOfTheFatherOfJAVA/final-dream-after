@@ -59,7 +59,7 @@ public final class AiGenDtos {
         private String strategy;
     }
 
-    /** SG-07 话术生成入参。 */
+    /** SG-07 话术生成入参（v1.2：firstSpeaker 透传工作流③控制第 1 轮发言结构）。 */
     @Data
     public static class GenScriptReq {
         private String sessionId;
@@ -69,6 +69,8 @@ public final class AiGenDtos {
         private List<OutlineItem> outlines;
         /** zh 普通话｜en 英语 */
         private String language;
+        /** student｜trainer——工作流③的发言结构控制与 import-script 编排共用 */
+        private String firstSpeaker;
     }
 
     /** 话术轮次（SG-07 出参 / SG-08 入参共用）。 */
@@ -87,12 +89,14 @@ public final class AiGenDtos {
         private Integer order;
     }
 
-    /** SG-08 导入编排入参。 */
+    /** SG-08 导入编排入参（v1.2：narration 非空时开始节点后插旁白节点）。 */
     @Data
     public static class ImportScriptReq {
         private String sessionId;
         /** student｜trainer——决定大节点类型 */
         private String firstSpeaker;
+        /** 开场旁白（工作流③产出；非空时插入旁白节点 nodeType=5） */
+        private String narration;
         private List<RoundItem> rounds;
     }
 
