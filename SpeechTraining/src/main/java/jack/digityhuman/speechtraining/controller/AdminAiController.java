@@ -23,20 +23,22 @@ public class AdminAiController {
     private final DifyScoringService scoringService;
     private final AvatarGenService avatarGenService;
 
-    /** AI 生成话术流程（场景描述 + 轮次）。 */
+    /**
+     * 旧单步生成接口已下线（v2.0 升级 03 §4：保留 30 天提示期，之后删除）。
+     * 新入口=AIGenController 三步向导（gen-scene → gen-outline → gen-script-v2）。
+     */
     @PostMapping("/generate-script")
-    public ApiResponse<AiScriptGenResp> generateScript(@RequestBody AiScriptGenReq req) {
-        return ApiResponse.success(scriptGenService.generateScript(
-                req.getDescription(), req.getRounds(), req.getFirstSpeaker()));
+    public ApiResponse<Void> generateScript(@RequestBody AiScriptGenReq req) {
+        return ApiResponse.error(1, "AI生成话术已升级为三步向导，请使用新版入口");
     }
 
-    /** AI 生成话术流程（参考资料文件上传：PDF/docx 文本提取后拼接描述）。 */
+    /** 旧上传生成接口同步下线（同上）。 */
     @PostMapping("/generate-script/upload")
-    public ApiResponse<AiScriptGenResp> generateScriptWithFile(
+    public ApiResponse<Void> generateScriptWithFile(
             @RequestParam("description") String description,
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "firstSpeaker", required = false) String firstSpeaker) {
-        return ApiResponse.success(scriptGenService.generateScriptWithFile(description, file, firstSpeaker));
+        return ApiResponse.error(1, "AI生成话术已升级为三步向导，请使用新版入口");
     }
 
     /** AI 单轮评分（标准话术 + 要点 + 学员回答）。 */
