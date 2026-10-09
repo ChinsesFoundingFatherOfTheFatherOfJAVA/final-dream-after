@@ -330,4 +330,20 @@ class ReportGenerationServiceTest {
         }
         return count;
     }
+
+    @Test
+    void hit_points随轮次进入payload_解析失败按空处理() {
+        // v1.2：轮次评分器判定的命中要点作为事实传给报告评分智能体（不再由报告 AI 重判）
+        TrainingSessionMessage question = message(1L, 1, "请介绍一下自己", null, null, null);
+        TrainingSessionMessage answer1 = message(2L, 2, "我是张伟，负责快反王2销售", null, null, 1);
+        answer1.setHitPoints("[\"自我介绍\",\"产品熟悉度\"]");
+        TrainingSessionMessage answer2 = message(3L, 2, "我们设备跳针率下降97%", null, null, 2);
+        answer2.setHitPoints("not-a-json"); // 解析失败 → 空列表
+
+        List<Map<String, Object>> rounds = service.buildRounds(9L,
+                List.of(question, answer1, answer2));
+
+        assertEquals(List.of("自我介绍", "产品熟悉度"), rounds.get(0).get("hit_points"));
+        assertEquals(List.of(), rounds.get(1).get("hit_points"));
+    }
 }

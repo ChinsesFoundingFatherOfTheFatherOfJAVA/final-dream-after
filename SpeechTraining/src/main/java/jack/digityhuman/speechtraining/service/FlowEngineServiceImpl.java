@@ -66,6 +66,8 @@ public class FlowEngineServiceImpl implements FlowEngineService {
     private static final int NODE_ROUND = 2;   // 陪练者问学员（大节点）
     private static final int NODE_ROUND_ALT = 3; // 学员问陪练者（大节点，与 type2 同样处理）
     private static final int NODE_END = 4;
+    private static final int NODE_NARRATION = 5; // 旁白节点（v1.2：消息 role=3 灰条，不占轮次）
+    private static final int ROLE_NARRATION = 3;
 
     /** 消息角色 */
     private static final int ROLE_TRAINER = 1;
@@ -111,7 +113,14 @@ public class FlowEngineServiceImpl implements FlowEngineService {
         }
         // 首个大节点 = 开始节点的出边，同样按权重随机路由
         //（开始节点可以有多条出边=多个开场分支；按 id 取第一条会让权重配置在开局失效）
+        // v1.2 旁白节点：开始→大节点之间可能插有旁白节点（AI生成话术的学员先说场景开场旁白）——
+        // 先只收集旁白文本（会话未建不能落库），创建会话后统一落 role=3 灰条消息
+        List<String> bootNarrations = new java.util.ArrayList<>();
         TrainingNode firstRoundNode = routeByWeight(projectId, startNode.getId());
+        while (firstRoundNode != null && isNarrationNode(firstRoundNode)) {
+            bootNarrations.add(firstRoundNode.getNarration() == null ? "" : firstRoundNode.getNarration());
+            firstRoundNode = routeByWeight(projectId, firstRoundNode.getId());
+        }
         if (!isRoundNode(firstRoundNode)) {
             throw new BizException("流程未配置或拓扑不完整：开始节点的下游不是学员节点");
         }
@@ -129,9 +138,18 @@ public class FlowEngineServiceImpl implements FlowEngineService {
         session.setStartTime(now);
         sessionMapper.insert(session);
 
-        // 4. 落库首个陪练者问（seq=0，属于第 1 轮）
+        // 4. 落库开场旁白（v1.2：灰条 role=3）+ 首个陪练者问
+        //（旁白 seq 从 0 连续编号，首个陪练者问 seq 顺延）
+        int seqCursor = 0;
+        List<TrainingSessionMessage> allMessages = new java.util.ArrayList<>();
+        for (String narration : bootNarrations) {
+            TrainingSessionMessage persisted = insertMessage(session.getId(), firstRoundNode,
+                    ROLE_NARRATION, narration, 1, null, null, 0, seqCursor++, null);
+            allMessages.add(persisted);
+        }
         TrainingSessionMessage firstMessage = insertMessage(session.getId(), firstRoundNode, ROLE_TRAINER,
-                firstRoundNode.getTrainerQuestion(), 1, null, null, 0, 0, null);
+                firstRoundNode.getTrainerQuestion(), 1, null, null, 0, seqCursor, null);
+        allMessages.add(firstMessage);
 
         // 5. 组装响应（v1.1 增加 dialogueMode/trainerAvatar）
         VirtualTrainer trainer = trainerOf(projectId);
@@ -142,7 +160,7 @@ public class FlowEngineServiceImpl implements FlowEngineService {
         resp.setDialogueMode(project.getDialogueMode() == null ? 0 : project.getDialogueMode());
         resp.setTotalRounds(session.getTotalRounds());
         resp.setFinishedRounds(0);
-        resp.setMessages(List.of(toMessageResp(firstMessage)));
+        resp.setMessages(allMessages.stream().map(this::toMessageResp).toList());
         return resp;
     }
 
@@ -379,11 +397,23 @@ public class FlowEngineServiceImpl implements FlowEngineService {
 
         // 4. 按出边权重随机路由
         TrainingNode next = routeByWeight(session.getProjectId(), currentNode.getId());
+        // v1.2 旁白节点：途中遇到的旁白节点逐个落旁白消息（role=3 灰条）并继续路由，
+        // 直到到达大节点或结束节点；旁白消息 seq 在 nextSeq 基础上连续递增
+        List<TrainingSessionMessage> narrationMessages = new java.util.ArrayList<>();
+        int seqCursor = nextSeq + 1;
+        while (next != null && isNarrationNode(next)) {
+            narrationMessages.add(insertMessage(sessionId, next, ROLE_NARRATION,
+                    next.getNarration() == null ? "" : next.getNarration(),
+                    session.getFinishedRounds() + 1, null, null, 0, seqCursor++, null));
+            next = routeByWeight(session.getProjectId(), next.getId());
+        }
         if (next.getNodeType() != null && next.getNodeType() == NODE_END) {
             // 4.1 流程结束：置完成 + 同步落报告行（生成中）+ 事务提交后异步生成
             finishSession(session);
-            return new SendOutcome(SendMessageResp.finished(keyPointContents,
-                    session.getFinishedRounds(), session.getTotalRounds()), studentMessage);
+            SendMessageResp finished = SendMessageResp.finished(keyPointContents,
+                    session.getFinishedRounds(), session.getTotalRounds());
+            finished.setNarrationMessages(narrationMessages.stream().map(this::toMessageResp).toList());
+            return new SendOutcome(finished, studentMessage);
         }
         if (!isRoundNode(next)) {
             throw new BizException("流程拓扑异常：下游节点类型不合法");
@@ -393,11 +423,13 @@ public class FlowEngineServiceImpl implements FlowEngineService {
         session.setCurrentNodeId(next.getId());
         sessionMapper.updateById(session);
         TrainingSessionMessage trainerMessage = insertMessage(sessionId, next, ROLE_TRAINER,
-                next.getTrainerQuestion(), session.getFinishedRounds() + 1, null, null, 0, nextSeq + 1, null);
+                next.getTrainerQuestion(), session.getFinishedRounds() + 1, null, null, 0, seqCursor, null);
 
         MessageResp nextMsg = toMessageResp(trainerMessage);
-        return new SendOutcome(SendMessageResp.passed(keyPointContents, nextMsg,
-                session.getFinishedRounds(), session.getTotalRounds()), studentMessage);
+        SendMessageResp passed = SendMessageResp.passed(keyPointContents, nextMsg,
+                session.getFinishedRounds(), session.getTotalRounds());
+        passed.setNarrationMessages(narrationMessages.stream().map(this::toMessageResp).toList());
+        return new SendOutcome(passed, studentMessage);
     }
 
     /** Dify 话术评分器调用结果 */
@@ -573,6 +605,11 @@ public class FlowEngineServiceImpl implements FlowEngineService {
     private boolean isRoundNode(TrainingNode node) {
         return node != null && node.getNodeType() != null
                 && (node.getNodeType() == NODE_ROUND || node.getNodeType() == NODE_ROUND_ALT);
+    }
+
+    /** 旁白节点判定（v1.2）：流转时落 role=3 旁白消息后跳过，不占轮次不参与判定。 */
+    private boolean isNarrationNode(TrainingNode node) {
+        return node != null && node.getNodeType() != null && node.getNodeType() == NODE_NARRATION;
     }
 
     /** 陪练者设置（含名称与形象） */

@@ -123,18 +123,18 @@ public class MaterialExtractServiceImpl implements MaterialExtractService {
         }
     }
 
-    /** 老格式 .ppt：slide.getTextParagraphs() 返回 List<List<HSLFTextParagraph>>，
-     *  run 级取文本用 HSLFTextRun.getRawText()（POI 5.x 的 getText 在 SL 接口上不存在）。 */
+    /** 老格式 .ppt：HSLF 泛型签名在不同 5.4.x 构建间不稳定（有无 Signature 属性不一致），
+     *  按原始类型遍历（只读文本，无写操作）；run 级取文本用 getRawText()。 */
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private String extractPpt(InputStream in) throws Exception {
         try (HSLFSlideShow ppt = new HSLFSlideShow(in)) {
             StringBuilder sb = new StringBuilder();
-            for (org.apache.poi.hslf.usermodel.HSLFSlide slide : ppt.getSlides()) {
-                for (List<List<org.apache.poi.hslf.usermodel.HSLFTextParagraph>> blocks
-                        : slide.getTextParagraphs()) {
-                    for (List<org.apache.poi.hslf.usermodel.HSLFTextParagraph> block : blocks) {
-                        for (org.apache.poi.hslf.usermodel.HSLFTextParagraph paragraph : block) {
-                            for (org.apache.poi.hslf.usermodel.HSLFTextRun run : paragraph.getTextRuns()) {
-                                String text = run.getRawText();
+            for (Object slide : ppt.getSlides()) {
+                for (Object blocks : ((org.apache.poi.hslf.usermodel.HSLFSlide) slide).getTextParagraphs()) {
+                    for (Object block : (List) blocks) {
+                        for (Object paragraph : (List) block) {
+                            for (Object run : ((org.apache.poi.hslf.usermodel.HSLFTextParagraph) paragraph).getTextRuns()) {
+                                String text = ((org.apache.poi.hslf.usermodel.HSLFTextRun) run).getRawText();
                                 if (text != null && !text.isBlank()) {
                                     sb.append(text);
                                 }

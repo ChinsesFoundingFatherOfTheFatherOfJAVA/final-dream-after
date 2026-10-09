@@ -173,4 +173,61 @@ class FlowEngineRoutingTest {
         assertEquals(2, resp.getTotalRounds());
         verify(sessionMapper).insert(argThat((TrainingSession s) -> s.getCurrentNodeId().equals(20L)));
     }
+
+    /**
+     * v1.2 旁白节点：开始→旁白→大节点的流程，start() 应落旁白消息（role=3）后前进到首个大节点，
+     * 且 sessionId 用真实会话（不留 -1 孤儿）、seq 连续（旁白0、陪练者问1）。
+     */
+    @Test
+    void 开始节点下游为旁白时落灰条消息后前进() {
+        TrainingProject project = new TrainingProject();
+        project.setId(100L);
+        project.setStatus(1);
+        project.setDialogueMode(0);
+        when(projectMapper.selectById(100L)).thenReturn(project);
+
+        TrainingNode start = new TrainingNode();
+        start.setId(1L);
+        start.setNodeType(1);
+        TrainingNode narration = new TrainingNode();
+        narration.setId(15L);
+        narration.setNodeType(5);
+        narration.setNarration("你是销售专员张伟，刘总刚走进展厅，请主动上前开场");
+        TrainingNode firstRound = round(20L, "第一问");
+        when(nodeMapper.selectList(any())).thenReturn(List.of(start, narration, firstRound));
+
+        TrainingEdge toNarration = edge(15L, 1);
+        toNarration.setSourceNodeId(1L);
+        TrainingEdge narrationToRound = edge(20L, 1);
+        narrationToRound.setSourceNodeId(15L);
+        when(edgeMapper.selectList(any())).thenAnswer(inv -> {
+            // routeByWeight 按源节点查出边：start 的出边→旁白；旁白的出边→大节点
+            return List.of(toNarration, narrationToRound);
+        });
+        when(nodeMapper.selectById(15L)).thenReturn(narration);
+        when(nodeMapper.selectById(20L)).thenReturn(firstRound);
+        when(sessionMapper.insert(any(TrainingSession.class))).thenAnswer(inv -> {
+            inv.getArgument(0, TrainingSession.class).setId(500L);
+            return 1;
+        });
+        when(messageMapper.insert(any(TrainingSessionMessage.class))).thenAnswer(inv -> {
+            inv.getArgument(0, TrainingSessionMessage.class).setId(600L);
+            return 1;
+        });
+        when(virtualTrainerMapper.selectOne(any())).thenReturn(null);
+
+        FlowEngineServiceImpl service = newService();
+        StartSessionResp resp = service.start(100L);
+
+        // 消息序：旁白(role=3) → 陪练者问(role=1)
+        assertEquals(2, resp.getMessages().size());
+        assertEquals(3, resp.getMessages().get(0).getRole());
+        assertTrue(resp.getMessages().get(0).getContent().contains("张伟"));
+        assertEquals(1, resp.getMessages().get(1).getRole());
+        assertEquals("第一问", resp.getMessages().get(1).getContent());
+        // 落库消息的 sessionId 必须是真实会话 ID（无 -1 孤儿）；seq 连续
+        verify(messageMapper, times(2)).insert(argThat((TrainingSessionMessage m) ->
+                m.getSessionId() == 500L && (m.getSeq() == 0 || m.getSeq() == 1)));
+        verify(sessionMapper).insert(argThat((TrainingSession s) -> s.getCurrentNodeId().equals(20L)));
+    }
 }

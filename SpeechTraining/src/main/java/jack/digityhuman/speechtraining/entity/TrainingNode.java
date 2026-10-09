@@ -24,6 +24,8 @@ public class TrainingNode {
     private String standardScript;
     private String keyPoints;
     private String analysis;
+    /** 旁白内容（nodeType=5 旁白节点专用，v1.2；列表/详情接口透传给前端画布） */
+    private String narration;
     private Integer passConditionType;
     private Integer passConditionN;
     private String passConditionPoints;

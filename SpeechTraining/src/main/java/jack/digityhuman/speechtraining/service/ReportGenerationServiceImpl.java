@@ -245,6 +245,19 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
         log.info("报告生成成功, reportId={}, totalScore={}, rank={}", report.getId(), totalScore, rank.rankNo());
     }
 
+    /** 学员消息 hit_points JSON（字符串数组）→ List；解析失败按空处理（该轮按未命中计）。 */
+    private List<String> parseHitPoints(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return com.fasterxml.jackson.databind.json.JsonMapper.builder().build().readValue(
+                    json, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
     /**
      * 按消息序还原逐轮对话：每个通过的学员消息与其前紧邻的陪练者问组成一轮
      * 输出结构：[{seq, trainer_question, student_answer, key_points, standard_script}]；
@@ -278,6 +291,9 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
                 round.put("key_points", node == null ? List.of()
                         : KeyPointsUtil.parse(node.getKeyPoints()).stream().map(KeyPointsUtil.KeyPoint::content).toList());
                 round.put("standard_script", node == null ? null : node.getStandardScript());
+                // v1.2：轮次评分器判定的实际命中要点（事实结果）——报告评分智能体据此评话术一致性，
+                // 不再对"覆盖了哪些要点"自行重判（此前两个智能体独立判同一件事，结论可能矛盾）
+                round.put("hit_points", parseHitPoints(msg.getHitPoints()));
                 // v1.3 语音特征：charCount=识别文本去标点长度，speechSpeed=字数÷净发声时长×60（四舍五入）
                 if (msg.getInputMode() != null && msg.getInputMode() == 2) {
                     int charCount = speechSpeedCalculator.countChars(msg.getContent());
@@ -607,6 +623,12 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
             m.put("name", p.dim().getDimensionName());
             m.put("weight", p.dim().getWeight());
             String rule = p.dim().getScoringRule();
+            // v1.2 ruleType 生效：话术一致性 exact=逐字匹配注入明确评分指令（此前 ruleType 落库后从未被消费）
+            if (p.dim().getRuleType() != null && p.dim().getRuleType() == 1) {
+                rule = "学员回答须与该轮标准话术（rounds[].standard_script）高度吻合，逐字一致性是本维度主要评分依据："
+                        + "关键表述措辞与标准话术一致得高分，仅意思相近但措辞明显偏离应降档；"
+                        + "同时参考每轮 hit_points 命中情况。" + (rule == null ? "" : rule);
+            }
             MetricOutcome measured = p.measured();
             if (measured != null && measured.factText() != null) {
                 rule = (rule == null ? "" : rule) + "（后端已判定：" + measured.factText()

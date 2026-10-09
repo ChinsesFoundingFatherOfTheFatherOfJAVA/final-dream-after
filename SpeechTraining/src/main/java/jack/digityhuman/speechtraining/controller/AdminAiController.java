@@ -2,42 +2,38 @@ package jack.digityhuman.speechtraining.controller;
 
 import jack.digityhuman.common.api.ApiResponse;
 import jack.digityhuman.speechtraining.dto.req.AiScoringReq;
-import jack.digityhuman.speechtraining.dto.req.AiScriptGenReq;
 import jack.digityhuman.speechtraining.dto.req.AvatarGenReq;
 import jack.digityhuman.speechtraining.dto.resp.AiScoringResp;
-import jack.digityhuman.speechtraining.dto.resp.AiScriptGenResp;
 import jack.digityhuman.speechtraining.dto.resp.AvatarGenResp;
 import jack.digityhuman.speechtraining.dify.DifyScoringService;
-import jack.digityhuman.speechtraining.dify.DifyScriptGenService;
 import jack.digityhuman.speechtraining.service.AvatarGenService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 
+/**
+ * 管理端 AI 基础接口（评分/形象生成）。旧单步话术生成接口（generate-script/upload）已随
+ * v2.0 三步向导上线而下线——提示期路由保留于此，相关 DifyScriptGenService 死代码已删除。
+ */
 @RestController
 @RequestMapping("/api/admin/ai")
 @RequiredArgsConstructor
 public class AdminAiController {
 
-    private final DifyScriptGenService scriptGenService;
     private final DifyScoringService scoringService;
     private final AvatarGenService avatarGenService;
 
     /**
-     * 旧单步生成接口已下线（v2.0 升级 03 §4：保留 30 天提示期，之后删除）。
+     * 旧单步生成接口下线提示（v2.0 升级 03 §4：保留 30 天提示期，之后删除）。
      * 新入口=AIGenController 三步向导（gen-scene → gen-outline → gen-script-v2）。
      */
     @PostMapping("/generate-script")
-    public ApiResponse<Void> generateScript(@RequestBody AiScriptGenReq req) {
+    public ApiResponse<Void> generateScript() {
         return ApiResponse.error(1, "AI生成话术已升级为三步向导，请使用新版入口");
     }
 
     /** 旧上传生成接口同步下线（同上）。 */
     @PostMapping("/generate-script/upload")
-    public ApiResponse<Void> generateScriptWithFile(
-            @RequestParam("description") String description,
-            @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "firstSpeaker", required = false) String firstSpeaker) {
+    public ApiResponse<Void> generateScriptWithFile() {
         return ApiResponse.error(1, "AI生成话术已升级为三步向导，请使用新版入口");
     }
 

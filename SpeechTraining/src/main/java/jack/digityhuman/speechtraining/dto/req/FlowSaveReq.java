@@ -23,6 +23,8 @@ public class FlowSaveReq {
         private String standardScript;
         private List<KeyPointItem> keyPoints;
         private String analysis;
+        /** 旁白内容（nodeType=5 旁白节点专用，v1.2） */
+        private String narration;
         private Integer passConditionType;
         private Integer passConditionN;
         /** 兼容前端传单个ID字符串、逗号分隔ID、或ID数组 */
