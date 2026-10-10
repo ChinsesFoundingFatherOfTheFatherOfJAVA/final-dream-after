@@ -23,6 +23,8 @@ public class FlowDataResp {
         private String standardScript;
         private List<KeyPointItem> keyPoints;
         private String analysis;
+        /** 旁白内容（v1.2 nodeType=5；BeanUtils 与实体自动同名拷贝） */
+        private String narration;
         private Integer passConditionType;
         private Integer passConditionN;
         private Object passConditionPoints;
