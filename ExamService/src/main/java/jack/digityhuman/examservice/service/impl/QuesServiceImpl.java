@@ -60,6 +60,7 @@ public class QuesServiceImpl implements QuesService {
     private final ExamQuestionPointMapper questionPointMapper;
     private final ExamPointMapper pointMapper;
     private final ExamLibMapper libMapper;
+    private final jack.digityhuman.examservice.mapper.ExamPaperQuestionMapper paperQuestionMapper;
     private final jack.digityhuman.staffmanagement.api.OrgQueryService orgQueryService;
     private final CurrentUserService currentUserService;
 
@@ -87,6 +88,10 @@ public class QuesServiceImpl implements QuesService {
         }
         if (StringUtils.hasText(q.getKeyword())) {
             wrapper.like(ExamQuestion::getSummary, q.getKeyword().trim());
+        }
+        // 07 §9 增量：试卷管理页跳过来时按 quesId 精确定位单题（与其它筛选叠加）
+        if (StringUtils.hasText(q.getQuesId())) {
+            wrapper.eq(ExamQuestion::getId, q.getQuesId().trim());
         }
         if (StringUtils.hasText(q.getPointId())) {
             List<String> quesIds = questionPointMapper.selectList(Wrappers.<ExamQuestionPoint>lambdaQuery()
@@ -232,8 +237,26 @@ public class QuesServiceImpl implements QuesService {
     @Transactional
     public void delete(String id) {
         ExamQuestion ques = requireQues(id);
+        // 07 §9 增量：题库与试卷是「同源引用」，被试卷引用的试题不能删（40070），
+        // 否则卷子里会凭空缺题。组合题要连同子题一起查，子题同样可能被引用。
+        List<String> treeIds = new ArrayList<>();
+        collectIds(id, treeIds);
+        Long refs = paperQuestionMapper.selectCount(Wrappers.<jack.digityhuman.examservice.entity.ExamPaperQuestion>lambdaQuery()
+                .in(jack.digityhuman.examservice.entity.ExamPaperQuestion::getQuesId, treeIds));
+        if (refs != null && refs > 0) {
+            throw new BizException(40070, "试题已被试卷引用，不能删除");
+        }
         deleteRecursive(id);
         refreshLibCounter(ques.getLibId());
+    }
+
+    /** 收集自身 + 全部子题 id（组合题级联用）。 */
+    private void collectIds(String id, List<String> out) {
+        out.add(id);
+        for (ExamQuestion child : questionMapper.selectList(Wrappers.<ExamQuestion>lambdaQuery()
+                .eq(ExamQuestion::getParentId, id))) {
+            collectIds(child.getId(), out);
+        }
     }
 
     @Override

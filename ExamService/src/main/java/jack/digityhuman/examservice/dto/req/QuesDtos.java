@@ -22,6 +22,8 @@ public final class QuesDtos {
         /** -1 全部。 */
         private Integer disabled = -1;
         private String pointId;
+        /** 07 §9 增量：按试题 id 精确过滤（试卷管理页跳转定位单题用）。 */
+        private String quesId;
         /** 1 时只返回查重命中的重复题。 */
         private Integer isDuplicate = 0;
     }
