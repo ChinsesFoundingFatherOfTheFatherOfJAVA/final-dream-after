@@ -53,6 +53,11 @@ public class ScoreConfigServiceImpl implements ScoreConfigService {
             if (item == null || item.getType() == null || item.getLevelType() == null) {
                 continue;
             }
+            // 漏选得分不得超过该格满分（与批量设置分值同一口径）
+            if (item.getScore() != null && item.getMissScore() != null
+                    && item.getMissScore().compareTo(item.getScore()) > 0) {
+                item.setMissScore(item.getScore());
+            }
             ExamScoreConfig exists = scoreConfigMapper.selectOne(Wrappers.<ExamScoreConfig>lambdaQuery()
                     .eq(ExamScoreConfig::getType, item.getType())
                     .eq(ExamScoreConfig::getLevelType, item.getLevelType()));

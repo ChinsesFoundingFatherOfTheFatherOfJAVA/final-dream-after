@@ -14,6 +14,10 @@ public class ExamPaperUse {
     @TableId(type = IdType.ASSIGN_ID)
     private String id;
     private String paperId;
+    /** 引用方 ID（考试 ID） */
+    private String refId;
+    /** 1 考试 2 课程安排 */
+    private Integer refType;
     private String refName;
     /** 1 课程安排 2 单独安排 */
     private Integer sourceType;

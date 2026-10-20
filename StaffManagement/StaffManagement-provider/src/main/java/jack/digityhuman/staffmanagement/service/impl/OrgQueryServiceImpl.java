@@ -28,7 +28,9 @@ import org.springframework.util.StringUtils;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * 组织架构与权限查询服务的实现，同时是 Dubbo 服务提供者。
@@ -73,7 +75,7 @@ public class OrgQueryServiceImpl implements OrgQueryService {
         SysUser user = userMapper.selectOne(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getAccount, safe)
                 .last("limit 1"));
-        return toUserDTO(user);
+        return user == null ? null : toUserDTO(user, deptIdByPath(List.of(user)));
     }
 
     /** 按账号批量查用户；空入参直接返回空集合，避免生成无谓的 IN 查询。 */
@@ -82,8 +84,10 @@ public class OrgQueryServiceImpl implements OrgQueryService {
         if (accounts == null || accounts.isEmpty()) {
             return List.of();
         }
-        return userMapper.selectRowsByAccounts(accounts).stream()
-                .map(OrgQueryServiceImpl::toUserDTO)
+        List<SysUser> rows = userMapper.selectRowsByAccounts(accounts);
+        Map<String, Long> deptIds = deptIdByPath(rows);
+        return rows.stream()
+                .map(u -> toUserDTO(u, deptIds))
                 .toList();
     }
 
@@ -93,8 +97,10 @@ public class OrgQueryServiceImpl implements OrgQueryService {
         if (ids == null || ids.isEmpty()) {
             return List.of();
         }
-        return userMapper.selectRowsByIds(ids).stream()
-                .map(OrgQueryServiceImpl::toUserDTO)
+        List<SysUser> rows = userMapper.selectRowsByIds(ids);
+        Map<String, Long> deptIds = deptIdByPath(rows);
+        return rows.stream()
+                .map(u -> toUserDTO(u, deptIds))
                 .toList();
     }
 
@@ -119,8 +125,10 @@ public class OrgQueryServiceImpl implements OrgQueryService {
     /** 在职候选用户（选人组件数据源）：部门路径前缀与关键词筛选在 Mapper XML 内完成。 */
     @Override
     public List<SysUserDTO> listActiveCandidates(String deptPath, String keyword) {
-        return userMapper.selectActiveCandidates(trimToNull(deptPath), trimToNull(keyword)).stream()
-                .map(OrgQueryServiceImpl::toUserDTO)
+        List<SysUser> rows = userMapper.selectActiveCandidates(trimToNull(deptPath), trimToNull(keyword));
+        Map<String, Long> deptIds = deptIdByPath(rows);
+        return rows.stream()
+                .map(u -> toUserDTO(u, deptIds))
                 .toList();
     }
 
@@ -265,6 +273,34 @@ public class OrgQueryServiceImpl implements OrgQueryService {
     }
 
     private static SysUserDTO toUserDTO(SysUser user) {
+        return toUserDTO(user, Map.of());
+    }
+
+    /** 按 deptPath 批量解析部门 ID（一次查询覆盖整批）。 */
+    private Map<String, Long> deptIdByPath(List<SysUser> users) {
+        if (users == null || users.isEmpty()) {
+            return Map.of();
+        }
+        List<String> paths = users.stream()
+                .map(SysUser::getDeptPath)
+                .filter(p -> p != null && !p.isBlank())
+                .distinct()
+                .toList();
+        if (paths.isEmpty()) {
+            return Map.of();
+        }
+        return departmentMapper.selectList(new LambdaQueryWrapper<SysDepartment>()
+                        .in(SysDepartment::getDeptPath, paths))
+                .stream()
+                .filter(d -> d.getDeptPath() != null)
+                .collect(Collectors.toMap(SysDepartment::getDeptPath, SysDepartment::getId, (a, b) -> a));
+    }
+
+    /**
+     * 组装用户视图。<br>
+     * deptId 由调用方按 deptPath 批量解析后传入（一次查询覆盖整批，避免 N+1）。
+     */
+    private static SysUserDTO toUserDTO(SysUser user, Map<String, Long> deptIdByPath) {
         if (user == null) {
             return null;
         }
@@ -274,6 +310,7 @@ public class OrgQueryServiceImpl implements OrgQueryService {
         dto.setEmployeeNo(user.getEmployeeNo());
         dto.setName(user.getName());
         dto.setDeptCode(user.getDeptCode());
+        dto.setDeptId(user.getDeptPath() == null ? null : deptIdByPath.get(user.getDeptPath()));
         dto.setDeptName(user.getDeptName());
         dto.setDeptPath(user.getDeptPath());
         dto.setPositionName(user.getPositionName());

@@ -44,7 +44,8 @@ import java.util.Set;
  * <p>列表口径：分类过滤 = catalog_id=? OR routing_path LIKE '前缀%'（含子分类，03 §2.1）；
  * 共享给我的 = lib_id IN (exam_lib_share 按 userId + 部门展开)；
  * permissions 能力集按当前用户计算（删除=创建者或超管；编辑=创建者或（非保密库的被共享者））。
- * 本期超管判定沿用工程现状（userId=1 视为超管占位，正式权限码接入后替换——见 06-实施记录）。
+ * 超管判定取自 StaffManagement 签发 JWT 的 {@code isSuperAdmin} claim（见 {@link CurrentUserService#isSuperAdmin}），
+ * 不再用 userId=1 之类的占位口径；内置超管 account=admin 的 userId 并不固定。
  */
 @Slf4j
 @Service

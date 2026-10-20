@@ -359,6 +359,11 @@ public class PaperQuesServiceImpl implements PaperQuesService {
             if (item == null || item.getSectionIndex() == null) {
                 continue;
             }
+            // 漏选得分不得超过该题满分：前端已夹取，这里兜底，防止脚本/旧客户端写入非法值
+            if (item.getScore() != null && item.getMissScore() != null
+                    && item.getMissScore().compareTo(item.getScore()) > 0) {
+                item.setMissScore(item.getScore());
+            }
             List<ExamPaperQuestion> rels = paperQuestionMapper.selectList(Wrappers.<ExamPaperQuestion>lambdaQuery()
                     .eq(ExamPaperQuestion::getPaperId, paperId)
                     .eq(ExamPaperQuestion::getSectionIndex, item.getSectionIndex()));
