@@ -65,8 +65,10 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     /** 催促事件的 payload 序列化；本服务不对外暴露 Jackson 配置，自持一个线程安全实例。 */
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final int ERR_NOT_FOUND = 40101;
-    private static final int ERR_PERMISSION = 40102;
+    /** 04 §2：考试域使用 400xx；40101 只保留给网关"未登录"。 */
+    private static final int ERR_NOT_FOUND = 40002;
+    private static final int ERR_STUDENT_NOT_FOUND = 40023;
+    private static final int ERR_PERMISSION = 40003;
     /** 罪犯作答记录时的冲突码（04 §2 的既有语义：40004 不允许直接删除） */
     private static final int ERR_HAS_ATTEMPT = 40004;
     private static final int ERR_RETAKE_USED = 40021;
@@ -264,7 +266,7 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
         requireArrange(arrangeId);
         ExamArrangeStudent row = studentMapper.selectById(studentId);
         if (row == null || !arrangeId.equals(row.getArrangeId())) {
-            throw new BizException(ERR_NOT_FOUND, "考生不存在或不在本场考试");
+            throw new BizException(ERR_STUDENT_NOT_FOUND, "考生不存在或不在本场考试");
         }
         if (row.getRetakeUsed() != null && row.getRetakeUsed() == 1) {
             throw new BizException(ERR_RETAKE_USED, "该考生已安排过补考，只能补考一次");
@@ -330,8 +332,12 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
         int affected = 0;
         for (ExamAttempt attempt : attemptMapper.selectList(Wrappers.<ExamAttempt>lambdaQuery()
                 .eq(ExamAttempt::getArrangeId, arrangeId))) {
-            // 未作答同步：只影响"尚未开始/考试中"的后续尝试；全部同步：连已交卷的一起换快照
-            if (!all && attempt.getStatus() != null && attempt.getStatus() >= 3) {
+            // 已交卷（status=3）/已作废（status=4）的答卷永远保持原快照：历史不可改写
+            if (attempt.getStatus() == null || attempt.getStatus() >= 3) {
+                continue;
+            }
+            // 「未作答」只刷新尚未开始的 attempt；「全部」刷新所有未交卷（未开始/考试中/批阅中）
+            if (!all && attempt.getStatus() != 0) {
                 continue;
             }
             attempt.setSnapshotId(snapshot.getId());

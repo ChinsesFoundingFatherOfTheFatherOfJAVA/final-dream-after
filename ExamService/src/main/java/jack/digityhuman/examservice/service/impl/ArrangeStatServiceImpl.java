@@ -60,7 +60,8 @@ public class ArrangeStatServiceImpl implements ArrangeStatService {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final String[] TYPE_NAMES = { "单选题", "多选题", "判断题", "填空题", "问答题", "组合题" };
     private static final String[] LEVEL_NAMES = { "易", "中", "难" };
-    private static final int ERR_NOT_FOUND = 40101;
+    /** 04 §2：考试域使用 400xx；40101 只保留给网关"未登录"。 */
+    private static final int ERR_NOT_FOUND = 40002;
 
     private final ExamArrangeMapper arrangeMapper;
     private final ExamPaperMapper paperMapper;

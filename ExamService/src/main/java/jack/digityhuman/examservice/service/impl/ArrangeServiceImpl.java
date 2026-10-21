@@ -58,11 +58,11 @@ public class ArrangeServiceImpl implements ArrangeService {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final java.time.format.DateTimeFormatter TIME = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    /** 错误码（04 §2）：考试域从 40100 起，不与试卷/题库域重叠。 */
-    private static final int ERR_NOT_FOUND = 40101;
-    private static final int ERR_NO_PERMISSION = 40102;
-    private static final int ERR_PAPER_NOT_RELEASED = 40110;
-    private static final int ERR_STATE = 40111;
+    /** 错误码（04 §2）：考试域统一使用 400xx/500xx，40101 只保留给网关"未登录"。 */
+    private static final int ERR_NOT_FOUND = 40002;
+    private static final int ERR_NO_PERMISSION = 40003;
+    private static final int ERR_STATE = 40004;
+    private static final int ERR_PAPER_NOT_RELEASED = 40005;
 
     private final ExamArrangeMapper arrangeMapper;
     private final ExamArrangeCatalogMapper catalogMapper;
@@ -260,9 +260,11 @@ public class ArrangeServiceImpl implements ArrangeService {
             if (req.getAdvancedSettings() != null) row.setAdvancedSettings(req.getAdvancedSettings());
             // 优秀分数/考试说明/批阅人存 publish_settings，F18.1 允许发布后修改
             if (req.getPublishSettings() != null) row.setPublishSettings(req.getPublishSettings());
-            // F18.1：「使用试卷」发布后可改；换卷时自动发布新卷并冻结新快照
+            // 2026-10-21 决策（D-31）：已发布考试锁定「使用试卷」，禁止换卷。
+            // 原因：答卷读取的是发布时冻结的 exam_paper_snapshot，换卷会让同一考试的新旧答卷
+            // 指向不同题目集合，成绩与正确率无法横向比较；需要换卷请新建考试。
             if (req.getPaperId() != null && !req.getPaperId().equals(row.getPaperId())) {
-                switchPaper(row, req.getPaperId(), req.getPaperBuildType());
+                throw new BizException(ERR_STATE, "已发布考试不可更换试卷");
             }
         } else {
             applySave(row, req);
@@ -458,81 +460,6 @@ public class ArrangeServiceImpl implements ArrangeService {
     }
 
     // ---------------- 内部 ----------------
-
-    /**
-     * 已发布考试更换「使用试卷」（F18.1 白名单）。
-     *
-     * <p>换卷后要保证三件事：① 新卷必须处于已发布态，否则复用试卷发布校验自动发布；
-     * ② exam_paper_use / used_qty 的引用统计跟随新卷；③ 冻结新版本快照，
-     * 后续作答使用新卷，历史 attempt 仍指向旧快照，不做迁移。
-     */
-    private void switchPaper(ExamArrange row, String newPaperId, Integer buildType) {
-        ExamPaper paper = paperMapper.selectById(newPaperId);
-        if (paper == null) {
-            throw new BizException(ERR_PAPER_NOT_RELEASED, "试卷不存在或已删除");
-        }
-        if (paper.getStatus() == null || paper.getStatus() != 4) {
-            paperService.release(newPaperId);
-            paper = paperMapper.selectById(newPaperId);
-            if (paper == null || paper.getStatus() == null || paper.getStatus() != 4) {
-                throw new BizException(ERR_PAPER_NOT_RELEASED, "试卷发布失败，请检查试卷题目与分值");
-            }
-        }
-
-        String oldPaperId = row.getPaperId();
-        row.setPaperId(newPaperId);
-        row.setPaperBuildType(buildType != null ? buildType : paper.getBuildType());
-        row.setTotalScore(paper.getTotalScore());
-
-        // 同一考试的引用记录换到新卷（发布时写入 refId/refType）
-        List<ExamPaperUse> uses = paperUseMapper.selectList(Wrappers.<ExamPaperUse>lambdaQuery()
-                .eq(ExamPaperUse::getRefId, row.getId())
-                .eq(ExamPaperUse::getRefType, 1));
-        if (uses.isEmpty()) {
-            ExamPaperUse use = new ExamPaperUse();
-            use.setId(IdWorker.getIdStr());
-            use.setPaperId(newPaperId);
-            use.setRefId(row.getId());
-            use.setRefType(1);
-            use.setRefName(row.getName());
-            use.setSourceType(1);
-            use.setCreatorName(row.getCreateFullname());
-            use.setStatus("已发布");
-            use.setCreatedAt(LocalDateTime.now());
-            use.setUpdatedAt(LocalDateTime.now());
-            paperUseMapper.insert(use);
-        } else {
-            for (ExamPaperUse use : uses) {
-                use.setPaperId(newPaperId);
-                use.setRefName(row.getName());
-                use.setUpdatedAt(LocalDateTime.now());
-                paperUseMapper.updateById(use);
-            }
-        }
-
-        // 引用次数：旧卷 -1（不低于 0），新卷 +1
-        if (StringUtils.hasText(oldPaperId) && !oldPaperId.equals(newPaperId)) {
-            ExamPaper old = paperMapper.selectById(oldPaperId);
-            if (old != null) {
-                old.setUsedQty(Math.max(0, (old.getUsedQty() == null ? 0 : old.getUsedQty()) - 1));
-                paperMapper.updateById(old);
-            }
-            paper.setUsedQty((paper.getUsedQty() == null ? 0 : paper.getUsedQty()) + 1);
-            paperMapper.updateById(paper);
-        }
-
-        // 新卷冻结新快照版本
-        ExamPaperSnapshot snapshot = new ExamPaperSnapshot();
-        snapshot.setId(IdWorker.getIdStr());
-        snapshot.setArrangeId(row.getId());
-        snapshot.setPaperId(newPaperId);
-        snapshot.setVersionNo(nextVersion(row.getId(), newPaperId));
-        snapshot.setSnapshotJson(buildSnapshot(paper));
-        snapshot.setCreatedBy(currentUserService.userId(null));
-        snapshot.setCreatedAt(LocalDateTime.now());
-        snapshotMapper.insert(snapshot);
-        log(row.getId(), "switch_paper", snapshot.getId());
-    }
 
     /** 入参是 "yyyy-MM-dd HH:mm:ss" 字符串，这里显式解析（Jackson 3 对 LocalDateTime 的默认解析不吃带空格格式）。 */
     private LocalDateTime parseTime(String raw) {

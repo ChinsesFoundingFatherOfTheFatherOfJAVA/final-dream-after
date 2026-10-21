@@ -54,9 +54,10 @@ public class ArrangeNoticeServiceImpl implements ArrangeNoticeService {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static final int ERR_NOT_FOUND = 40101;
-    private static final int ERR_EMPTY = 40112;
-    private static final int ERR_CHANNEL = 40113;
+    /** 04 §2：考试域使用 400xx/500xx；40101 只保留给网关"未登录"。 */
+    private static final int ERR_NOT_FOUND = 40002;
+    private static final int ERR_EMPTY = 40001;
+    private static final int ERR_CHANNEL = 50040;
     private static final String EVENT_CODE = "ARRANGE_CHANGE";
 
     /** 变更字段 → 中文名（用于默认通知正文）。 */

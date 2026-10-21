@@ -55,7 +55,11 @@ public class DataInitializer implements ApplicationRunner {
             new Seed("kng:courseware", "课件管理", "kng", 41, "/kng/courseware"),
             new Seed("kng:course", "课程管理", "kng", 42, "/kng/course"),
             new Seed("kng:catalog", "分类管理", "kng", 43, "/kng/catalog"),
-            new Seed("kng:setting", "课程设置", "kng", 44, "/kng/setting"));
+            new Seed("kng:setting", "课程设置", "kng", 44, "/kng/setting"),
+            new Seed("exam", "测练中心", null, 50),
+            new Seed("exam:queslib", "题库管理", "exam", 51, "/exam/queslib"),
+            new Seed("exam:paper", "试卷管理", "exam", 52, "/exam/paper"),
+            new Seed("exam:manage", "考试管理", "exam", 53, "/exam/exam-mgmt"));
 
     private static final Logger log = LoggerFactory.getLogger(DataInitializer.class);
 

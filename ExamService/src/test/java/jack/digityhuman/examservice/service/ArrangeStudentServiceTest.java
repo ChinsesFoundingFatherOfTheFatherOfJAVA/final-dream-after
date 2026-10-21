@@ -10,6 +10,7 @@ import jack.digityhuman.examservice.entity.ExamArrange;
 import jack.digityhuman.examservice.entity.ExamArrangeStudent;
 import jack.digityhuman.examservice.entity.ExamAttempt;
 import jack.digityhuman.examservice.entity.ExamNoticeOutbox;
+import jack.digityhuman.examservice.entity.ExamPaper;
 import jack.digityhuman.examservice.mapper.*;
 import jack.digityhuman.examservice.service.impl.ArrangeStudentServiceImpl;
 import jack.digityhuman.examservice.service.impl.ExamNoticeOutboxWorker;
@@ -33,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -184,5 +186,47 @@ class ArrangeStudentServiceTest {
         assertThat(row.getPayloadJson()).contains("考试提醒").contains("\"13\"");
         verify(outboxWorker).deliverNow(row);
         verify(logMapper).insert(any(jack.digityhuman.examservice.entity.ExamArrangeOperationLog.class));
+    }
+
+    /**
+     * C-02：mode=all 也必须跳过已交卷/已作废的 attempt，否则历史答卷会被换到新快照。
+     */
+    @Test
+    void 同步试卷_all也只更新未交卷尝试的快照() {
+        ExamArrange a = arrange();
+        a.setPaperId("pid");
+        when(arrangeMapper.selectById("aid")).thenReturn(a);
+
+        ExamPaper p = new ExamPaper();
+        p.setId("pid");
+        p.setName("测试试卷");
+        p.setBuildType(0);
+        p.setQuesMode(0);
+        p.setTotalScore(BigDecimal.ZERO);
+        when(paperMapper.selectById("pid")).thenReturn(p);
+        when(snapshotMapper.selectCount(any())).thenReturn(0L);
+        when(paperQuestionMapper.selectList(any())).thenReturn(List.of());
+
+        ExamAttempt inProgress = new ExamAttempt();
+        inProgress.setId("att2");
+        inProgress.setArrangeId("aid");
+        inProgress.setStatus(2);
+
+        ExamAttempt submitted = new ExamAttempt();
+        submitted.setId("att3");
+        submitted.setArrangeId("aid");
+        submitted.setStatus(3);
+
+        when(attemptMapper.selectList(any())).thenReturn(List.of(inProgress, submitted));
+
+        ArrangeStudentDtos.SyncReq req = new ArrangeStudentDtos.SyncReq();
+        req.setMode("all");
+        ArrangeStudentRespDtos.SyncResp resp = service.syncPaper("aid", req);
+
+        assertThat(resp.getAffectedCount()).isEqualTo(1);
+        assertThat(inProgress.getSnapshotId()).isNotNull();
+        // 已交卷的历史答卷保持原快照（null 表示从未被改写）
+        assertThat(submitted.getSnapshotId()).isNull();
+        verify(attemptMapper, times(1)).updateById(any(ExamAttempt.class));
     }
 }

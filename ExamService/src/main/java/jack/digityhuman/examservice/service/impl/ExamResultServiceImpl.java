@@ -84,7 +84,8 @@ public class ExamResultServiceImpl implements ExamResultService {
             "/usr/share/fonts/truetype/arphic/uming.ttc",
             "/System/Library/Fonts/PingFang.ttc"
     };
-    private static final int ERR_NOT_FOUND = 40101;
+    /** 04 §2：考试域使用 400xx；40101 只保留给网关"未登录"。 */
+    private static final int ERR_NOT_FOUND = 40024;
 
     private final ExamAttemptMapper attemptMapper;
     private final ExamAttemptAnswerMapper answerMapper;
