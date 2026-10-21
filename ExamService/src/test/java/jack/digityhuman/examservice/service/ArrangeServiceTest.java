@@ -42,6 +42,7 @@ class ArrangeServiceTest {
     @Mock private ExamPaperUseMapper paperUseMapper;
     @Mock private ExamPaperMapper paperMapper;
     @Mock private ExamPaperQuestionMapper paperQuestionMapper;
+    @Mock private ExamAttemptMapper attemptMapper;
     @Mock private ExamArrangeOperationLogMapper logMapper;
     @Mock private PaperService paperService;
     @Mock private ArrangePermissionService arrangePermissionService;
@@ -147,5 +148,32 @@ class ArrangeServiceTest {
 
         verify(snapshotMapper, never()).insert(any(ExamPaperSnapshot.class));
         verify(arrangeMapper, never()).updateById(any(ExamArrange.class));
+    }
+
+    @Test
+    void 进行中的考试不可删除() {
+        ExamArrange a = arrange();
+        a.setPublishStatus(1);
+        when(arrangeMapper.selectById("aid")).thenReturn(a);
+        when(arrangePermissionService.canManage(any())).thenReturn(true);
+
+        assertThatThrownBy(() -> service.delete("aid"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("进行中");
+        verify(arrangeMapper, never()).deleteById("aid");
+    }
+
+    @Test
+    void 有作答记录的考试不可删除() {
+        ExamArrange a = arrange();
+        a.setPublishStatus(2);
+        when(arrangeMapper.selectById("aid")).thenReturn(a);
+        when(arrangePermissionService.canManage(any())).thenReturn(true);
+        when(attemptMapper.selectCount(any())).thenReturn(1L);
+
+        assertThatThrownBy(() -> service.delete("aid"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("作答记录");
+        verify(arrangeMapper, never()).deleteById("aid");
     }
 }

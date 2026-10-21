@@ -13,6 +13,7 @@ import jack.digityhuman.examservice.dto.resp.ArrangeRespDtos;
 import jack.digityhuman.examservice.entity.ExamArrange;
 import jack.digityhuman.examservice.entity.ExamArrangeCatalog;
 import jack.digityhuman.examservice.entity.ExamArrangeOperationLog;
+import jack.digityhuman.examservice.entity.ExamAttempt;
 import jack.digityhuman.examservice.entity.ExamPaper;
 import jack.digityhuman.examservice.entity.ExamPaperQuestion;
 import jack.digityhuman.examservice.entity.ExamPaperSnapshot;
@@ -20,6 +21,7 @@ import jack.digityhuman.examservice.entity.ExamPaperUse;
 import jack.digityhuman.examservice.mapper.ExamArrangeCatalogMapper;
 import jack.digityhuman.examservice.mapper.ExamArrangeMapper;
 import jack.digityhuman.examservice.mapper.ExamArrangeOperationLogMapper;
+import jack.digityhuman.examservice.mapper.ExamAttemptMapper;
 import jack.digityhuman.examservice.mapper.ExamPaperMapper;
 import jack.digityhuman.examservice.mapper.ExamPaperQuestionMapper;
 import jack.digityhuman.examservice.mapper.ExamPaperSnapshotMapper;
@@ -70,6 +72,7 @@ public class ArrangeServiceImpl implements ArrangeService {
     private final ExamPaperUseMapper paperUseMapper;
     private final ExamPaperMapper paperMapper;
     private final ExamPaperQuestionMapper paperQuestionMapper;
+    private final ExamAttemptMapper attemptMapper;
     private final ExamArrangeOperationLogMapper logMapper;
     private final PaperService paperService;
     private final jack.digityhuman.examservice.service.ArrangePermissionService arrangePermissionService;
@@ -423,8 +426,25 @@ public class ArrangeServiceImpl implements ArrangeService {
         if (!canManage(row)) {
             throw new BizException(ERR_NO_PERMISSION, "无删除权限");
         }
+        assertDeletable(row);
         arrangeMapper.deleteById(id);
         log(id, "delete", null);
+    }
+
+    /**
+     * F23 / 04 §4：进行中的考试与已有作答记录的考试不可删除。
+     *
+     * <p>已结束且无作答记录的考试允许删除（用于清理误建/测试数据）；软删除由 {@code @TableLogic} 完成。
+     */
+    private void assertDeletable(ExamArrange row) {
+        if (row.getPublishStatus() != null && row.getPublishStatus() == 1) {
+            throw new BizException(ERR_STATE, "进行中的考试不可删除，请先结束考试");
+        }
+        Long attempts = attemptMapper.selectCount(Wrappers.<ExamAttempt>lambdaQuery()
+                .eq(ExamAttempt::getArrangeId, row.getId()));
+        if (attempts != null && attempts > 0) {
+            throw new BizException(ERR_STATE, "该考试已有作答记录，不可删除");
+        }
     }
 
     @Override

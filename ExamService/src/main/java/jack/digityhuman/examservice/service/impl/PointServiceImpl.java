@@ -11,7 +11,9 @@ import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.examservice.common.CurrentUserService;
 import jack.digityhuman.examservice.dto.req.PointDtos;
 import jack.digityhuman.examservice.dto.resp.PointRespDtos;
+import jack.digityhuman.examservice.entity.ExamLib;
 import jack.digityhuman.examservice.entity.ExamPoint;
+import jack.digityhuman.examservice.mapper.ExamLibMapper;
 import jack.digityhuman.examservice.mapper.ExamPointMapper;
 import jack.digityhuman.examservice.service.PointService;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +40,7 @@ import java.util.Set;
 public class PointServiceImpl implements PointService {
 
     private final ExamPointMapper pointMapper;
+    private final ExamLibMapper libMapper;
 
     @Override
     public List<PointRespDtos.PointItem> list(String libId) {
@@ -111,6 +114,16 @@ public class PointServiceImpl implements PointService {
                 continue;
             }
             pointMapper.deleteById(point.getId());
+        }
+
+        // point_qty 是题库列表的冗余计数，增/删/改名都在这里收口重算；
+        // 不重算会导致"建库时 1，之后新增考点永远是 1"（B-01）。
+        Long count = pointMapper.selectCount(Wrappers.<ExamPoint>lambdaQuery()
+                .eq(ExamPoint::getLibId, libId));
+        ExamLib lib = libMapper.selectById(libId);
+        if (lib != null) {
+            lib.setPointQty(count == null ? 0 : count.intValue());
+            libMapper.updateById(lib);
         }
     }
 }

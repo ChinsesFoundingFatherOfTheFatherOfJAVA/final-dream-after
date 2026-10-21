@@ -496,8 +496,10 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
     }
 
     /**
-     * 总分 = Σ(维度分×权重) / Σ全部维度权重。
-     * score=null 只跳过分子，权重照常进入分母；全部维度无分仍视为报告失败。
+     * 总分 = Σ(维度分×权重) / Σ**已评分维度**权重。
+     *
+     * <p>score=null 表示该维度未参与评分：分子和分母都不计入；全部维度无分仍视为报告失败。
+     * 这与 01 §评分口径一致（早期"权重照常进分母"的做法已废弃，见 E-06）。
      */
     BigDecimal calculateTotalScore(List<TrainingReportDimension> dimensionRows) {
         BigDecimal weightedSum = BigDecimal.ZERO;
@@ -505,11 +507,11 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
         long weightSum = 0;
         int scoredCount = 0;
         for (TrainingReportDimension row : dimensionRows) {
-            int weight = row.getWeight() == null ? 0 : row.getWeight();
-            weightSum += weight;
             if (row.getScore() == null) {
                 continue;
             }
+            int weight = row.getWeight() == null ? 0 : row.getWeight();
+            weightSum += weight;
             scoredCount++;
             scoreSum = scoreSum.add(row.getScore());
             weightedSum = weightedSum.add(row.getScore().multiply(BigDecimal.valueOf(weight)));
@@ -557,9 +559,11 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
     }
 
     /**
-     * 较上次变化：本次总分 - 该学员本项目上一份已生成报告中的最高总分（首次为 null）
+     * 较上次变化：本次总分 - 该学员本项目**最近一份**已生成报告的总分（首次为 null）。
+     *
+     * <p>取最近一份而不是历史最高分：否则"比上次退步"会被历史最好成绩掩盖，口径与报告页"较上次"不一致（E-04）。
      */
-    private BigDecimal calcScoreChange(Long projectId, String userId, Long currentReportId, BigDecimal currentScore) {
+    BigDecimal calcScoreChange(Long projectId, String userId, Long currentReportId, BigDecimal currentScore) {
         List<TrainingReport> previous = reportMapper.selectList(new LambdaQueryWrapper<TrainingReport>()
                 .eq(TrainingReport::getProjectId, projectId)
                 .eq(TrainingReport::getUserId, userId)
@@ -568,12 +572,16 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
         if (previous.isEmpty()) {
             return null;
         }
-        BigDecimal prevBest = previous.stream()
-                .map(TrainingReport::getTotalScore)
-                .filter(Objects::nonNull)
-                .max(BigDecimal::compareTo)
+        TrainingReport latest = previous.stream()
+                .filter(r -> r.getTotalScore() != null)
+                .max(Comparator
+                        .comparing(TrainingReport::getCreatedAt,
+                                Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparing(TrainingReport::getId,
+                                Comparator.nullsFirst(Comparator.naturalOrder())))
                 .orElse(null);
-        return prevBest == null ? null : currentScore.subtract(prevBest).setScale(1, RoundingMode.HALF_UP);
+        return latest == null ? null
+                : currentScore.subtract(latest.getTotalScore()).setScale(1, RoundingMode.HALF_UP);
     }
 
     /**

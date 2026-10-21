@@ -227,9 +227,18 @@ public class QuesServiceImpl implements QuesService {
         ques.setUpdatedBy(currentUserService.userId(null));
         ques.setUpdatedAt(LocalDateTime.now());
         questionMapper.updateById(ques);
-        replaceItems(id, req);
-        replacePoints(id, req);
-        replaceSubQuestions(id, ques.getLibId(), req);
+        // 真正的 patch：字段为 null 表示"本次不涉及"，不能当成"清空"。
+        // 已发布试卷只提交题干/选项/答案/解析时，points/subQuestions 为 null，
+        // 旧实现会先删后插（等于清空），这是 C-07 的根因。
+        if (req.getQuestionItems() != null) {
+            replaceItems(id, req);
+        }
+        if (req.getPoints() != null) {
+            replacePoints(id, req);
+        }
+        if (req.getSubQuestions() != null) {
+            replaceSubQuestions(id, ques.getLibId(), req);
+        }
         refreshLibCounter(ques.getLibId());
     }
 

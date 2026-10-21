@@ -290,6 +290,10 @@ public class PaperQuesServiceImpl implements PaperQuesService {
                 if (patch.getLevelType() == null) {
                     patch.setLevelType(exists.getLevelType());
                 }
+                // 已发布只允许改题干/选项/答案/解析：考核点与子题结构不在白名单，
+                // 置空让 QuesService.update 跳过替换（否则会先删后插，等于清空）。
+                patch.setPoints(null);
+                patch.setSubQuestions(null);
                 quesService.update(quesId, patch);
             }
         }
@@ -299,7 +303,7 @@ public class PaperQuesServiceImpl implements PaperQuesService {
     @Override
     @Transactional
     public void removeQuestion(String paperId, String quesId) {
-        requirePaper(paperId);
+        requireStructureEditable(requirePaper(paperId));
         // 只删关联，题库试题独立存在（07 §4.6）
         paperQuestionMapper.delete(Wrappers.<ExamPaperQuestion>lambdaQuery()
                 .eq(ExamPaperQuestion::getPaperId, paperId)
@@ -310,7 +314,7 @@ public class PaperQuesServiceImpl implements PaperQuesService {
     @Override
     @Transactional
     public int removeQuestions(String paperId, PaperQuesDtos.BatchDeleteReq req) {
-        requirePaper(paperId);
+        requireStructureEditable(requirePaper(paperId));
         if (req == null || req.getQuesIds() == null || req.getQuesIds().isEmpty()) {
             return 0;
         }
@@ -324,7 +328,7 @@ public class PaperQuesServiceImpl implements PaperQuesService {
     @Override
     @Transactional
     public void sort(String paperId, PaperQuesDtos.SortReq req) {
-        requirePaper(paperId);
+        requireStructureEditable(requirePaper(paperId));
         if (req == null || req.getMoves() == null) {
             return;
         }
@@ -351,7 +355,7 @@ public class PaperQuesServiceImpl implements PaperQuesService {
     @Override
     @Transactional
     public void batchScore(String paperId, PaperQuesDtos.BatchScoreReq req) {
-        requirePaper(paperId);
+        requireStructureEditable(requirePaper(paperId));
         if (req == null || req.getScores() == null) {
             return;
         }
@@ -435,6 +439,13 @@ public class PaperQuesServiceImpl implements PaperQuesService {
             throw new BizException("试卷不存在或已删除");
         }
         return paper;
+    }
+
+    /** 已发布试卷只允许改题干/选项/答案/解析；增删题、排序、批量改分一律 40040。 */
+    private void requireStructureEditable(ExamPaper paper) {
+        if (paper.getStatus() != null && paper.getStatus() == 4) {
+            throw new BizException(40040, "已发布试卷仅可修改题干/选项/答案/解析");
+        }
     }
 
     private ExamPaperQuestion requireRel(String paperId, String quesId) {

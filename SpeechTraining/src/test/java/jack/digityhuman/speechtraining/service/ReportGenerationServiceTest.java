@@ -4,6 +4,7 @@ import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.speechtraining.common.DimensionMetricConfig;
 import jack.digityhuman.speechtraining.dify.DifyReportScoringService;
 import jack.digityhuman.speechtraining.entity.ScoringDimension;
+import jack.digityhuman.speechtraining.entity.TrainingReport;
 import jack.digityhuman.speechtraining.entity.TrainingReportDimension;
 import jack.digityhuman.speechtraining.entity.TrainingRoundAcoustic;
 import jack.digityhuman.speechtraining.entity.TrainingSessionMessage;
@@ -18,6 +19,7 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 
 import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -239,7 +241,7 @@ class ReportGenerationServiceTest {
     }
 
     @Test
-    void 总分_未参与维度权重仍计入_其余满分时90() {
+    void 总分_未参与维度权重不计入_其余满分时100() {
         List<TrainingReportDimension> rows = List.of(
                 row(40, new BigDecimal("100")),
                 row(10, new BigDecimal("100")),
@@ -249,7 +251,26 @@ class ReportGenerationServiceTest {
                 row(10, new BigDecimal("100")),
                 row(10, null));
 
-        assertEquals(new BigDecimal("90.0"), service.calculateTotalScore(rows));
+        assertEquals(new BigDecimal("100.0"), service.calculateTotalScore(rows));
+    }
+
+    @Test
+    void 较上次取最近一份报告而不是历史最高() {
+        TrainingReport older = new TrainingReport();
+        older.setId(1L);
+        older.setCreatedAt(LocalDateTime.of(2026, 1, 1, 9, 0));
+        older.setTotalScore(new BigDecimal("90"));
+
+        TrainingReport newer = new TrainingReport();
+        newer.setId(2L);
+        newer.setCreatedAt(LocalDateTime.of(2026, 2, 1, 9, 0));
+        newer.setTotalScore(new BigDecimal("60"));
+
+        when(reportMapper.selectList(any())).thenReturn(List.of(older, newer));
+
+        // 旧实现取历史最高 90 → -20；新口径取最近一份 60 → +10
+        assertEquals(new BigDecimal("10.0"),
+                service.calcScoreChange(1L, "u1", 3L, new BigDecimal("70")));
     }
 
     @Test

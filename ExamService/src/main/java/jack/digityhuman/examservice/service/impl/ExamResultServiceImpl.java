@@ -11,6 +11,7 @@ import jack.digityhuman.examservice.entity.ExamAttempt;
 import jack.digityhuman.examservice.entity.ExamAttemptAnswer;
 import jack.digityhuman.examservice.entity.ExamPaper;
 import jack.digityhuman.examservice.entity.ExamPaperQuestion;
+import jack.digityhuman.examservice.entity.ExamPaperSnapshot;
 import jack.digityhuman.examservice.entity.ExamPoint;
 import jack.digityhuman.examservice.entity.ExamQuestion;
 import jack.digityhuman.examservice.entity.ExamQuestionItem;
@@ -21,6 +22,7 @@ import jack.digityhuman.examservice.mapper.ExamAttemptAnswerMapper;
 import jack.digityhuman.examservice.mapper.ExamAttemptMapper;
 import jack.digityhuman.examservice.mapper.ExamPaperMapper;
 import jack.digityhuman.examservice.mapper.ExamPaperQuestionMapper;
+import jack.digityhuman.examservice.mapper.ExamPaperSnapshotMapper;
 import jack.digityhuman.examservice.mapper.ExamPointMapper;
 import jack.digityhuman.examservice.mapper.ExamQuestionItemMapper;
 import jack.digityhuman.examservice.mapper.ExamQuestionMapper;
@@ -93,10 +95,15 @@ public class ExamResultServiceImpl implements ExamResultService {
     private final ExamArrangeStudentMapper studentMapper;
     private final ExamPaperMapper paperMapper;
     private final ExamPaperQuestionMapper paperQuestionMapper;
+    private final ExamPaperSnapshotMapper snapshotMapper;
     private final ExamQuestionMapper questionMapper;
     private final ExamQuestionItemMapper itemMapper;
     private final ExamQuestionPointMapper questionPointMapper;
     private final ExamPointMapper pointMapper;
+
+    /** 快照解析结果：题目结构/分值与总分，用于历史答卷回放。 */
+    private record SnapshotData(List<ExamPaperQuestion> rels, BigDecimal totalScore) {
+    }
 
     /** 可选：部署时用绝对路径指定中文字体（优先级最高）。 */
     @org.springframework.beans.factory.annotation.Value("${exam.pdf.font-path:}")
@@ -112,13 +119,17 @@ public class ExamResultServiceImpl implements ExamResultService {
         ExamPaper paper = StringUtils.hasText(attempt.getPaperId()) ? paperMapper.selectById(attempt.getPaperId()) : null;
         ExamArrangeStudent student = StringUtils.hasText(attempt.getStudentId())
                 ? studentMapper.selectById(attempt.getStudentId()) : null;
+        SnapshotData snapshot = snapshotData(attempt);
 
         ExamResultRespDtos.ResultView v = new ExamResultRespDtos.ResultView();
         v.setUeId(attempt.getId());
         v.setArrId(attempt.getArrangeId());
         v.setArrName(arrange == null ? "" : arrange.getName());
         v.setExamName(paper == null ? "" : paper.getName());
-        v.setTotalScore(paper == null ? BigDecimal.ZERO : paper.getTotalScore());
+        // 历史答卷以快照为准；快照缺失才回退当前试卷，并在响应里标记 snapshotMissing
+        v.setSnapshotMissing(snapshot == null);
+        v.setTotalScore(snapshot != null ? snapshot.totalScore()
+                : (paper == null ? BigDecimal.ZERO : paper.getTotalScore()));
         v.setPassScore(arrange == null ? null : arrange.getPassScore());
         v.setUsedTime(attempt.getDurationSec());
         v.setScore(attempt.getScore());
@@ -147,7 +158,8 @@ public class ExamResultServiceImpl implements ExamResultService {
         Map<Integer, int[]> sectionCount = new TreeMap<>();
         Map<Integer, BigDecimal> sectionScore = new TreeMap<>();
 
-        for (ExamPaperQuestion rel : paperQuestions(attempt.getPaperId())) {
+        List<ExamPaperQuestion> rels = snapshot != null ? snapshot.rels() : paperQuestions(attempt.getPaperId());
+        for (ExamPaperQuestion rel : rels) {
             ExamQuestion ques = questionMapper.selectById(rel.getQuesId());
             if (ques == null) {
                 continue;
@@ -384,6 +396,48 @@ public class ExamResultServiceImpl implements ExamResultService {
                 .eq(ExamPaperQuestion::getPaperId, paperId)
                 .orderByAsc(ExamPaperQuestion::getSectionIndex)
                 .orderByAsc(ExamPaperQuestion::getOrderIndex));
+    }
+
+    /**
+     * 读取答卷对应的试卷快照（C-01）：结构、顺序、分值、总分以发布/同步时冻结的 JSON 为准，
+     * 历史答卷不会因为之后改卷而变形。快照缺失时返回 null，由调用方回退当前试卷。
+     */
+    private SnapshotData snapshotData(ExamAttempt attempt) {
+        if (attempt == null || !StringUtils.hasText(attempt.getSnapshotId())) {
+            return null;
+        }
+        ExamPaperSnapshot snap = snapshotMapper.selectById(attempt.getSnapshotId());
+        if (snap == null || !StringUtils.hasText(snap.getSnapshotJson())) {
+            return null;
+        }
+        try {
+            JsonNode root = JSON.readTree(snap.getSnapshotJson());
+            JsonNode qs = root.path("questions");
+            if (!qs.isArray()) {
+                return null;
+            }
+            List<ExamPaperQuestion> rels = new ArrayList<>();
+            for (JsonNode n : qs) {
+                ExamPaperQuestion rel = new ExamPaperQuestion();
+                rel.setQuesId(n.path("quesId").asText(""));
+                rel.setSectionIndex(n.path("sectionIndex").asInt(0));
+                rel.setOrderIndex(n.path("orderIndex").asInt(0));
+                rel.setScore(decimal(n, "score"));
+                rel.setMissScore(decimal(n, "missScore"));
+                rel.setMissScoreType(n.path("missScoreType").asInt(0));
+                rel.setSubScores(n.hasNonNull("subScores") ? n.get("subScores").toString() : null);
+                rels.add(rel);
+            }
+            return new SnapshotData(rels, decimal(root, "totalScore"));
+        } catch (Exception e) {
+            log.warn("解析试卷快照失败，回退当前试卷：{}", e.getMessage());
+            return null;
+        }
+    }
+
+    private BigDecimal decimal(JsonNode node, String field) {
+        JsonNode v = node == null ? null : node.get(field);
+        return v == null || v.isNull() ? BigDecimal.ZERO : v.decimalValue();
     }
 
     private List<ExamQuestionItem> itemsOf(String quesId) {

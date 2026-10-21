@@ -19,6 +19,8 @@ public final class ExamResultRespDtos {
         private String examName;
         private BigDecimal totalScore;
         private BigDecimal passScore;
+        /** true 表示答卷没有可用快照，已回退当前试卷（历史结构可能与当时不一致）。 */
+        private boolean snapshotMissing;
         private Integer usedTime;
         private BigDecimal score;
         private Integer status;
