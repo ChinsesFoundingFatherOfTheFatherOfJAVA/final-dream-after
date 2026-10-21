@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SpeechJwtServiceTest {
 
-    private static final String SECRET = "***REMOVED***";
+    private static final String SECRET = "test-only-jwt-secret-0123456789abcdef0123456789abcdef";
 
     @Test
     void parsesStaffManagementTokenClaims() {
