@@ -17,9 +17,14 @@ import jack.digityhuman.examservice.entity.ExamArrangeScoreStat;
 import jack.digityhuman.examservice.entity.ExamArrangeSignature;
 import jack.digityhuman.examservice.entity.ExamArrangeStudent;
 import jack.digityhuman.examservice.entity.ExamAttempt;
+import jack.digityhuman.examservice.entity.ExamAttemptAnswer;
 import jack.digityhuman.examservice.entity.ExamPaper;
 import jack.digityhuman.examservice.entity.ExamPaperQuestion;
 import jack.digityhuman.examservice.entity.ExamPaperSnapshot;
+import jack.digityhuman.examservice.entity.ExamPoint;
+import jack.digityhuman.examservice.entity.ExamQuestion;
+import jack.digityhuman.examservice.entity.ExamQuestionAnalysisStat;
+import jack.digityhuman.examservice.entity.ExamQuestionPoint;
 import jack.digityhuman.examservice.mapper.ExamArrangeMapper;
 import jack.digityhuman.examservice.mapper.ExamArrangeOperationLogMapper;
 import jack.digityhuman.examservice.mapper.ExamNoticeOutboxMapper;
@@ -27,9 +32,14 @@ import jack.digityhuman.examservice.mapper.ExamArrangeScoreStatMapper;
 import jack.digityhuman.examservice.mapper.ExamArrangeSignatureMapper;
 import jack.digityhuman.examservice.mapper.ExamArrangeStudentMapper;
 import jack.digityhuman.examservice.mapper.ExamAttemptMapper;
+import jack.digityhuman.examservice.mapper.ExamAttemptAnswerMapper;
 import jack.digityhuman.examservice.mapper.ExamPaperMapper;
 import jack.digityhuman.examservice.mapper.ExamPaperQuestionMapper;
 import jack.digityhuman.examservice.mapper.ExamPaperSnapshotMapper;
+import jack.digityhuman.examservice.mapper.ExamPointMapper;
+import jack.digityhuman.examservice.mapper.ExamQuestionAnalysisStatMapper;
+import jack.digityhuman.examservice.mapper.ExamQuestionMapper;
+import jack.digityhuman.examservice.mapper.ExamQuestionPointMapper;
 import jack.digityhuman.examservice.service.ArrangeStudentService;
 import jack.digityhuman.staffmanagement.api.OrgQueryService;
 import jack.digityhuman.staffmanagement.api.dto.SysUserDTO;
@@ -44,12 +54,14 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 考生管理实现（施工序阶段 4）。
@@ -76,10 +88,15 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
     private final ExamArrangeMapper arrangeMapper;
     private final ExamArrangeStudentMapper studentMapper;
     private final ExamAttemptMapper attemptMapper;
+    private final ExamAttemptAnswerMapper answerMapper;
     private final ExamArrangeSignatureMapper signatureMapper;
     private final ExamArrangeScoreStatMapper scoreStatMapper;
+    private final ExamQuestionAnalysisStatMapper questionStatMapper;
     private final ExamPaperMapper paperMapper;
     private final ExamPaperQuestionMapper paperQuestionMapper;
+    private final ExamQuestionMapper questionMapper;
+    private final ExamQuestionPointMapper questionPointMapper;
+    private final ExamPointMapper pointMapper;
     private final ExamPaperSnapshotMapper snapshotMapper;
     private final ExamArrangeOperationLogMapper logMapper;
     private final ExamNoticeOutboxMapper outboxMapper;
@@ -415,6 +432,8 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
         } else {
             scoreStatMapper.updateById(stat);
         }
+        recalculateRanks(arrangeId);
+        recalculateQuestionStats(arrange, arrangeId);
 
         arrange.setAnalysisEnabled(1);
         arrange.setAnalysisTime(LocalDateTime.now());
@@ -431,6 +450,127 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
         resp.setAnalysisEnabled(1);
         resp.setAnalysisTime(TIME.format(LocalDateTime.now()));
         return resp;
+    }
+
+    /**
+     * 重算已完成答卷排名：同分同名次，下一名次跳过并列人数（1,2,2,4）。
+     */
+    private void recalculateRanks(String arrangeId) {
+        List<ExamAttempt> all = attemptMapper.selectList(Wrappers.<ExamAttempt>lambdaQuery()
+                .eq(ExamAttempt::getArrangeId, arrangeId));
+        for (ExamAttempt attempt : all) {
+            if ((attempt.getStatus() == null || attempt.getStatus() != 3) && attempt.getRankNo() != null) {
+                attempt.setRankNo(null);
+                attempt.setUpdatedAt(LocalDateTime.now());
+                attemptMapper.updateById(attempt);
+            }
+        }
+        List<ExamAttempt> attempts = all.stream()
+                .filter(a -> a.getStatus() != null && a.getStatus() == 3)
+                .sorted(Comparator
+                        .comparing((ExamAttempt a) -> a.getScore() == null ? BigDecimal.ZERO : a.getScore())
+                        .reversed()
+                        .thenComparing(ExamAttempt::getSubmitAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(ExamAttempt::getId))
+                .toList();
+        BigDecimal previousScore = null;
+        int previousRank = 0;
+        for (int i = 0; i < attempts.size(); i++) {
+            ExamAttempt attempt = attempts.get(i);
+            BigDecimal score = attempt.getScore() == null ? BigDecimal.ZERO : attempt.getScore();
+            int rank = previousScore != null && score.compareTo(previousScore) == 0 ? previousRank : i + 1;
+            if (!Integer.valueOf(rank).equals(attempt.getRankNo())) {
+                attempt.setRankNo(rank);
+                attempt.setUpdatedAt(LocalDateTime.now());
+                attemptMapper.updateById(attempt);
+            }
+            previousScore = score;
+            previousRank = rank;
+        }
+    }
+
+    /**
+     * 按试卷题目重建题目级统计；同一题有多个考核点时按考核点各落一行。
+     */
+    private void recalculateQuestionStats(ExamArrange arrange, String arrangeId) {
+        questionStatMapper.delete(Wrappers.<ExamQuestionAnalysisStat>lambdaQuery()
+                .eq(ExamQuestionAnalysisStat::getArrangeId, arrangeId));
+        if (!StringUtils.hasText(arrange.getPaperId())) {
+            return;
+        }
+        List<ExamPaperQuestion> rels = paperQuestionMapper.selectList(Wrappers.<ExamPaperQuestion>lambdaQuery()
+                .eq(ExamPaperQuestion::getPaperId, arrange.getPaperId())
+                .orderByAsc(ExamPaperQuestion::getSectionIndex)
+                .orderByAsc(ExamPaperQuestion::getOrderIndex));
+        if (rels.isEmpty()) {
+            return;
+        }
+
+        List<String> quesIds = rels.stream().map(ExamPaperQuestion::getQuesId).distinct().toList();
+        Map<String, ExamQuestion> questions = questionMapper.selectBatchIds(quesIds).stream()
+                .collect(Collectors.toMap(ExamQuestion::getId, q -> q));
+        List<ExamAttempt> attempts = attemptMapper.selectList(Wrappers.<ExamAttempt>lambdaQuery()
+                .eq(ExamAttempt::getArrangeId, arrangeId)
+                .eq(ExamAttempt::getStatus, 3));
+        Map<String, int[]> answerStats = new HashMap<>();
+        if (!attempts.isEmpty()) {
+            List<String> attemptIds = attempts.stream().map(ExamAttempt::getId).toList();
+            for (ExamAttemptAnswer answer : answerMapper.selectList(Wrappers.<ExamAttemptAnswer>lambdaQuery()
+                    .in(ExamAttemptAnswer::getAttemptId, attemptIds))) {
+                int[] cnt = answerStats.computeIfAbsent(answer.getQuesId(), k -> new int[] { 0, 0 });
+                cnt[0]++;
+                if (answer.getCorrectFlag() != null && answer.getCorrectFlag() == 1) {
+                    cnt[1]++;
+                }
+            }
+        }
+
+        List<ExamQuestionPoint> pointRels = questionPointMapper.selectList(
+                Wrappers.<ExamQuestionPoint>lambdaQuery()
+                        .in(ExamQuestionPoint::getQuesId, quesIds)
+                        .orderByAsc(ExamQuestionPoint::getOrderIndex));
+        Map<String, List<ExamQuestionPoint>> pointsByQues = pointRels.stream()
+                .collect(Collectors.groupingBy(ExamQuestionPoint::getQuesId));
+        Map<String, String> pointNames = pointRels.isEmpty() ? Map.of()
+                : pointMapper.selectBatchIds(pointRels.stream()
+                        .map(ExamQuestionPoint::getPointId).distinct().toList()).stream()
+                .collect(Collectors.toMap(ExamPoint::getId, ExamPoint::getName));
+
+        LocalDateTime now = LocalDateTime.now();
+        for (ExamPaperQuestion rel : rels) {
+            ExamQuestion question = questions.get(rel.getQuesId());
+            if (question == null) {
+                continue;
+            }
+            int[] cnt = answerStats.getOrDefault(question.getId(), new int[] { 0, 0 });
+            List<ExamQuestionPoint> points = pointsByQues.getOrDefault(question.getId(), List.of());
+            if (points.isEmpty()) {
+                insertQuestionStat(arrangeId, question, null, "", cnt, now);
+            } else {
+                for (ExamQuestionPoint point : points) {
+                    insertQuestionStat(arrangeId, question, point.getPointId(),
+                            pointNames.getOrDefault(point.getPointId(), ""), cnt, now);
+                }
+            }
+        }
+    }
+
+    private void insertQuestionStat(String arrangeId, ExamQuestion question, String pointId,
+                                    String pointName, int[] count, LocalDateTime now) {
+        ExamQuestionAnalysisStat stat = new ExamQuestionAnalysisStat();
+        stat.setId(IdWorker.getIdStr());
+        stat.setArrangeId(arrangeId);
+        stat.setQuesId(question.getId());
+        stat.setType(question.getType() == null ? 0 : question.getType());
+        stat.setLevelType(question.getLevelType() == null ? 0 : question.getLevelType());
+        stat.setPointId(pointId == null ? "" : pointId);
+        stat.setPointName(pointName == null ? "" : pointName);
+        stat.setAnswerQty(count[0]);
+        stat.setCorrectQty(count[1]);
+        stat.setCorrectRate(count[0] == 0 ? BigDecimal.ZERO
+                : BigDecimal.valueOf(count[1]).divide(BigDecimal.valueOf(count[0]), 4, RoundingMode.HALF_UP));
+        stat.setUpdatedAt(now);
+        questionStatMapper.insert(stat);
     }
 
     @Override

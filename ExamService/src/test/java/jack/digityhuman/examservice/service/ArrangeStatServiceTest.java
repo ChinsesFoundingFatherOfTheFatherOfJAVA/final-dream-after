@@ -2,6 +2,7 @@ package jack.digityhuman.examservice.service;
 
 import jack.digityhuman.examservice.dto.resp.ArrangeStatRespDtos;
 import jack.digityhuman.examservice.entity.ExamArrange;
+import jack.digityhuman.examservice.entity.ExamQuestionAnalysisStat;
 import jack.digityhuman.examservice.mapper.*;
 import jack.digityhuman.examservice.service.impl.ArrangeStatServiceImpl;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,8 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** 统计空数据兜底：没有试卷/没有答卷时不能抛异常，比率一律 0。 */
@@ -29,6 +32,7 @@ class ArrangeStatServiceTest {
     @Mock private ExamPaperMapper paperMapper;
     @Mock private ExamPaperQuestionMapper paperQuestionMapper;
     @Mock private ExamQuestionMapper questionMapper;
+    @Mock private ExamQuestionAnalysisStatMapper questionStatMapper;
     @Mock private ExamQuestionItemMapper itemMapper;
     @Mock private ExamQuestionPointMapper questionPointMapper;
     @Mock private ExamPointMapper pointMapper;
@@ -81,5 +85,25 @@ class ArrangeStatServiceTest {
         assertThat((BigDecimal) resp.getScoreInfo().get("averageScore")).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat((BigDecimal) resp.getScoreInfo().get("topScore".equals("") ? "highestScore" : "highestScore"))
                 .isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void 有题目聚合时正确率直接读聚合表() {
+        when(arrangeMapper.selectById("aid")).thenReturn(arrange());
+        ExamQuestionAnalysisStat row = new ExamQuestionAnalysisStat();
+        row.setArrangeId("aid");
+        row.setQuesId("q1");
+        row.setType(0);
+        row.setLevelType(1);
+        row.setPointName("默认考点");
+        row.setAnswerQty(2);
+        row.setCorrectQty(1);
+        when(questionStatMapper.selectList(any())).thenReturn(List.of(row));
+
+        ArrangeStatRespDtos.CorrectRateResp resp = service.correctRate("aid", "type");
+
+        assertThat((List<?>) resp.getAccuracyRate().get("quesType")).hasSize(1);
+        assertThat((List<?>) resp.getAccuracyRate().get("point")).hasSize(1);
+        verify(answerMapper, never()).selectList(any());
     }
 }

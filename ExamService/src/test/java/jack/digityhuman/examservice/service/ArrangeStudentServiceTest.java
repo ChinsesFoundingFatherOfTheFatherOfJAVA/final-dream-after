@@ -9,8 +9,14 @@ import jack.digityhuman.examservice.dto.resp.ArrangeStudentRespDtos;
 import jack.digityhuman.examservice.entity.ExamArrange;
 import jack.digityhuman.examservice.entity.ExamArrangeStudent;
 import jack.digityhuman.examservice.entity.ExamAttempt;
+import jack.digityhuman.examservice.entity.ExamAttemptAnswer;
 import jack.digityhuman.examservice.entity.ExamNoticeOutbox;
 import jack.digityhuman.examservice.entity.ExamPaper;
+import jack.digityhuman.examservice.entity.ExamPaperQuestion;
+import jack.digityhuman.examservice.entity.ExamPoint;
+import jack.digityhuman.examservice.entity.ExamQuestion;
+import jack.digityhuman.examservice.entity.ExamQuestionAnalysisStat;
+import jack.digityhuman.examservice.entity.ExamQuestionPoint;
 import jack.digityhuman.examservice.mapper.*;
 import jack.digityhuman.examservice.service.impl.ArrangeStudentServiceImpl;
 import jack.digityhuman.examservice.service.impl.ExamNoticeOutboxWorker;
@@ -55,15 +61,27 @@ class ArrangeStudentServiceTest {
         TableInfoHelper.initTableInfo(assistant, ExamArrangeStudent.class);
         TableInfoHelper.initTableInfo(assistant, ExamArrange.class);
         TableInfoHelper.initTableInfo(assistant, ExamNoticeOutbox.class);
+        TableInfoHelper.initTableInfo(assistant, ExamAttempt.class);
+        TableInfoHelper.initTableInfo(assistant, ExamAttemptAnswer.class);
+        TableInfoHelper.initTableInfo(assistant, ExamPaperQuestion.class);
+        TableInfoHelper.initTableInfo(assistant, ExamQuestion.class);
+        TableInfoHelper.initTableInfo(assistant, ExamQuestionPoint.class);
+        TableInfoHelper.initTableInfo(assistant, ExamPoint.class);
+        TableInfoHelper.initTableInfo(assistant, ExamQuestionAnalysisStat.class);
     }
 
     @Mock private ExamArrangeMapper arrangeMapper;
     @Mock private ExamArrangeStudentMapper studentMapper;
     @Mock private ExamAttemptMapper attemptMapper;
+    @Mock private ExamAttemptAnswerMapper answerMapper;
     @Mock private ExamArrangeSignatureMapper signatureMapper;
     @Mock private ExamArrangeScoreStatMapper scoreStatMapper;
+    @Mock private ExamQuestionAnalysisStatMapper questionStatMapper;
     @Mock private ExamPaperMapper paperMapper;
     @Mock private ExamPaperQuestionMapper paperQuestionMapper;
+    @Mock private ExamQuestionMapper questionMapper;
+    @Mock private ExamQuestionPointMapper questionPointMapper;
+    @Mock private ExamPointMapper pointMapper;
     @Mock private ExamPaperSnapshotMapper snapshotMapper;
     @Mock private ExamArrangeOperationLogMapper logMapper;
     @Mock private ExamNoticeOutboxMapper outboxMapper;
@@ -228,5 +246,93 @@ class ArrangeStudentServiceTest {
         // 已交卷的历史答卷保持原快照（null 表示从未被改写）
         assertThat(submitted.getSnapshotId()).isNull();
         verify(attemptMapper, times(1)).updateById(any(ExamAttempt.class));
+    }
+
+    /**
+     * C-03：分析时重算 rank_no 与题目级聚合，同分同名次、下一名次跳过并列人数。
+     */
+    @Test
+    void 分析时重算排名和题目统计() {
+        ExamArrange a = arrange();
+        a.setId("aid");
+        a.setPaperId("pid");
+        a.setPassScore(new BigDecimal("60"));
+        when(arrangeMapper.selectById("aid")).thenReturn(a);
+
+        ExamArrangeStudent student = new ExamArrangeStudent();
+        student.setId("s1");
+        student.setArrangeId("aid");
+        student.setExamStatus(3);
+        student.setHighestScore(new BigDecimal("90"));
+        student.setDurationSec(120);
+        when(studentMapper.selectList(any())).thenReturn(List.of(student));
+
+        ExamAttempt a1 = new ExamAttempt();
+        a1.setId("a1");
+        a1.setArrangeId("aid");
+        a1.setStatus(3);
+        a1.setScore(new BigDecimal("90"));
+        ExamAttempt a2 = new ExamAttempt();
+        a2.setId("a2");
+        a2.setArrangeId("aid");
+        a2.setStatus(3);
+        a2.setScore(new BigDecimal("80"));
+        ExamAttempt a3 = new ExamAttempt();
+        a3.setId("a3");
+        a3.setArrangeId("aid");
+        a3.setStatus(3);
+        a3.setScore(new BigDecimal("90"));
+        when(attemptMapper.selectList(any())).thenReturn(List.of(a1, a3, a2));
+
+        ExamPaperQuestion rel = new ExamPaperQuestion();
+        rel.setPaperId("pid");
+        rel.setQuesId("q1");
+        when(paperQuestionMapper.selectList(any())).thenReturn(List.of(rel));
+        ExamQuestion question = new ExamQuestion();
+        question.setId("q1");
+        question.setType(0);
+        question.setLevelType(1);
+        when(questionMapper.selectBatchIds(any())).thenReturn(List.of(question));
+
+        ExamAttemptAnswer right = new ExamAttemptAnswer();
+        right.setAttemptId("a1");
+        right.setQuesId("q1");
+        right.setCorrectFlag(1);
+        ExamAttemptAnswer wrong = new ExamAttemptAnswer();
+        wrong.setAttemptId("a2");
+        wrong.setQuesId("q1");
+        wrong.setCorrectFlag(0);
+        when(answerMapper.selectList(any())).thenReturn(List.of(right, wrong));
+
+        ExamQuestionPoint p1 = new ExamQuestionPoint();
+        p1.setQuesId("q1");
+        p1.setPointId("p1");
+        ExamQuestionPoint p2 = new ExamQuestionPoint();
+        p2.setQuesId("q1");
+        p2.setPointId("p2");
+        when(questionPointMapper.selectList(any())).thenReturn(List.of(p1, p2));
+        ExamPoint point1 = new ExamPoint();
+        point1.setId("p1");
+        point1.setName("考核点1");
+        ExamPoint point2 = new ExamPoint();
+        point2.setId("p2");
+        point2.setName("考核点2");
+        when(pointMapper.selectBatchIds(any())).thenReturn(List.of(point1, point2));
+
+        service.analyze("aid");
+
+        assertThat(a1.getRankNo()).isEqualTo(1);
+        assertThat(a3.getRankNo()).isEqualTo(1);
+        assertThat(a2.getRankNo()).isEqualTo(3);
+        verify(attemptMapper, times(3)).updateById(any(ExamAttempt.class));
+        ArgumentCaptor<ExamQuestionAnalysisStat> statCaptor =
+                ArgumentCaptor.forClass(ExamQuestionAnalysisStat.class);
+        verify(questionStatMapper, times(2)).insert(statCaptor.capture());
+        assertThat(statCaptor.getAllValues())
+                .allSatisfy(stat -> {
+                    assertThat(stat.getAnswerQty()).isEqualTo(2);
+                    assertThat(stat.getCorrectQty()).isEqualTo(1);
+                    assertThat(stat.getCorrectRate()).isEqualByComparingTo("0.5000");
+                });
     }
 }

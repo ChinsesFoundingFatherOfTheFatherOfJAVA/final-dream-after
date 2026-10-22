@@ -15,6 +15,7 @@ import jack.digityhuman.examservice.entity.ExamPaper;
 import jack.digityhuman.examservice.entity.ExamPaperQuestion;
 import jack.digityhuman.examservice.entity.ExamPoint;
 import jack.digityhuman.examservice.entity.ExamQuestion;
+import jack.digityhuman.examservice.entity.ExamQuestionAnalysisStat;
 import jack.digityhuman.examservice.entity.ExamQuestionItem;
 import jack.digityhuman.examservice.entity.ExamQuestionPoint;
 import jack.digityhuman.examservice.mapper.ExamArrangeMapper;
@@ -27,6 +28,7 @@ import jack.digityhuman.examservice.mapper.ExamPaperQuestionMapper;
 import jack.digityhuman.examservice.mapper.ExamPointMapper;
 import jack.digityhuman.examservice.mapper.ExamQuestionItemMapper;
 import jack.digityhuman.examservice.mapper.ExamQuestionMapper;
+import jack.digityhuman.examservice.mapper.ExamQuestionAnalysisStatMapper;
 import jack.digityhuman.examservice.mapper.ExamQuestionPointMapper;
 import jack.digityhuman.examservice.service.ArrangeStatService;
 import lombok.RequiredArgsConstructor;
@@ -67,6 +69,7 @@ public class ArrangeStatServiceImpl implements ArrangeStatService {
     private final ExamPaperMapper paperMapper;
     private final ExamPaperQuestionMapper paperQuestionMapper;
     private final ExamQuestionMapper questionMapper;
+    private final ExamQuestionAnalysisStatMapper questionStatMapper;
     private final ExamQuestionItemMapper itemMapper;
     private final ExamQuestionPointMapper questionPointMapper;
     private final ExamPointMapper pointMapper;
@@ -80,7 +83,7 @@ public class ArrangeStatServiceImpl implements ArrangeStatService {
                                                                      ArrangeStatRespDtos.QuestionQuery query) {
         ExamArrange arrange = requireArrange(arrangeId);
         ArrangeStatRespDtos.QuestionQuery q = query == null ? new ArrangeStatRespDtos.QuestionQuery() : query;
-        Map<String, int[]> stats = answerStats(arrangeId);
+        Map<String, int[]> stats = questionStats(arrangeId);
         Map<String, String> pointNames = pointNamesOf(arrange.getPaperId());
 
         List<ArrangeStatRespDtos.QuestionStat> all = new ArrayList<>();
@@ -290,6 +293,12 @@ public class ArrangeStatServiceImpl implements ArrangeStatService {
     @Override
     public ArrangeStatRespDtos.CorrectRateResp correctRate(String arrangeId, String dimension) {
         ExamArrange arrange = requireArrange(arrangeId);
+        List<ExamQuestionAnalysisStat> analyzed = questionStatMapper.selectList(
+                Wrappers.<ExamQuestionAnalysisStat>lambdaQuery()
+                        .eq(ExamQuestionAnalysisStat::getArrangeId, arrangeId));
+        if (!analyzed.isEmpty()) {
+            return analyzedCorrectRate(analyzed);
+        }
         Map<String, int[]> stats = answerStats(arrangeId);
         Map<String, String> pointNames = pointNamesOf(arrange.getPaperId());
 
@@ -397,6 +406,51 @@ public class ArrangeStatServiceImpl implements ArrangeStatService {
             }
         }
         return out;
+    }
+
+    /** 题目统计优先读分析聚合表；多考核点时同一题的计数相同，按题去重。 */
+    private Map<String, int[]> questionStats(String arrangeId) {
+        List<ExamQuestionAnalysisStat> rows = questionStatMapper.selectList(
+                Wrappers.<ExamQuestionAnalysisStat>lambdaQuery()
+                        .eq(ExamQuestionAnalysisStat::getArrangeId, arrangeId));
+        if (rows.isEmpty()) {
+            return answerStats(arrangeId);
+        }
+        Map<String, int[]> out = new LinkedHashMap<>();
+        for (ExamQuestionAnalysisStat row : rows) {
+            out.putIfAbsent(row.getQuesId(), new int[] {
+                    row.getAnswerQty() == null ? 0 : row.getAnswerQty(),
+                    row.getCorrectQty() == null ? 0 : row.getCorrectQty()
+            });
+        }
+        return out;
+    }
+
+    /** 分析过后的正确率直接从题目聚合表拼装，不再回扫逐题作答明细。 */
+    private ArrangeStatRespDtos.CorrectRateResp analyzedCorrectRate(List<ExamQuestionAnalysisStat> rows) {
+        Map<String, ExamQuestionAnalysisStat> byQues = new LinkedHashMap<>();
+        Map<Object, int[]> byType = new LinkedHashMap<>();
+        Map<Object, int[]> byLevel = new LinkedHashMap<>();
+        Map<Object, int[]> byPoint = new LinkedHashMap<>();
+        for (ExamQuestionAnalysisStat row : rows) {
+            byQues.putIfAbsent(row.getQuesId(), row);
+            int[] count = { row.getAnswerQty() == null ? 0 : row.getAnswerQty(),
+                    row.getCorrectQty() == null ? 0 : row.getCorrectQty() };
+            merge(byPoint, StringUtils.hasText(row.getPointName()) ? row.getPointName() : "未分类考点", count);
+        }
+        for (ExamQuestionAnalysisStat row : byQues.values()) {
+            int[] count = { row.getAnswerQty() == null ? 0 : row.getAnswerQty(),
+                    row.getCorrectQty() == null ? 0 : row.getCorrectQty() };
+            merge(byType, row.getType() == null ? 0 : row.getType(), count);
+            merge(byLevel, row.getLevelType() == null ? 0 : row.getLevelType(), count);
+        }
+        Map<String, Object> acc = new LinkedHashMap<>();
+        acc.put("quesType", toRateItems(byType, true));
+        acc.put("difficulty", toRateItems(byLevel, true));
+        acc.put("point", toRateItems(byPoint, false));
+        ArrangeStatRespDtos.CorrectRateResp resp = new ArrangeStatRespDtos.CorrectRateResp();
+        resp.setAccuracyRate(acc);
+        return resp;
     }
 
     private BigDecimal rate(int part, int total) {
