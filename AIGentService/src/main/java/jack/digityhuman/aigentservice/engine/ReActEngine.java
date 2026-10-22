@@ -56,6 +56,7 @@ public class ReActEngine {
         messages.addAll(memory.history(contextSessionId));
         messages.add(LlmMessage.user(query));
         boolean scenePlanAvailable = memory.hasScenePlan(contextSessionId);
+        String conversationContext = memory.userContext(contextSessionId);
         ToolContext toolContext = new ToolContext(contextSessionId, contextTraceId, inputs);
         List<ToolTrace> traces = new ArrayList<>();
 
@@ -71,7 +72,7 @@ public class ReActEngine {
             messages.add(LlmMessage.assistant(response.content(), response.toolCalls()));
             for (LlmToolCall call : response.toolCalls()) {
                 ToolStageGuard.Decision decision = guard.check(
-                        call.name(), query, inputs, scenePlanAvailable);
+                        call.name(), query, inputs, scenePlanAvailable, conversationContext);
                 String result;
                 String status;
                 if (decision.allowed()) {

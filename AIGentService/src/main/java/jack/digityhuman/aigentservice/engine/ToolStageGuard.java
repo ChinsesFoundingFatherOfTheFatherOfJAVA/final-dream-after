@@ -37,6 +37,11 @@ public class ToolStageGuard {
 
     public Decision check(String toolName, String query, Map<String, String> inputs,
                           boolean scenePlanAvailable) {
+        return check(toolName, query, inputs, scenePlanAvailable, query);
+    }
+
+    public Decision check(String toolName, String query, Map<String, String> inputs,
+                          boolean scenePlanAvailable, String conversationContext) {
         String text = query == null ? "" : query.trim();
         Map<String, String> context = inputs == null ? Map.of() : inputs;
         String themeStatus = context.getOrDefault("theme_status", "new");
@@ -51,7 +56,7 @@ public class ToolStageGuard {
             return Decision.deny("会话尚未收到用户输入，本轮不允许调用工具");
         }
         return switch (toolName) {
-            case "create_topic" -> createTopicDecision(text, hasTheme);
+            case "create_topic" -> createTopicDecision(text, conversationContext, hasTheme);
             case "update_artifact" -> hasTheme
                     ? Decision.allow()
                     : Decision.deny("请先创建主题再更新产物");
@@ -61,9 +66,11 @@ public class ToolStageGuard {
         };
     }
 
-    private Decision createTopicDecision(String text, boolean hasTheme) {
+    private Decision createTopicDecision(String text, String conversationContext, boolean hasTheme) {
         if (!hasTheme) {
-            return hasConcreteDirection(text)
+            String direction = (conversationContext == null ? "" : conversationContext)
+                    + "\n" + text;
+            return hasConcreteDirection(direction)
                     ? Decision.allow()
                     : Decision.deny("用户尚未给出明确的主题方向和训练目标");
         }

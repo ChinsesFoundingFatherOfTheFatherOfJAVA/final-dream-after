@@ -70,4 +70,14 @@ class ToolStageGuardTest {
         assertTrue(guard.check("generate_cases", "可以，生成案例",
                 Map.of("theme_status", "draft", "artifact_summary", "场景单元(1)：s1 投诉处理（案例 0 个）"), true).allowed());
     }
+
+    @Test
+    void usesEarlierUserDirectionForCreateTopicButOnlyCurrentTextForConfirmation() {
+        Map<String, String> context = Map.of("theme_status", "new", "artifact_summary", "");
+
+        assertTrue(guard.check("create_topic", "就按刚才的信息创建吧", context, false,
+                "我想做医疗器械销售培训，训练对象是新员工").allowed());
+        assertFalse(guard.check("generate_theme", "请根据刚才的信息创建", context, true,
+                "之前说过可以，按方案生成").allowed());
+    }
 }

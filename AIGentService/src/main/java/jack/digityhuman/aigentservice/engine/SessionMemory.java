@@ -70,6 +70,15 @@ public class SessionMemory {
         }
     }
 
+    /** 供阶段守卫判断“前几轮是否已给出方向”；只返回用户文本，不把助手回答当作用户确认。 */
+    public String userContext(String sessionId) {
+        List<LlmMessage> messages = history(sessionId);
+        return messages.stream()
+                .filter(message -> "user".equals(message.role()))
+                .map(LlmMessage::content)
+                .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
     private void addBounded(Deque<LlmMessage> messages, LlmMessage message) {
         while (messages.size() >= maxMessages) {
             messages.removeFirst();
