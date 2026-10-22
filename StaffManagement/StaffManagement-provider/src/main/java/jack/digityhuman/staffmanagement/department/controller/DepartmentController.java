@@ -26,7 +26,7 @@ public class DepartmentController {
     }
 
     /**
-     * 全量部门平铺列表，带各级启用人数；{@code keyword} 非空时只返回命中节点及其祖先链。
+     * 全量部门平铺列表，带各级全部用户数；{@code keyword} 非空时只返回命中节点及其祖先链。
      *
      * <p>例：{@code GET /api/sm/admin/departments/tree?keyword=营销}
      */
