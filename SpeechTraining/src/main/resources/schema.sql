@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS training_project (
 CREATE TABLE IF NOT EXISTS training_node (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   project_id BIGINT NOT NULL COMMENT '项目ID',
-  node_type TINYINT NOT NULL COMMENT '节点类型: 1=开始, 2=陪练者问学员, 3=学员问陪练者, 4=结束',
+  node_type TINYINT NOT NULL COMMENT '节点类型: 1=开始, 2=陪练者问学员, 3=学员问陪练者, 4=结束, 5=旁白',
   node_name VARCHAR(100) COMMENT '节点名称',
   sort_order INT DEFAULT 0 COMMENT '排序',
   position_x FLOAT DEFAULT 0 COMMENT 'X坐标',
@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS speech_template (
 CREATE TABLE IF NOT EXISTS template_node (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   template_id BIGINT NOT NULL COMMENT '模板ID',
-  node_type TINYINT NOT NULL COMMENT '节点类型: 1=开始, 2=陪练者问学员, 3=学员问陪练者, 4=结束',
+  node_type TINYINT NOT NULL COMMENT '节点类型: 1=开始, 2=陪练者问学员, 3=学员问陪练者, 4=结束, 5=旁白',
   node_name VARCHAR(100) COMMENT '节点名称',
   sort_order INT DEFAULT 0 COMMENT '排序',
   position_x FLOAT DEFAULT 0 COMMENT 'X坐标',
@@ -170,7 +170,7 @@ CREATE TABLE IF NOT EXISTS training_session_message (
   session_id BIGINT NOT NULL COMMENT '会话ID',
   node_id BIGINT COMMENT '所属大节点ID',
   round_no INT COMMENT '轮次号(1起,学员消息所属轮)',
-  role TINYINT NOT NULL COMMENT '角色: 1=陪练者, 2=学员',
+  role TINYINT NOT NULL COMMENT '角色: 1=陪练者, 2=学员, 3=旁白',
   content TEXT NOT NULL COMMENT '消息内容',
   hit_points JSON COMMENT '命中要点内容列表(学员消息)',
   passed TINYINT COMMENT '是否通过流转条件(学员消息): 0/1',
