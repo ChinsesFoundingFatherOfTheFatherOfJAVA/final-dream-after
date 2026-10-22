@@ -38,12 +38,13 @@
 
 - **配置缺口**：本工程历史上没配 `mybatis-plus.mapper-locations`，靠 MP 默认值 `classpath*:/mapper/**/*.xml` 生效。
   新增/移动 XML 后必须启动验证能加载；有余力时把该配置显式补上。
-- 转码/字幕列表目前是占位实现（`transcodeList` 固定口径、`subtitleList` 返回空），按《课件管理模块》CW 系列需求演进时先读
-  02-技术实现方案的媒体能力待办。
+- 转码/字幕列表**已接入** `kng_media_job`（转码 `type=transcode`、字幕 `type=subtitle`），不是占位；
+  旧路径 `transcodeList/subtitleList` 保持兼容，新转码/字幕页统一消费 `POST /media/jobs`（同一数据源）。
 - 课件发布/学习记录统计的口径（完课标准、学分策略、防挂机）由 `KngSetting` 驱动，改动前读课程设置扩展文档族
   （`05~08-课程设置扩展-*.md`）。
-- 发布模拟任务（`PublishSimulateJob`）是定时任务，调整 cron/逻辑前确认不影响课件状态机
-  （已发布=2、下架=3 的口径见 `CoursewareServiceImpl`/`CoursewareOpServiceImpl`，其余状态以课件管理模块文档为准）。
+- 发布模拟任务 `PublishSimulateJob` **已退役**；课件发布状态由 `CoursewareServiceImpl` 直接写入：
+  媒体类（视频/音频/文档等）先置 `status=1`（发布中）并 afterCommit 投递转码，转码完成后置 `2`（已发布）；
+  非媒体类（链接）直接 `2`；下架仍为 `3`。
 
 ## 5. 构建与验证
 
