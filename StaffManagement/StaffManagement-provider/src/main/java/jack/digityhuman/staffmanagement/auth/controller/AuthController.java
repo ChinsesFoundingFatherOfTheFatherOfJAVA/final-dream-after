@@ -4,7 +4,9 @@ import jack.digityhuman.staffmanagement.auth.dto.ChangePasswordRequest;
 import jack.digityhuman.staffmanagement.auth.dto.LoginRequest;
 import jack.digityhuman.staffmanagement.auth.service.AuthService;
 import jack.digityhuman.staffmanagement.auth.vo.LoginResultVo;
+import jack.digityhuman.staffmanagement.auth.vo.MeVo;
 import jack.digityhuman.common.api.ApiResponse;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -30,6 +32,12 @@ public class AuthController {
     @PostMapping("/login")
     public ApiResponse<LoginResultVo> login(@RequestBody LoginRequest request) {
         return ApiResponse.ok(authService.login(request.getAccount(), request.getPassword()));
+    }
+
+    /** 当前登录人身份与权限码；前端刷新/守卫恢复会话时调用。 */
+    @GetMapping("/me")
+    public ApiResponse<MeVo> me() {
+        return ApiResponse.ok(authService.me());
     }
 
     /** 修改当前登录人的密码，操作人取自 JWT，不接受前端传账号，避免越权改他人密码。 */

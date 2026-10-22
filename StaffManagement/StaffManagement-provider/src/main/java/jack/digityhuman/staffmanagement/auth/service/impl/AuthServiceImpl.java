@@ -6,6 +6,7 @@ import jack.digityhuman.staffmanagement.auth.service.JwtService;
 import jack.digityhuman.staffmanagement.auth.dto.ChangePasswordRequest;
 import jack.digityhuman.staffmanagement.auth.vo.LoginResultVo;
 import jack.digityhuman.staffmanagement.auth.vo.LoginUserVo;
+import jack.digityhuman.staffmanagement.auth.vo.MeVo;
 import jack.digityhuman.staffmanagement.common.AuthContext;
 import jack.digityhuman.staffmanagement.common.BizException;
 import jack.digityhuman.staffmanagement.common.ErrorCode;
@@ -77,6 +78,18 @@ public class AuthServiceImpl implements AuthService {
         result.setPermissions(resolvePermissions(user));
         log.info("登录成功 account={}, userId={}, superAdmin={}", user.getAccount(), user.getId(), user.superAdmin());
         return result;
+    }
+
+    /**
+     * 返回当前登录人的身份和权限码。权限不从 JWT 读取，保证角色变更后刷新页面即可生效。
+     */
+    @Override
+    public MeVo me() {
+        AuthContext.Principal current = requireCurrentPrincipal();
+        List<String> permissions = current.superAdmin()
+                ? List.of(ALL_PERMISSIONS)
+                : permissionService.codesOfUser(Long.valueOf(current.userId()));
+        return new MeVo(current.userId(), current.name(), permissions);
     }
 
     /**
