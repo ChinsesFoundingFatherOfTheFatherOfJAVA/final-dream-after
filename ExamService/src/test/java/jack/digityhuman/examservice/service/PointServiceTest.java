@@ -5,13 +5,16 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import jack.digityhuman.examservice.dto.req.PointDtos;
 import jack.digityhuman.examservice.entity.ExamLib;
 import jack.digityhuman.examservice.entity.ExamPoint;
+import jack.digityhuman.examservice.entity.ExamQuestionPoint;
 import jack.digityhuman.examservice.mapper.ExamLibMapper;
 import jack.digityhuman.examservice.mapper.ExamPointMapper;
+import jack.digityhuman.examservice.mapper.ExamQuestionPointMapper;
 import jack.digityhuman.examservice.service.impl.PointServiceImpl;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -35,10 +38,12 @@ class PointServiceTest {
         MapperBuilderAssistant assistant = new MapperBuilderAssistant(new MybatisConfiguration(), "");
         TableInfoHelper.initTableInfo(assistant, ExamPoint.class);
         TableInfoHelper.initTableInfo(assistant, ExamLib.class);
+        TableInfoHelper.initTableInfo(assistant, ExamQuestionPoint.class);
     }
 
     @Mock private ExamPointMapper pointMapper;
     @Mock private ExamLibMapper libMapper;
+    @Mock private ExamQuestionPointMapper questionPointMapper;
     @InjectMocks private PointServiceImpl service;
 
     @Test
@@ -60,5 +65,54 @@ class PointServiceTest {
 
         assertThat(lib.getPointQty()).isEqualTo(2);
         verify(libMapper).updateById(lib);
+    }
+
+    /**
+     * B-02：删除考点时清理关联；没有其他考点的试题落回默认考点。
+     */
+    @Test
+    void 删除考点时清理关联并把空关联试题落回默认考点() {
+        ExamPoint def = new ExamPoint();
+        def.setId("D");
+        def.setLibId("L1");
+        def.setName("默认考点");
+        def.setDefaultPoint(1);
+        ExamPoint custom = new ExamPoint();
+        custom.setId("P");
+        custom.setLibId("L1");
+        custom.setName("自定义考点");
+        custom.setDefaultPoint(0);
+        when(pointMapper.selectList(any())).thenReturn(List.of(def, custom));
+
+        ExamQuestionPoint r1 = new ExamQuestionPoint();
+        r1.setQuesId("Q1");
+        r1.setPointId("P");
+        ExamQuestionPoint r2 = new ExamQuestionPoint();
+        r2.setQuesId("Q2");
+        r2.setPointId("P");
+        when(questionPointMapper.selectList(any())).thenReturn(List.of(r1, r2));
+        // Q1 已无其他考点 → 落回默认；Q2 还有其他考点 → 不动
+        when(questionPointMapper.selectCount(any())).thenReturn(0L, 1L);
+
+        ExamLib lib = new ExamLib();
+        lib.setId("L1");
+        when(libMapper.selectById("L1")).thenReturn(lib);
+        when(pointMapper.selectCount(any())).thenReturn(1L);
+
+        PointDtos.BatchReq.Item keepDef = new PointDtos.BatchReq.Item();
+        keepDef.setId("D");
+        keepDef.setName("默认考点");
+        PointDtos.BatchReq req = new PointDtos.BatchReq();
+        req.setLibId("L1");
+        req.setPoints(List.of(keepDef));
+
+        service.batchSave(req);
+
+        verify(questionPointMapper).delete(any());
+        ArgumentCaptor<ExamQuestionPoint> captor = ArgumentCaptor.forClass(ExamQuestionPoint.class);
+        verify(questionPointMapper).insert(captor.capture());
+        assertThat(captor.getValue().getQuesId()).isEqualTo("Q1");
+        assertThat(captor.getValue().getPointId()).isEqualTo("D");
+        verify(pointMapper).deleteById("P");
     }
 }

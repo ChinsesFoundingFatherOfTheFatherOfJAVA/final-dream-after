@@ -13,8 +13,10 @@ import jack.digityhuman.examservice.dto.req.PointDtos;
 import jack.digityhuman.examservice.dto.resp.PointRespDtos;
 import jack.digityhuman.examservice.entity.ExamLib;
 import jack.digityhuman.examservice.entity.ExamPoint;
+import jack.digityhuman.examservice.entity.ExamQuestionPoint;
 import jack.digityhuman.examservice.mapper.ExamLibMapper;
 import jack.digityhuman.examservice.mapper.ExamPointMapper;
+import jack.digityhuman.examservice.mapper.ExamQuestionPointMapper;
 import jack.digityhuman.examservice.service.PointService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +27,7 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -41,6 +44,7 @@ public class PointServiceImpl implements PointService {
 
     private final ExamPointMapper pointMapper;
     private final ExamLibMapper libMapper;
+    private final ExamQuestionPointMapper questionPointMapper;
 
     @Override
     public List<PointRespDtos.PointItem> list(String libId) {
@@ -105,6 +109,10 @@ public class PointServiceImpl implements PointService {
             order++;
         }
 
+        ExamPoint defaultPoint = existing.stream()
+                .filter(p -> p.getDefaultPoint() != null && p.getDefaultPoint() == 1)
+                .findFirst().orElse(null);
+
         // 未出现在提交清单里的考点：逻辑删（默认考点豁免）
         for (ExamPoint point : existing) {
             if (keep.contains(point.getId())) {
@@ -112,6 +120,35 @@ public class PointServiceImpl implements PointService {
             }
             if (point.getDefaultPoint() != null && point.getDefaultPoint() == 1) {
                 continue;
+            }
+
+            // B-02：删除考点前先找出引用它的试题，清理关联；没有其他考点的试题落回默认考点
+            List<ExamQuestionPoint> affected = questionPointMapper.selectList(
+                    Wrappers.<ExamQuestionPoint>lambdaQuery()
+                            .eq(ExamQuestionPoint::getPointId, point.getId()));
+            Set<String> affectedQues = new LinkedHashSet<>();
+            for (ExamQuestionPoint rel : affected) {
+                if (StringUtils.hasText(rel.getQuesId())) {
+                    affectedQues.add(rel.getQuesId());
+                }
+            }
+            questionPointMapper.delete(Wrappers.<ExamQuestionPoint>lambdaQuery()
+                    .eq(ExamQuestionPoint::getPointId, point.getId()));
+
+            if (defaultPoint != null) {
+                for (String quesId : affectedQues) {
+                    Long remaining = questionPointMapper.selectCount(
+                            Wrappers.<ExamQuestionPoint>lambdaQuery()
+                                    .eq(ExamQuestionPoint::getQuesId, quesId));
+                    if (remaining == null || remaining == 0) {
+                        ExamQuestionPoint rel = new ExamQuestionPoint();
+                        rel.setId(IdWorker.getIdStr());
+                        rel.setQuesId(quesId);
+                        rel.setPointId(defaultPoint.getId());
+                        rel.setOrderIndex(1);
+                        questionPointMapper.insert(rel);
+                    }
+                }
             }
             pointMapper.deleteById(point.getId());
         }
