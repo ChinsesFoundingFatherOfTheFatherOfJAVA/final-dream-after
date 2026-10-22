@@ -137,7 +137,7 @@ class ReportGenerationServiceTest {
     }
 
     @Test
-    void 语音依据维度_无语音时不计分且提示权重已计入总分() {
+    void 语音依据维度_无语音时不计分且不参与总分() {
         ScoringDimension dim = dimension("语速适中", 2, null);
 
         List<ReportGenerationServiceImpl.DimensionPlan> plans =
@@ -145,7 +145,8 @@ class ReportGenerationServiceTest {
                         new ForbiddenWordChecker.ForbiddenResult(0, Map.of()));
 
         assertFalse(plans.get(0).participates());
-        assertTrue(plans.get(0).excludeReason().contains("权重已计入总分"));
+        assertTrue(plans.get(0).excludeReason().contains("未参与本次评分"));
+        assertFalse(plans.get(0).excludeReason().contains("权重已计入总分"));
         assertNull(plans.get(0).measured());
     }
 

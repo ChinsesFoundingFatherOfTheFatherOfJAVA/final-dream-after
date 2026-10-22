@@ -196,16 +196,6 @@ class FlowEngineRoutingTest {
         TrainingNode firstRound = round(20L, "第一问");
         when(nodeMapper.selectList(any())).thenReturn(List.of(start, narration, firstRound));
 
-        TrainingEdge toNarration = edge(15L, 1);
-        toNarration.setSourceNodeId(1L);
-        TrainingEdge narrationToRound = edge(20L, 1);
-        narrationToRound.setSourceNodeId(15L);
-        when(edgeMapper.selectList(any())).thenAnswer(inv -> {
-            // routeByWeight 按源节点查出边：start 的出边→旁白；旁白的出边→大节点
-            return List.of(toNarration, narrationToRound);
-        });
-        when(nodeMapper.selectById(15L)).thenReturn(narration);
-        when(nodeMapper.selectById(20L)).thenReturn(firstRound);
         when(sessionMapper.insert(any(TrainingSession.class))).thenAnswer(inv -> {
             inv.getArgument(0, TrainingSession.class).setId(500L);
             return 1;
@@ -216,7 +206,24 @@ class FlowEngineRoutingTest {
         });
         when(virtualTrainerMapper.selectOne(any())).thenReturn(null);
 
-        FlowEngineServiceImpl service = newService();
+        // 本用例只验证旁白启动链，出边路由由「权重路由按权重比例分布」单独覆盖。
+        // 按 fromNodeId 返回唯一目标，避免把两条出边都塞给一次查询造成随机误命中。
+        FlowEngineServiceImpl service = new FlowEngineServiceImpl(
+                sessionMapper, messageMapper, projectMapper, nodeMapper, edgeMapper,
+                virtualTrainerMapper, reportMapper, acousticMapper, difyScoringService,
+                userContext, reportGenerationService, fileStorageService,
+                new TransactionTemplate(mock(PlatformTransactionManager.class))) {
+            @Override
+            TrainingNode routeByWeight(Long projectId, Long fromNodeId) {
+                if (fromNodeId == 1L) {
+                    return narration;
+                }
+                if (fromNodeId == 15L) {
+                    return firstRound;
+                }
+                throw new AssertionError("unexpected fromNodeId=" + fromNodeId);
+            }
+        };
         StartSessionResp resp = service.start(100L);
 
         // 消息序：旁白(role=3) → 陪练者问(role=1)

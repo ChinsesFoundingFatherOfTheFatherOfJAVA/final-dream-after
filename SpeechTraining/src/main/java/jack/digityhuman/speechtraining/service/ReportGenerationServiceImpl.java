@@ -53,9 +53,9 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
      * 学员说过话但每轮都被撤回/未通过时同样落到这里，说"全程文字作答"与事实不符。
      */
     private static final String NO_ACOUSTIC_REASON =
-            "本次没有可用于评分的语音作答，该维度以语音表现为评分依据，未参与本次评分（权重已计入总分）";
+            "本次没有可用于评分的语音作答，该维度以语音表现为评分依据，未参与本次评分";
     private static final String TONE_UNAVAILABLE_REASON =
-            "语气语音评分本次不可用，该维度未参与本次评分（权重已计入总分）";
+            "语气语音评分本次不可用，该维度未参与本次评分";
 
     /**
      * 重试前的同步重置：校验 + 删除旧维度明细 + 状态置回"生成中"
@@ -367,7 +367,7 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
     /**
      * 逐个维度定档：先按评分依据（evidence_type）判断本次是否参与评分，
      * 再对参与的维度尝试走后端量化指标（metric_config）。
-     * 语音依据维度在本次没有语音数据时得分留空，但权重仍计入总分（等价于按 0 分计）。
+     * 语音依据维度在本次没有语音数据时得分留空，不参与总分计算。
      */
     List<DimensionPlan> planDimensions(List<ScoringDimension> dimensions, List<Integer> roundSpeeds,
                                        List<ToneScoringService.ToneRoundInput> toneRounds,
@@ -448,7 +448,7 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
     }
 
     /**
-     * 组装单个维度明细行。得分为 null 的两种情形都保留权重并计入总分：
+     * 组装单个维度明细行。得分为 null 的两种情形都不参与总分计算：
      * 该维度本次不参与评分（缺依据数据）、AI 未返回该维度。
      */
     private TrainingReportDimension buildDimensionRow(Long reportId, DimensionPlan plan,
