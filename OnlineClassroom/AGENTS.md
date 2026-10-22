@@ -36,8 +36,7 @@
 
 ## 4. 本应用特有注意事项
 
-- **配置缺口**：本工程历史上没配 `mybatis-plus.mapper-locations`，靠 MP 默认值 `classpath*:/mapper/**/*.xml` 生效。
-  新增/移动 XML 后必须启动验证能加载；有余力时把该配置显式补上。
+- **MyBatis XML**：`application.properties` 已显式配置 `mybatis-plus.mapper-locations=classpath*:/mapper/**/*.xml`；新增/移动 XML 后仍须启动验证能加载。
 - 转码/字幕列表**已接入** `kng_media_job`（转码 `type=transcode`、字幕 `type=subtitle`），不是占位；
   旧路径 `transcodeList/subtitleList` 保持兼容，新转码/字幕页统一消费 `POST /media/jobs`（同一数据源）。
 - 课件发布/学习记录统计的口径（完课标准、学分策略、防挂机）由 `KngSetting` 驱动，改动前读课程设置扩展文档族

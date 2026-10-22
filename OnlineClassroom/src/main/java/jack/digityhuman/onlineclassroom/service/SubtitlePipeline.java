@@ -22,7 +22,7 @@ import java.util.Map;
  * AI 字幕管线（MT-03）：stage 状态机 asr → srt → translate，每 stage 落库断点，重试从断点续跑。
  *
  * <p>流程：stage=asr 时把转码产出的 16k wav 经 AsrEngine（OSS 临时对象 + 百炼异步转写）得到
- * 句级中间格式 → 写 zh.srt 并把断点推进到 srt；stage=translate 时把 zh.srt 按 50 条/批喂
+ * 句级中间格式 → 写 zh.srt 并把断点推进到 srt；stage=translate 时把 zh.srt 按 25 条/批喂
  * TranslateEngine 生成 ha/en/vi（progress_lang CSV 记录已完成语言，重试不重翻已完成语言）。
  * 全部成功 → kng_courseware.subtitles_flag=1；任一 stage 失败 → failed+error（OSS 临时对象
  * 由 AsrEngine 的 finally 兜底删除）。
@@ -81,7 +81,7 @@ public class SubtitlePipeline {
         }
     }
 
-    /** 翻译阶段：解析 zh.srt → 对未完成语言逐个 50 条/批翻译并落盘 → 断点逐语言推进。 */
+    /** 翻译阶段：解析 zh.srt → 对未完成语言逐个 25 条/批翻译并落盘 → 断点逐语言推进。 */
     private void translateRemaining(KngMediaJob job, String coursewareId) {
         List<KngMediaDtos.SubtitleEntry> zhEntries = srtService.parse(subtitleFile(coursewareId, "zh"));
         if (zhEntries.isEmpty()) {
@@ -102,7 +102,7 @@ public class SubtitlePipeline {
         }
     }
 
-    /** 全量条目按 50 条/批喂翻译引擎；时间戳/序号本地回填，只取译文文本。 */
+    /** 全量条目按 25 条/批喂翻译引擎；时间戳/序号本地回填，只取译文文本。 */
     private List<KngMediaDtos.SubtitleEntry> translateAll(
             List<KngMediaDtos.SubtitleEntry> source, String lang, String langLabel) {
         List<KngMediaDtos.SubtitleEntry> result = new ArrayList<>(source.size());
