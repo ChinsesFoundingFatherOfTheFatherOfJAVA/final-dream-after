@@ -23,6 +23,7 @@ import jack.digityhuman.examservice.mapper.ExamQuestionItemMapper;
 import jack.digityhuman.examservice.mapper.ExamQuestionMapper;
 import jack.digityhuman.examservice.mapper.ExamQuestionPointMapper;
 import jack.digityhuman.examservice.service.QuesService;
+import jack.digityhuman.staffmanagement.api.dto.SysUserDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -87,7 +88,23 @@ public class QuesServiceImpl implements QuesService {
             wrapper.eq(ExamQuestion::getDuplicate, 1);
         }
         if (StringUtils.hasText(q.getKeyword())) {
-            wrapper.like(ExamQuestion::getSummary, q.getKeyword().trim());
+            String keyword = q.getKeyword().trim();
+            List<String> userIds = new ArrayList<>();
+            try {
+                List<Long> ids = orgQueryService.listUserIdsByKeyword(keyword);
+                if (ids != null) {
+                    userIds = ids.stream().map(String::valueOf).toList();
+                }
+            } catch (Exception e) {
+                log.warn("按创建人搜索用户失败，仅按题干搜索: {}", e.getMessage());
+            }
+            List<String> creatorIds = userIds;
+            wrapper.and(w -> {
+                w.like(ExamQuestion::getSummary, keyword);
+                if (!creatorIds.isEmpty()) {
+                    w.or().in(ExamQuestion::getCreatedBy, creatorIds);
+                }
+            });
         }
         // 07 §9 增量：试卷管理页跳过来时按 quesId 精确定位单题（与其它筛选叠加）
         if (StringUtils.hasText(q.getQuesId())) {
@@ -114,7 +131,7 @@ public class QuesServiceImpl implements QuesService {
         List<ExamQuestion> records = page.getRecords();
 
         Map<String, String> pointNames = pointNamesOf(records);
-        Map<String, String> userNames = userNamesOf(records);
+        Map<String, SysUserDTO> users = usersOf(records);
         Map<String, Integer> childCounts = childCountsOf(records);
 
         List<QuesRespDtos.QuesItem> items = new ArrayList<>();
@@ -130,10 +147,13 @@ public class QuesServiceImpl implements QuesService {
             String names = pointNames.get(ques.getId());
             item.setPointNames(names == null ? "" : names);
             item.setMainPointName(mainPointNameOf(ques.getId()));
-            item.setCreateFullname(userNames.getOrDefault(ques.getCreatedBy(), ques.getCreatedByName()));
-            item.setCreateUserName("");
+            SysUserDTO creator = users.get(ques.getCreatedBy());
+            item.setCreateFullname(creator == null ? ques.getCreatedByName() : creator.getName());
+            item.setCreateUserName(creator == null ? ""
+                    : StringUtils.hasText(creator.getEmployeeNo()) ? creator.getEmployeeNo() : creator.getAccount());
             item.setCreateTime(ques.getCreatedAt() == null ? "" : ques.getCreatedAt().format(TS));
-            item.setUpdateFullname(userNames.getOrDefault(ques.getUpdatedBy(), ""));
+            SysUserDTO updater = users.get(ques.getUpdatedBy());
+            item.setUpdateFullname(updater == null ? "" : updater.getName());
             item.setUpdateTime(ques.getUpdatedAt() == null ? "" : ques.getUpdatedAt().format(TS));
             item.setSubQuesQty(childCounts.getOrDefault(ques.getId(), 0));
             items.add(item);
@@ -603,8 +623,8 @@ public class QuesServiceImpl implements QuesService {
         return point == null ? "" : point.getName();
     }
 
-    private Map<String, String> userNamesOf(List<ExamQuestion> records) {
-        Map<String, String> result = new HashMap<>();
+    private Map<String, SysUserDTO> usersOf(List<ExamQuestion> records) {
+        Map<String, SysUserDTO> result = new HashMap<>();
         Set<Long> ids = new LinkedHashSet<>();
         for (ExamQuestion q : records) {
             addNumeric(ids, q.getCreatedBy());
@@ -614,8 +634,8 @@ public class QuesServiceImpl implements QuesService {
             return result;
         }
         try {
-            for (jack.digityhuman.staffmanagement.api.dto.SysUserDTO user : orgQueryService.listUsersByIds(new ArrayList<>(ids))) {
-                result.put(String.valueOf(user.getId()), user.getName());
+            for (SysUserDTO user : orgQueryService.listUsersByIds(new ArrayList<>(ids))) {
+                result.put(String.valueOf(user.getId()), user);
             }
         } catch (Exception e) {
             log.warn("补齐试题创建人姓名失败: {}", e.getMessage());

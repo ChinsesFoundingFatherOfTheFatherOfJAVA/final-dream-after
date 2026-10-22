@@ -45,8 +45,8 @@ public class QuesExportServiceImpl implements QuesExportService {
 
     private static final String[] TYPE_NAMES = { "单选题", "多选题", "判断题", "填空题", "问答题", "组合题" };
     private static final String[] LEVEL_NAMES = { "易", "中", "难" };
-    /** 导出 Sheet 顺序：单选/多选/判断/填空/问答（组合题不进导出）。 */
-    private static final int[] EXPORT_TYPES = { 0, 1, 2, 3, 4 };
+    /** 导出 Sheet 顺序按需求/样例：单选/多选/填空/问答/判断（组合题不进导出）。 */
+    private static final int[] EXPORT_TYPES = { 0, 1, 3, 4, 2 };
     private static final int MAX_POINTS = 5;
     private static final int MAX_OPTIONS = 9;
 

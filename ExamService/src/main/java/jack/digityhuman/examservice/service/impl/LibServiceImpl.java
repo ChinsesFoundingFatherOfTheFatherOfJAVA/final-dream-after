@@ -26,6 +26,7 @@ import jack.digityhuman.staffmanagement.api.OrgQueryService;
 import jack.digityhuman.staffmanagement.api.dto.SysUserDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.StringUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -129,10 +130,11 @@ public class LibServiceImpl implements LibService {
             catalogIds.add(lib.getCatalogId());
         }
         Map<String, String> catalogNames = catalogNames(catalogIds);
+        Map<String, SysUserDTO> users = usersOf(page.getRecords());
         // 共享标记（共享给我的 tab 或列表 shared 字段）
         Set<String> sharedIds = new HashSet<>(sharedLibIdsOf(operator));
         for (ExamLib lib : page.getRecords()) {
-            items.add(toItem(lib, catalogNames, sharedIds, operator));
+            items.add(toItem(lib, catalogNames, users, sharedIds, operator));
         }
         return PageResult.of(items, (int) page.getTotal());
     }
@@ -449,7 +451,7 @@ public class LibServiceImpl implements LibService {
     }
 
     private ExamLibRespDtos.LibItem toItem(ExamLib lib, Map<String, String> catalogNames,
-                                           Set<String> sharedIds, String operator) {
+                                           Map<String, SysUserDTO> users, Set<String> sharedIds, String operator) {
         ExamLibRespDtos.LibItem item = new ExamLibRespDtos.LibItem();
         item.setId(lib.getId());
         item.setName(lib.getName());
@@ -461,7 +463,10 @@ public class LibServiceImpl implements LibService {
         item.setPointQty(lib.getPointQty());
         item.setTotalQuesQty(lib.getTotalQuesQty());
         item.setCreateUserId(lib.getCreatedBy());
-        item.setCreateFullname(lib.getCreatedByName());
+        SysUserDTO creator = users.get(lib.getCreatedBy());
+        item.setCreateFullname(creator == null ? lib.getCreatedByName() : creator.getName());
+        item.setCreateUserName(creator == null ? ""
+                : StringUtils.hasText(creator.getEmployeeNo()) ? creator.getEmployeeNo() : creator.getAccount());
         item.setUpdateTime(lib.getUpdatedAt() == null ? null : lib.getUpdatedAt().format(TIME));
         item.setShared(sharedIds.contains(lib.getId()) ? 1 : 0);
         item.setPermissions(permissionsOf(lib, operator));
@@ -492,5 +497,31 @@ public class LibServiceImpl implements LibService {
         } catch (Exception e) {
             return "";
         }
+    }
+
+    /** 题库列表统一批量补创建人姓名/工号，避免每行触发一次 Dubbo。 */
+    private Map<String, SysUserDTO> usersOf(List<ExamLib> records) {
+        Map<String, SysUserDTO> result = new HashMap<>();
+        Set<Long> ids = new HashSet<>();
+        for (ExamLib lib : records) {
+            try {
+                if (StringUtils.hasText(lib.getCreatedBy())) {
+                    ids.add(Long.parseLong(lib.getCreatedBy()));
+                }
+            } catch (NumberFormatException ignored) {
+                // "0" 等系统占位不是真实用户
+            }
+        }
+        if (ids.isEmpty()) {
+            return result;
+        }
+        try {
+            for (SysUserDTO user : orgQueryService.listUsersByIds(new ArrayList<>(ids))) {
+                result.put(String.valueOf(user.getId()), user);
+            }
+        } catch (Exception e) {
+            log.warn("补齐题库创建人信息失败: {}", e.getMessage());
+        }
+        return result;
     }
 }

@@ -212,7 +212,7 @@ public class QuesImportServiceImpl implements QuesImportService {
 
     private byte[] excelTemplate() {
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            for (int type = 0; type < TYPE_NAMES.length; type++) {
+            for (int type : new int[] { 0, 1, 3, 4, 2 }) {
                 Sheet sheet = workbook.createSheet(TYPE_NAMES[type]);
                 Row header = sheet.createRow(0);
                 for (int i = 0; i < HEADERS.length; i++) {
