@@ -4,8 +4,12 @@ import jack.digityhuman.common.api.ApiResponse;
 import jack.digityhuman.common.api.PageResult;
 import jack.digityhuman.examservice.dto.req.PaperQuesDtos;
 import jack.digityhuman.examservice.dto.resp.PaperQuesRespDtos;
+import jack.digityhuman.examservice.service.PaperQuesExportService;
 import jack.digityhuman.examservice.service.PaperQuesService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -16,6 +20,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
@@ -29,6 +35,7 @@ import java.util.Map;
 public class PaperQuesController {
 
     private final PaperQuesService paperQuesService;
+    private final PaperQuesExportService paperQuesExportService;
 
     /** 4.2 编辑页画布（按大题分组的题卡）。 */
     @GetMapping("/{id}/edit")
@@ -46,6 +53,22 @@ public class PaperQuesController {
             @RequestParam(defaultValue = "-1") int levelType,
             @RequestParam(required = false) String keyword) {
         return ApiResponse.success(paperQuesService.questions(id, current, limit, type, levelType, keyword));
+    }
+
+    /** 只读考试回看页：按当前筛选导出试卷试题列表。 */
+    @GetMapping("/{id}/questions/export")
+    public ResponseEntity<byte[]> exportQuestions(
+            @PathVariable String id,
+            @RequestParam(defaultValue = "-1") int type,
+            @RequestParam(defaultValue = "-1") int levelType,
+            @RequestParam(required = false) String keyword) {
+        byte[] bytes = paperQuesExportService.exportQuestions(id, type, levelType, keyword);
+        String filename = URLEncoder.encode("试卷试题.xlsx", StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + filename)
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(bytes);
     }
 
     /** 4.3 添加题目（同源写入）。 */
