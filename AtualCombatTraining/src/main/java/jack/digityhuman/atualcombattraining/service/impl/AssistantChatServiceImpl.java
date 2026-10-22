@@ -5,10 +5,12 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jack.digityhuman.atualcombattraining.common.AssistantActions;
 import jack.digityhuman.atualcombattraining.common.AssistantIdentity;
+import jack.digityhuman.atualcombattraining.agent.AgentRuntimeRouter;
+import jack.digityhuman.atualcombattraining.agent.AgentStreamListener;
+import jack.digityhuman.atualcombattraining.agent.AgentStreamResult;
 import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.common.BizTypes;
 import jack.digityhuman.atualcombattraining.common.JsonSupport;
-import jack.digityhuman.atualcombattraining.dify.DifyAgentClient;
 import jack.digityhuman.atualcombattraining.dify.DifyEventTranslator;
 import jack.digityhuman.atualcombattraining.entity.ActAiArtifact;
 import jack.digityhuman.atualcombattraining.entity.ActAiMessage;
@@ -83,7 +85,7 @@ public class AssistantChatServiceImpl implements AssistantChatService {
     private final AssistantSessionService sessionService;
     private final AssistantContextService contextService;
     private final AssistantRoundRegistry roundRegistry;
-    private final DifyAgentClient agentClient;
+    private final AgentRuntimeRouter agentRuntimeRouter;
     private final ConfirmService confirmService;
     private final ArtifactService artifactService;
 
@@ -319,20 +321,13 @@ public class AssistantChatServiceImpl implements AssistantChatService {
                 WsFrameEncoder.nowText(), null, null);
 
         DifyEventTranslator translator = new DifyEventTranslator(context::addText);
-        DifyAgentClient.AgentStreamResult result = agentClient.stream(sessionId, traceId,
+        AgentStreamResult result = agentRuntimeRouter.stream(sessionId, traceId,
                 session.getDifyConversationId(), inputs, query,
-                new DifyAgentClient.AgentStreamListener() {
-                    @Override
-                    public void onChunk(String text) {
-                        translator.onChunk(text);
-                    }
-
-                    @Override
-                    public void onConversationId(String conversationId) {
+                new AgentStreamListener(
+                        translator::onChunk,
                         // 首响即回存，保证下一轮多轮上下文可用
-                        sessionService.saveDifyConversationId(sessionId, conversationId);
-                    }
-                });
+                        conversationId -> sessionService.saveDifyConversationId(sessionId, conversationId)
+                ));
         translator.flush();
         if (result.failed()) {
             context.addText("抱歉，本次回复未能完成：" + result.errorMessage() + "。请重试或换个说法。");

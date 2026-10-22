@@ -3,7 +3,7 @@
 ## 1. 应用定位
 
 AI 实战训练场业务：管理端训练主题管理（主题列表/详情五 Tab/版本与回滚）+
-AI 设计助手（Dify 编排 Agent + 主题/案例生成工作流，WebSocket 自定义帧协议【线上同款】）。
+AI 设计助手（Dify/native 双 provider 编排 + 主题/案例生成工作流，WebSocket 自定义帧协议【线上同款】）。
 
 横向规范见 `D:\JACK\plan\后端架构总纲.md`；本模块纵向文档见 `D:\JACK\plan\AI实战训练场管理端复刻\`、
 `D:\JACK\plan\AI实战训练场AI助手模块\`——其中 `07-实现说明与偏差记录.md` 记录了 D1~D21 条实现偏差，改动前必读。
@@ -13,6 +13,8 @@ AI 设计助手（Dify 编排 Agent + 主题/案例生成工作流，WebSocket �
 - Java 21 / Spring Boot 4.0.8 / MyBatis-Plus 3.5.17（含 jsqlparser）/ Nacos discovery / WebSocket。
 - 包结构：`common/`、`config/`、`controller/`、`dify/`、`dto/req|resp`、`entity/`、`mapper/`、`service/impl/`、`websocket/`。
 - 外部依赖：Dify（编排 Agent `side_free` + theme-gen / case-gen 工作流）、DashScope、Tika（材料解析）。
+- native 编排：`agent/AgentRuntimeRouter` → `NativeAgentClient` → AIGentService:8086；
+  只替换编排调用，WS 帧、消息落库、工具 bizType 事件仍在本应用。
 
 ## 3. 铁律（违反即返工）
 
@@ -31,6 +33,8 @@ AI 设计助手（Dify 编排 Agent + 主题/案例生成工作流，WebSocket �
 5. **响应契约**：`ApiResponse{code,message,data}`、`PageResult{records,total}`、`BizException`、`GlobalExceptionHandler`、
    MyBatis-Plus 分页插件统一来自 **`after-end-common`** 模块（`jack.digityHuman:after-end-common`，经 AutoConfiguration 自动装配），
    **禁止在本工程重建这些类**；code=0 成功、业务失败 HTTP 200 + 非零 code，id 一律 string。
+6. **编排 provider**：`agent.chat.provider=dify|native`，默认 dify。native 失败不得在同一轮自动重试
+   Dify（工具可能已产生副作用）；切换 provider 当前需要重启本应用，后续接 Nacos 动态配置再放开。
 
 ## 4. 本应用特有注意事项
 
