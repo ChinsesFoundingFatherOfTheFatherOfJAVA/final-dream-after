@@ -127,19 +127,21 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
         if (q.getPositionIds() != null && !q.getPositionIds().isEmpty()) {
             w.in(ExamArrangeStudent::getPositionId, q.getPositionIds());
         }
+        if (q.getPassStatus() != null && q.getPassStatus() >= 0) {
+            if (q.getPassStatus() == 2) {
+                w.and(x -> x.isNull(ExamArrangeStudent::getPassStatus)
+                        .or().lt(ExamArrangeStudent::getPassStatus, 0));
+            } else {
+                w.eq(ExamArrangeStudent::getPassStatus, q.getPassStatus());
+            }
+        }
         boolean asc = "asc".equalsIgnoreCase(direction);
         w.orderBy(true, asc, "createdAt".equals(orderby) ? ExamArrangeStudent::getCreatedAt : ExamArrangeStudent::getUpdatedAt);
         IPage<ExamArrangeStudent> page = studentMapper.selectPage(new Page<>(current, limit), w);
 
-        // 通过状态是"派生值"：0 不通过 / 1 通过 / 2 未知（若库里存的是 -1 统一按未知返回）
         List<ArrangeStudentRespDtos.StudentItem> items = new ArrayList<>();
         for (ExamArrangeStudent row : page.getRecords()) {
-            ArrangeStudentRespDtos.StudentItem it = toItem(row);
-            if (q.getPassStatus() != null && q.getPassStatus() >= 0
-                    && !Integer.valueOf(q.getPassStatus()).equals(it.getPassStatus())) {
-                continue;
-            }
-            items.add(it);
+            items.add(toItem(row));
         }
         return PageResult.of(items, page.getTotal());
     }

@@ -84,7 +84,7 @@ public class ArrangeStatServiceImpl implements ArrangeStatService {
         ExamArrange arrange = requireArrange(arrangeId);
         ArrangeStatRespDtos.QuestionQuery q = query == null ? new ArrangeStatRespDtos.QuestionQuery() : query;
         Map<String, int[]> stats = questionStats(arrangeId);
-        Map<String, String> pointNames = pointNamesOf(arrange.getPaperId());
+        Map<String, List<String>> pointNames = pointNamesOf(arrange.getPaperId());
 
         List<ArrangeStatRespDtos.QuestionStat> all = new ArrayList<>();
         for (ExamPaperQuestion rel : paperQuestions(arrange.getPaperId())) {
@@ -100,8 +100,9 @@ public class ArrangeStatServiceImpl implements ArrangeStatService {
                     && (ques.getLevelType() == null || ques.getLevelType() != q.getLevelType())) {
                 continue;
             }
-            String pointName = pointNames.getOrDefault(ques.getId(), "");
-            if (StringUtils.hasText(q.getPointId()) && !q.getPointId().equals(pointName)) {
+            List<String> names = pointNames.getOrDefault(ques.getId(), List.of());
+            String pointName = String.join("；", names);
+            if (StringUtils.hasText(q.getPointId()) && !names.contains(q.getPointId().trim())) {
                 continue;
             }
             if (StringUtils.hasText(q.getKeyword())
@@ -300,7 +301,7 @@ public class ArrangeStatServiceImpl implements ArrangeStatService {
             return analyzedCorrectRate(analyzed);
         }
         Map<String, int[]> stats = answerStats(arrangeId);
-        Map<String, String> pointNames = pointNamesOf(arrange.getPaperId());
+        Map<String, List<String>> pointNames = pointNamesOf(arrange.getPaperId());
 
         Map<Object, int[]> byType = new LinkedHashMap<>();
         Map<Object, int[]> byLevel = new LinkedHashMap<>();
@@ -318,9 +319,16 @@ public class ArrangeStatServiceImpl implements ArrangeStatService {
             merge(byLevel, lv, cnt);
             quesCountByType++;
             quesCountByLevel++;
-            String point = pointNames.getOrDefault(ques.getId(), "未分类考点");
-            merge(byPoint, point, cnt);
-            quesCountByPoint++;
+            List<String> names = pointNames.getOrDefault(ques.getId(), List.of());
+            if (names.isEmpty()) {
+                merge(byPoint, "未分类考点", cnt);
+                quesCountByPoint++;
+            } else {
+                for (String point : names) {
+                    merge(byPoint, point, cnt);
+                    quesCountByPoint++;
+                }
+            }
         }
         Map<String, Object> acc = new LinkedHashMap<>();
         acc.put("quesType", toRateItems(byType, true));
@@ -370,12 +378,12 @@ public class ArrangeStatServiceImpl implements ArrangeStatService {
         return names;
     }
 
-    private Map<String, String> pointNamesOf(String paperId) {
-        Map<String, String> out = new HashMap<>();
+    private Map<String, List<String>> pointNamesOf(String paperId) {
+        Map<String, List<String>> out = new HashMap<>();
         for (ExamPaperQuestion rel : paperQuestions(paperId)) {
             List<String> names = pointsOf(rel.getQuesId());
             if (!names.isEmpty()) {
-                out.put(rel.getQuesId(), String.join("；", names));
+                out.put(rel.getQuesId(), names);
             }
         }
         return out;

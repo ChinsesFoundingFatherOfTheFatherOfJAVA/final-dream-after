@@ -22,6 +22,7 @@ import jack.digityhuman.examservice.mapper.ExamPaperShareMapper;
 import jack.digityhuman.examservice.mapper.ExamPaperUseMapper;
 import jack.digityhuman.examservice.mapper.ExamPaperStrategyMapper;
 import jack.digityhuman.examservice.service.PaperService;
+import jack.digityhuman.examservice.service.PaperStrategyService;
 import jack.digityhuman.staffmanagement.api.OrgQueryService;
 import jack.digityhuman.examservice.dto.req.ExamLibDtos;
 import jack.digityhuman.examservice.dto.resp.ExamLibRespDtos;
@@ -67,6 +68,7 @@ public class PaperServiceImpl implements PaperService {
     private final ExamPaperStrategyMapper paperStrategyMapper;
     private final ExamPaperShareMapper paperShareMapper;
     private final ExamPaperUseMapper paperUseMapper;
+    private final PaperStrategyService paperStrategyService;
     private final OrgQueryService orgQueryService;
     private final CurrentUserService currentUserService;
 
@@ -259,6 +261,15 @@ public class PaperServiceImpl implements PaperService {
         if (paper.getBuildType() != null && paper.getBuildType() == 1) {
             ready = paperStrategyMapper.selectCount(Wrappers.<ExamPaperStrategy>lambdaQuery()
                     .eq(ExamPaperStrategy::getPaperId, id)) > 0;
+            if (ready) {
+                var summary = paperStrategyService.summary(id);
+                if (summary.getQuesQty() == null || summary.getQuesQty() <= 0) {
+                    throw new BizException(40051, "请先设置抽取数量");
+                }
+                if (summary.getTotalScore() == null || summary.getTotalScore().compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new BizException(40052, "请先设置分值");
+                }
+            }
         } else {
             ready = paperQuestionMapper.selectCount(Wrappers.<ExamPaperQuestion>lambdaQuery()
                     .eq(ExamPaperQuestion::getPaperId, id)) > 0;
