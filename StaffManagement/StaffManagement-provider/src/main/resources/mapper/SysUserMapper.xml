@@ -114,16 +114,6 @@
         last_sync_time = incoming.last_sync_time
     </insert>
 
-    <update id="disableByAccounts">
-        update sys_user
-        set status = 0
-        where status = 1
-        and account in
-        <foreach collection="accounts" item="account" open="(" separator="," close=")">
-            #{account}
-        </foreach>
-    </update>
-
     <select id="selectAllAccounts" resultType="string">
         select account from sys_user
     </select>

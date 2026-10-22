@@ -61,15 +61,6 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
      */
     int upsertBatch(@Param("list") List<SysUser> users);
 
-    /**
-     * 把 Oracle 侧已离职的账号置为禁用（FP-17）。
-     *
-     * <p>单独一条而不是塞进上面的 upsert：upsert 的更新分支永远不动 {@code status}，
-     * 否则管理员手工启用的人会被下一轮同步又关掉。
-     * {@code status = 1} 的过滤让返回值正好是"本轮真正被禁用的人数"，同步日志里的数字才有意义。
-     */
-    int disableByAccounts(@Param("accounts") List<String> accounts);
-
     /** 当前所有账号，供同步任务判断"这批里哪些是新增"（比逐行 select 少 3.4 万次往返）。 */
     List<String> selectAllAccounts();
 

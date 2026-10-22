@@ -25,7 +25,7 @@ StaffManagement/
 
 1. **双数据源**：MySQL 主数据源（`sm.mysql.*`，MyBatis-Plus，可写）+ Oracle 视图只读次数据源（`sm.oracle.*`，JdbcTemplate，Oracle 11g 方言不支持 offset/fetch，只能 rownum）。Oracle 侧不进事务、不做写操作；这是《后端持久层规范化整改计划》的书面豁免例外，代码注释与文档都要保留说明。
 2. **Dubbo 提供**：`@DubboService(version="1.0.0", timeout=30_000)`，实现类放 `service/impl`（在 `dubbo.scan.base-packages` 内）；`register-mode=interface`（应用级注册会把 HTTP 流量导到 20881）；qos-port 22223。
-3. **同步任务**：`sm.sync.enabled` 默认 false，首轮全量必须人工触发；upsert 更新分支永不碰 `password/status/is_super_admin/角色`（这些归本地管理）；Oracle 已离职账号走 `disableByAccounts` 单独置停。
+3. **同步任务**：`sm.sync.enabled` 默认 false，首轮全量必须人工触发；upsert 更新分支永不碰 `password/status/is_super_admin/角色`（这些归本地管理）；范围外/离职账号按同步范围级联删除，已被训练项目引用的负责人记 `skipped`，不删除。
 4. **密码与口令**：BCrypt 入库；任何接口不得回传 password；`sm.auth.default-password`、`sm.auth.jwt-secret` 等敏感项不得新增明文默认值（新配置一律 `${ENV_VAR:}` 形式）。
 5. **响应契约**：对外 HTTP 统一 `ApiResponse{code,message,data}`、code=0 成功、业务失败 HTTP 200 + 非零 code、id 一律 string、分页 `{list,total,page,size}`。
    `ApiResponse` / `GlobalExceptionHandler` / MP 分页插件统一来自 **`after-end-common`** 模块（`jack.digityHuman:after-end-common`，经 AutoConfiguration 自动装配），
