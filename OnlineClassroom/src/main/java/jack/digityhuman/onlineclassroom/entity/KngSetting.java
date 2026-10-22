@@ -21,9 +21,8 @@ public class KngSetting {
     private String playConf;
     private String faceConf;
     /**
-     * 媒体处理运行参数 JSON（媒体处理模块 02 §3）：
-     * {"asrModel":"paraformer-v2","translateModel":"qwen-flash","workerConcurrency":2}；
-     * 与 application.properties 的 media.* 互为兜底——数据库值优先，便于不改配置热切模型。
+     * 媒体处理参数的历史扩展位；当前运行时统一读取 application.properties 的 media.*，
+     * 本字段不参与模型、并发或 OSS 配置决策。
      */
     private String mediaConf;
     private String updatedBy;
