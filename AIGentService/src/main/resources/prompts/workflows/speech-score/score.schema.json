@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "comment": {
+      "type": "string"
+    },
+    "hit_count": {
+      "type": "number"
+    },
+    "hit_points": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "passed": {
+      "type": "string"
+    },
+    "total_count": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "hit_points",
+    "hit_count",
+    "total_count",
+    "comment",
+    "passed"
+  ],
+  "type": "object"
+}

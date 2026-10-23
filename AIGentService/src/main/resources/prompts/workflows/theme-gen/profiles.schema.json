@@ -1,0 +1,133 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "iceberg": {
+      "additionalProperties": false,
+      "properties": {
+        "hidden": {
+          "additionalProperties": false,
+          "properties": {
+            "motives": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "personalities": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "roles": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "selfConcept": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "roles",
+            "selfConcept",
+            "personalities",
+            "motives"
+          ],
+          "type": "object"
+        },
+        "visible": {
+          "additionalProperties": false,
+          "properties": {
+            "knowledge": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "skills": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "knowledge",
+            "skills"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "visible",
+        "hidden"
+      ],
+      "type": "object"
+    },
+    "profiles": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "communicationStyle": {
+            "type": "string"
+          },
+          "decisionFactors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "painPoints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "personalities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "relatedSceneIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "description",
+          "personalities",
+          "decisionFactors",
+          "communicationStyle",
+          "painPoints",
+          "relatedSceneIds"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "profiles",
+    "iceberg"
+  ],
+  "type": "object"
+}

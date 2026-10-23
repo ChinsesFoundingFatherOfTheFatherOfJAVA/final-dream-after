@@ -16,6 +16,8 @@ AI 对练-话术训练业务：管理端（项目创建/评分维度/虚拟陪�
   `dto/req|resp`、`entity/`、`mapper/`、`service/` + `service/impl/`、`config/`。
 - 外部依赖：Dify（script-gen / scoring / report-scoring / avatar-gen 四个 agent，配置在 `dify.agents.*`）、
   百炼 CosyVoice TTS（`speech.tts.*`，v2 系列模型只认 `*_v2` 音色）、豆包 SAUC v3 流式 ASR（`speech.asr.doubao.*`）。
+- P3 native：`agent/NativeWorkflowClient` → AIGentService:8086；`DifyWorkflowSupportImpl`
+  按 `agent.<name>.provider` 分流。`avatar-gen` 仍默认 dify。
 
 ## 3. 铁律（违反即返工）
 
@@ -44,6 +46,9 @@ AI 对练-话术训练业务：管理端（项目创建/评分维度/虚拟陪�
   消费方一律注入接口类型，测试直接构造时用 `XxxServiceImpl`。
   `UserContext`（上下文持有者）与计算器类（ForbiddenWordChecker/MetricOutcome/SpeechSpeedCalculator）保持具体类，刻意不接口化。
 - **Dify 对接**：agent 配置、超时（avatar-gen 5 分钟）与错误处理见 `dify/` 包与 `dify.agents.*` 配置；评分器返回 JSON 的容错解析是已知问题高发区（见问题台账 A 类）。
+- **P3 provider**：`gen-scene` / `gen-outline` / `gen-script` / `scoring` / `report-scoring`
+  已支持 native；`scoring` 映射 `speech-score`，`report-scoring` 映射 `report-score`。
+  native 超时/非 0 业务码统一转 `BizException`，不静默回退 Dify。
 - **语音链路**：TTS/ASR/语气评分（`speech.tone.*`）的分池线程与超时口径不要随意调整，改动前读
   `学员端话术训练模块\08-口型驱动与语音维度专项方案.md`。
 - 运行时上传文件（封面/音频/头像）目录见 `app.upload.*`，不进 git。
@@ -51,8 +56,8 @@ AI 对练-话术训练业务：管理端（项目创建/评分维度/虚拟陪�
 
 ## 5. 构建与验证
 
-- 提交前 `mvnw.cmd test`（当前 148 个测试必须全绿；`SpeechTrainingApplicationTests.contextLoads` 依赖
-  MySQL/Nacos 可达，网络不通导致的失败属环境问题，需在报告中注明）。
+- 提交前 `mvnw.cmd test`（当前 161 个测试；`SpeechTrainingApplicationTests.contextLoads` 和
+  `VoiceMapPropertiesBindingTest` 依赖 MySQL/Nacos 可达，网络不通导致的失败属环境问题，需在报告中注明）。
 - 改了依赖管理需注意：`spring-cloud-dependencies` 必须排在 `spring-cloud-alibaba-dependencies` 之前 import；不 import dubbo-bom。
 - 部署顺序：StaffManagement 先起（Dubbo 提供方），本应用 `check=false` 可后起。
 

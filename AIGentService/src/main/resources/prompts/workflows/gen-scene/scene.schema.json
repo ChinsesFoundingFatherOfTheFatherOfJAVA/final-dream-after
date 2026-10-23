@@ -1,0 +1,28 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "goal": {
+      "type": "string"
+    },
+    "scene": {
+      "type": "string"
+    },
+    "studentRole": {
+      "type": "string"
+    },
+    "trainerProfile": {
+      "type": "string"
+    },
+    "trainerRole": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "scene",
+    "trainerRole",
+    "trainerProfile",
+    "studentRole",
+    "goal"
+  ],
+  "type": "object"
+}

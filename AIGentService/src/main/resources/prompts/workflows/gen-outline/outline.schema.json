@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "outlines": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "assessmentPoints": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "strategy": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "assessmentPoints",
+          "strategy"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "outlines"
+  ],
+  "type": "object"
+}

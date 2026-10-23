@@ -1,0 +1,110 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "defaultDimensionWeights": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "dimensionId": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "dimensionId",
+          "weight"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "dimensions": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "alignedForbidBehaviors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "criteria": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "relatedSceneIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "criteria",
+          "relatedSceneIds",
+          "alignedForbidBehaviors"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "passScore": {
+      "type": "number"
+    },
+    "sceneWeights": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "sceneId": {
+            "type": "string"
+          },
+          "weights": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "dimensionId": {
+                  "type": "string"
+                },
+                "weight": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "dimensionId",
+                "weight"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sceneId",
+          "weights"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "passScore",
+    "dimensions",
+    "defaultDimensionWeights",
+    "sceneWeights"
+  ],
+  "type": "object"
+}

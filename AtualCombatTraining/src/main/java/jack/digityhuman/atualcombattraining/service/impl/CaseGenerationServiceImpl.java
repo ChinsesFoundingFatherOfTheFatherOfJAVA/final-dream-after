@@ -6,9 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.common.BizTypes;
 import jack.digityhuman.atualcombattraining.common.JsonSupport;
-import jack.digityhuman.atualcombattraining.dify.DifyCallLogService;
-import jack.digityhuman.atualcombattraining.dify.DifyProperties;
-import jack.digityhuman.atualcombattraining.dify.DifyWorkflowClient;
+import jack.digityhuman.atualcombattraining.agent.WorkflowRuntimeRouter;
 import jack.digityhuman.atualcombattraining.dto.req.GenerateCasesReq;
 import jack.digityhuman.atualcombattraining.entity.ActAiArtifact;
 import jack.digityhuman.atualcombattraining.entity.ActAiSession;
@@ -56,8 +54,7 @@ public class CaseGenerationServiceImpl implements CaseGenerationService {
     /** goal 入参长度上限（DSL start 节点 max_length=500） */
     private static final int GOAL_MAX_LENGTH = 500;
 
-    private final DifyWorkflowClient workflowClient;
-    private final DifyProperties difyProperties;
+    private final WorkflowRuntimeRouter workflowRouter;
     private final ArtifactService artifactService;
     private final AssistantSessionService sessionService;
     private final AssistantEventPublisher eventPublisher;
@@ -65,15 +62,13 @@ public class CaseGenerationServiceImpl implements CaseGenerationService {
     private final ThreadPoolTaskExecutor generateExecutor;
     private final Semaphore caseSemaphore = new Semaphore(CONCURRENCY);
 
-    public CaseGenerationServiceImpl(DifyWorkflowClient workflowClient,
-                                     DifyProperties difyProperties,
+    public CaseGenerationServiceImpl(WorkflowRuntimeRouter workflowRouter,
                                      ArtifactService artifactService,
                                      AssistantSessionService sessionService,
                                      AssistantEventPublisher eventPublisher,
                                      ActThemeMapper themeMapper,
                                      @Qualifier("generateExecutor") ThreadPoolTaskExecutor generateExecutor) {
-        this.workflowClient = workflowClient;
-        this.difyProperties = difyProperties;
+        this.workflowRouter = workflowRouter;
         this.artifactService = artifactService;
         this.sessionService = sessionService;
         this.eventPublisher = eventPublisher;
@@ -154,10 +149,9 @@ public class CaseGenerationServiceImpl implements CaseGenerationService {
             String lastError = null;
             for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
                 try {
-                    ObjectNode outputs = workflowClient.run(DifyCallLogService.APP_CASE_GEN,
-                            difyProperties.getCaseGenKey(), sessionId, traceId,
-                            buildInputs(scenario, customerProfiles, effectiveDifficulty, goal),
-                            difyProperties.getCaseTimeoutMs());
+                    ObjectNode outputs = workflowRouter.runCase(
+                            sessionId, traceId,
+                            buildInputs(scenario, customerProfiles, effectiveDifficulty, goal));
                     caseJson = parseCase(outputs);
                     String validationError = validateCase(caseJson);
                     if (validationError == null) {

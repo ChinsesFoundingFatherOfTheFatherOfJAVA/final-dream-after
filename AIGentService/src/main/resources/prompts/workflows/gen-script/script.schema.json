@@ -1,0 +1,60 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "narration": {
+      "type": "string"
+    },
+    "nodes": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis": {
+            "type": "string"
+          },
+          "keyPoints": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "order": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "content",
+                "order"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "round": {
+            "type": "number"
+          },
+          "standardScript": {
+            "type": "string"
+          },
+          "trainerQuestion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "round",
+          "trainerQuestion",
+          "standardScript",
+          "keyPoints",
+          "analysis"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "nodes",
+    "narration"
+  ],
+  "type": "object"
+}

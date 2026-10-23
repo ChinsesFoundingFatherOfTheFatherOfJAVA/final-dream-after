@@ -15,6 +15,8 @@ AI 设计助手（Dify/native 双 provider 编排 + 主题/案例生成工作流
 - 外部依赖：Dify（编排 Agent `side_free` + theme-gen / case-gen 工作流）、DashScope、Tika（材料解析）。
 - native 编排：`agent/AgentRuntimeRouter` → `NativeAgentClient` → AIGentService:8086；
   只替换编排调用，WS 帧、消息落库、工具 bizType 事件仍在本应用。
+- P2 workflow：`agent/WorkflowRuntimeRouter` → `NativeWorkflowClient`；主题
+  `agent.theme-gen.provider`、案例 `agent.case-gen.provider` 默认 dify。
 
 ## 3. 铁律（违反即返工）
 
@@ -35,6 +37,8 @@ AI 设计助手（Dify/native 双 provider 编排 + 主题/案例生成工作流
    **禁止在本工程重建这些类**；code=0 成功、业务失败 HTTP 200 + 非零 code，id 一律 string。
 6. **编排 provider**：`agent.chat.provider=dify|native`，默认 dify。native 失败不得在同一轮自动重试
    Dify（工具可能已产生副作用）；切换 provider 当前需要重启本应用，后续接 Nacos 动态配置再放开。
+7. **P2 workflow**：主题生成仍按 `node_finished` 逐段落 artifact 并推 `artifact-generated`；
+   案例生成仍按单场景校验/合入；native 分支复用现有校验、重试和事件逻辑。
 
 ## 4. 本应用特有注意事项
 
@@ -48,7 +52,8 @@ AI 设计助手（Dify/native 双 provider 编排 + 主题/案例生成工作流
 
 ## 5. 构建与验证
 
-- 提交前 `mvnw.cmd test`；`contextLoads` 依赖 MySQL/Nacos 可达，网络不通导致的失败属环境问题，需在报告中注明。
+- 提交前 `mvnw.cmd test`（当前 161 个测试应全绿）；`contextLoads` 依赖 MySQL/Nacos 可达，
+  网络不通导致的失败属环境问题，需在报告中注明。
 - 依赖管理铁律：`spring-cloud-dependencies` 排在 `spring-cloud-alibaba-dependencies` 之前 import；不 import dubbo-bom。
 - 网关路由：本应用挂在 `/api/act/**`，新路由必须置于网关 `/api/**` 通配之前。
 

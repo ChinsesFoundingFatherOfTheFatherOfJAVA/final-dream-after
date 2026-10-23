@@ -1,0 +1,90 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "scenes": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "audiences": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "behaviorGoals": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "businessGoal": {
+            "type": "string"
+          },
+          "businessImpact": {
+            "type": "string"
+          },
+          "coreConflict": {
+            "type": "string"
+          },
+          "difficulties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "dimensionIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "failureCost": {
+            "type": "string"
+          },
+          "failureReasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "forbidBehaviors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "maxTime": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "audiences",
+          "businessGoal",
+          "behaviorGoals",
+          "businessImpact",
+          "failureCost",
+          "coreConflict",
+          "failureReasons",
+          "difficulties",
+          "forbidBehaviors",
+          "maxTime",
+          "dimensionIds"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "scenes"
+  ],
+  "type": "object"
+}

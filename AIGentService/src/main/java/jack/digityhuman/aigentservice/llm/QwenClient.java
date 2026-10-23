@@ -126,6 +126,14 @@ public class QwenClient implements LlmClient {
             }
             body.put("tool_choice", "auto");
         }
+        if (request.responseSchema() != null && !request.responseSchema().isEmpty()) {
+            ObjectNode responseFormat = body.putObject("response_format");
+            responseFormat.put("type", "json_schema");
+            ObjectNode jsonSchema = responseFormat.putObject("json_schema");
+            jsonSchema.put("name", "strict_output");
+            jsonSchema.put("strict", true);
+            jsonSchema.set("schema", mapper.valueToTree(request.responseSchema()));
+        }
         return body;
     }
 

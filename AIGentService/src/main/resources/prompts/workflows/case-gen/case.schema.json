@@ -1,0 +1,48 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "actorCommunicationStyle": {
+      "type": "string"
+    },
+    "actorCompany": {
+      "type": "string"
+    },
+    "actorName": {
+      "type": "string"
+    },
+    "actorPersonality": {
+      "type": "string"
+    },
+    "actorPosition": {
+      "type": "string"
+    },
+    "actorType": {
+      "type": "string"
+    },
+    "difficulty": {
+      "type": "string"
+    },
+    "scriptBackground": {
+      "type": "string"
+    },
+    "scriptName": {
+      "type": "string"
+    },
+    "scriptOpening": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "scriptName",
+    "difficulty",
+    "actorName",
+    "actorPosition",
+    "actorCompany",
+    "actorType",
+    "actorPersonality",
+    "actorCommunicationStyle",
+    "scriptBackground",
+    "scriptOpening"
+  ],
+  "type": "object"
+}

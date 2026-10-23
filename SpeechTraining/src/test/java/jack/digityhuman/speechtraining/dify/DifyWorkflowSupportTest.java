@@ -33,7 +33,7 @@ class DifyWorkflowSupportTest {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/workflows/run", exchange -> {
             try {
-                Thread.sleep(250);
+                Thread.sleep(1_000);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -54,7 +54,7 @@ class DifyWorkflowSupportTest {
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
         DifyProperties properties = new DifyProperties();
         DifyProperties.AgentConfig fast = agent(baseUrl, 50);
-        DifyProperties.AgentConfig slow = agent(baseUrl, 1_000);
+        DifyProperties.AgentConfig slow = agent(baseUrl, 3_000);
         Map<String, DifyProperties.AgentConfig> agents = new HashMap<>();
         agents.put("fast", fast);
         agents.put("slow", slow);
@@ -64,8 +64,8 @@ class DifyWorkflowSupportTest {
         assertThrows(ResourceAccessException.class, () -> support.runWorkflow("fast", Map.of()));
         Map<String, Object> outputs = support.runWorkflow("slow", Map.of());
         assertEquals(true, outputs.get("ok"));
-        assertSame(support.restTemplateFor(1_000), support.restTemplateFor(1_000));
-        assertNotSame(support.restTemplateFor(1_000), support.restTemplateFor(50));
+        assertSame(support.restTemplateFor(3_000), support.restTemplateFor(3_000));
+        assertNotSame(support.restTemplateFor(3_000), support.restTemplateFor(50));
     }
 
     @Test

@@ -62,6 +62,7 @@ class QwenClientTest {
         assertEquals(0.2, sent.path("temperature").asDouble());
         assertEquals("generate_theme",
                 sent.path("tools").path(0).path("function").path("name").asText());
+        assertTrue(sent.path("response_format").isMissingNode());
     }
 
     @Test
@@ -80,6 +81,39 @@ class QwenClientTest {
 
         assertTrue(response.error() != null);
         assertTrue(response.error().contains("429"));
+    }
+
+    @Test
+    void sendsJsonSchemaAsResponseFormatWhenProvided() throws Exception {
+        AtomicReference<String> requestBody = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = """
+                    {"choices":[{"finish_reason":"stop","message":{"content":"{\\"name\\":\\"投诉训练\\"}"}}]}
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        Map<String, Object> schema = Map.of(
+                "type", "object",
+                "properties", Map.of("name", Map.of("type", "string")),
+                "required", List.of("name"),
+                "additionalProperties", false);
+
+        LlmResponse response = client().complete(new LlmRequest(
+                List.of(LlmMessage.user("生成名称")), List.of(), schema));
+
+        assertEquals("{\"name\":\"投诉训练\"}", response.content());
+        JsonNode sent = mapper.readTree(requestBody.get());
+        assertEquals("json_schema", sent.path("response_format").path("type").asText());
+        assertEquals("strict_output",
+                sent.path("response_format").path("json_schema").path("name").asText());
+        assertTrue(sent.path("response_format").path("json_schema").path("strict").asBoolean());
+        assertEquals("object",
+                sent.path("response_format").path("json_schema").path("schema").path("type").asText());
     }
 
     private QwenClient client() {

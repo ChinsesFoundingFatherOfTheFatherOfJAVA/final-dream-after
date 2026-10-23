@@ -6,10 +6,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.common.BizTypes;
 import jack.digityhuman.atualcombattraining.common.JsonSupport;
-import jack.digityhuman.atualcombattraining.dify.DifyCallLogService;
-import jack.digityhuman.atualcombattraining.dify.DifyProperties;
-import jack.digityhuman.atualcombattraining.dify.DifyWorkflowClient;
 import jack.digityhuman.atualcombattraining.dify.DifyWorkflowEventParser;
+import jack.digityhuman.atualcombattraining.agent.WorkflowRuntimeRouter;
 import jack.digityhuman.atualcombattraining.dto.req.GenerateThemeReq;
 import jack.digityhuman.atualcombattraining.entity.ActAiArtifact;
 import jack.digityhuman.atualcombattraining.entity.ActAiSession;
@@ -56,21 +54,18 @@ public class ThemeGenerationServiceImpl implements ThemeGenerationService {
     /** failed 事件 status 值 */
     private static final String STATUS_FAILED = "failed";
 
-    private final DifyWorkflowClient workflowClient;
-    private final DifyProperties difyProperties;
+    private final WorkflowRuntimeRouter workflowRouter;
     private final ArtifactService artifactService;
     private final AssistantSessionService sessionService;
     private final AssistantEventPublisher eventPublisher;
     private final ThreadPoolTaskExecutor generateExecutor;
 
-    public ThemeGenerationServiceImpl(DifyWorkflowClient workflowClient,
-                                      DifyProperties difyProperties,
+    public ThemeGenerationServiceImpl(WorkflowRuntimeRouter workflowRouter,
                                       ArtifactService artifactService,
                                       AssistantSessionService sessionService,
                                       AssistantEventPublisher eventPublisher,
                                       @Qualifier("generateExecutor") ThreadPoolTaskExecutor generateExecutor) {
-        this.workflowClient = workflowClient;
-        this.difyProperties = difyProperties;
+        this.workflowRouter = workflowRouter;
         this.artifactService = artifactService;
         this.sessionService = sessionService;
         this.eventPublisher = eventPublisher;
@@ -128,10 +123,9 @@ public class ThemeGenerationServiceImpl implements ThemeGenerationService {
                     artifactService.mergeGeneratedPartial(themeId, partial);
                     pushInProgress(sessionId, traceId, themeId, outputs, title);
                 };
-                ObjectNode outputs = workflowClient.runStreaming(DifyCallLogService.APP_THEME_GEN,
-                        difyProperties.getThemeGenKey(), sessionId, traceId,
-                        buildInputs(req, materialSummary, existingSceneNames),
-                        difyProperties.getThemeTimeoutMs(), listener);
+                ObjectNode outputs = workflowRouter.runThemeStream(
+                        sessionId, traceId,
+                        buildInputs(req, materialSummary, existingSceneNames), listener);
                 artifact = parseArtifact(outputs);
                 lastErrors = ArtifactSchemaValidator.validate(artifact);
                 if (lastErrors.isEmpty()) {

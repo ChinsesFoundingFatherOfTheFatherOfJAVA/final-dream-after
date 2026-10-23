@@ -1,8 +1,11 @@
 package jack.digityhuman.speechtraining.dify;
 
 import jack.digityhuman.common.api.BizException;
+import jack.digityhuman.speechtraining.agent.AgentWorkflowProperties;
+import jack.digityhuman.speechtraining.agent.NativeWorkflowClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -18,11 +21,25 @@ import java.util.concurrent.ConcurrentMap;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class DifyWorkflowSupportImpl implements DifyWorkflowSupport {
 
     private final DifyProperties difyProperties;
+    private final NativeWorkflowClient nativeWorkflowClient;
+    private final AgentWorkflowProperties agentWorkflowProperties;
     private final ConcurrentMap<Integer, RestTemplate> restTemplates = new ConcurrentHashMap<>();
+
+    public DifyWorkflowSupportImpl(DifyProperties difyProperties) {
+        this(difyProperties, null, new AgentWorkflowProperties());
+    }
+
+    @Autowired
+    public DifyWorkflowSupportImpl(DifyProperties difyProperties,
+                                    NativeWorkflowClient nativeWorkflowClient,
+                                    AgentWorkflowProperties agentWorkflowProperties) {
+        this.difyProperties = difyProperties;
+        this.nativeWorkflowClient = nativeWorkflowClient;
+        this.agentWorkflowProperties = agentWorkflowProperties;
+    }
 
     /**
      * 调用Dify工作流
@@ -33,6 +50,13 @@ public class DifyWorkflowSupportImpl implements DifyWorkflowSupport {
      */
     @Override
     public Map<String, Object> runWorkflow(String agentType, Map<String, Object> inputs) {
+        if (agentWorkflowProperties != null && agentWorkflowProperties.usesNative(agentType)) {
+            if (nativeWorkflowClient == null) {
+                throw new BizException("native workflow 客户端未配置");
+            }
+            return nativeWorkflowClient.run(taskName(agentType), null, null, inputs,
+                    0);
+        }
         DifyProperties.AgentConfig config = difyProperties.getAgentConfig(agentType);
 
         Map<String, Object> body = new HashMap<>();
@@ -81,6 +105,14 @@ public class DifyWorkflowSupportImpl implements DifyWorkflowSupport {
             throw new BizException("AI 服务未返回结果，请稍后重试");
         }
         return outputs;
+    }
+
+    private String taskName(String agentType) {
+        return switch (agentType) {
+            case "scoring" -> "speech-score";
+            case "report-scoring" -> "report-score";
+            default -> agentType;
+        };
     }
 
     /** 按读超时复用请求客户端，避免每个工作流请求都创建连接工厂。 */
