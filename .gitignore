@@ -18,6 +18,7 @@ act-files/
 coverImage/
 audio/
 avatar/
+graphify-out/
 
 # ---- OS ----
 .DS_Store
