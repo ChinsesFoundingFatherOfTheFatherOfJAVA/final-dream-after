@@ -3,7 +3,7 @@
 ## 1. 应用定位
 
 本项目承载 Dify 工作流/Agent 的原生替代运行时。当前已实施 **P1 自由演练助手 + P2 主题/案例
-生成 + P3 五个文本 workflow**；`avatar-gen` 仍保留 Dify fallback。
+生成 + P3 六个 workflow（含文生图）**；Dify 仅作为可切换 fallback。
 
 权威输入：
 
@@ -34,7 +34,8 @@
 - native 失败不在同一轮自动重试 Dify，避免工具副作用重复执行。
 - P2：`/internal/agent/task/{name}` blocking + `/internal/agent/task/theme-gen/stream` SSE；
 - P3 文本任务：`gen-scene` / `gen-outline` / `gen-script` / `speech-score` / `report-score`；
-- 文生图：`avatar-gen` 暂不 native，Dify fallback。
+- 文生图：`avatar-gen` 通过 ModelScope 异步接口生成，模型 `Qwen/Qwen-Image-2.1-Turbo`；
+  Dify 仍可通过 provider 切回。
 - Workflow prompt/schema 从 DSL 自动提取到 `resources/prompts/workflows/`，不得手工改写；
 - 长任务异步超时 `spring.mvc.async.request-timeout=610000`，千问读超时 `600000`。
 

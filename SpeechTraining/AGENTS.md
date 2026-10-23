@@ -17,7 +17,7 @@ AI 对练-话术训练业务：管理端（项目创建/评分维度/虚拟陪�
 - 外部依赖：Dify（script-gen / scoring / report-scoring / avatar-gen 四个 agent，配置在 `dify.agents.*`）、
   百炼 CosyVoice TTS（`speech.tts.*`，v2 系列模型只认 `*_v2` 音色）、豆包 SAUC v3 流式 ASR（`speech.asr.doubao.*`）。
 - P3 native：`agent/NativeWorkflowClient` → AIGentService:8086；`DifyWorkflowSupportImpl`
-  按 `agent.<name>.provider` 分流。`avatar-gen` 仍默认 dify。
+  按 `agent.<name>.provider` 分流。`avatar-gen` 默认 native（ModelScope Qwen-Image）。
 
 ## 3. 铁律（违反即返工）
 
@@ -46,8 +46,9 @@ AI 对练-话术训练业务：管理端（项目创建/评分维度/虚拟陪�
   消费方一律注入接口类型，测试直接构造时用 `XxxServiceImpl`。
   `UserContext`（上下文持有者）与计算器类（ForbiddenWordChecker/MetricOutcome/SpeechSpeedCalculator）保持具体类，刻意不接口化。
 - **Dify 对接**：agent 配置、超时（avatar-gen 5 分钟）与错误处理见 `dify/` 包与 `dify.agents.*` 配置；评分器返回 JSON 的容错解析是已知问题高发区（见问题台账 A 类）。
-- **P3 provider**：`gen-scene` / `gen-outline` / `gen-script` / `scoring` / `report-scoring`
-  已支持 native；`scoring` 映射 `speech-score`，`report-scoring` 映射 `report-score`。
+- **P3 provider**：`gen-scene` / `gen-outline` / `gen-script` / `scoring` / `report-scoring` / `avatar-gen`
+  已支持 native；`scoring` 映射 `speech-score`，`report-scoring` 映射 `report-score`，
+  `avatar-gen` 调 ModelScope Qwen-Image。
   native 超时/非 0 业务码统一转 `BizException`，不静默回退 Dify。
 - **语音链路**：TTS/ASR/语气评分（`speech.tone.*`）的分池线程与超时口径不要随意调整，改动前读
   `学员端话术训练模块\08-口型驱动与语音维度专项方案.md`。
