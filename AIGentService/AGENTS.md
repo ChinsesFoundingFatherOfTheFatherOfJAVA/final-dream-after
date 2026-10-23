@@ -23,12 +23,17 @@
 5. **阶段守卫是安全边界**：不能只依赖 prompt。`create_topic`、`generate_theme`、
    `generate_cases` 必须经过 `ToolStageGuard`，其前置条件要有单测。
 6. **Workflow 产物只返回 outputs**：P2/P3 不直接写业务表；由调用方校验、落库和推事件。
+7. **内部接口鉴权**：`/internal/**` 必须携带 `X-Internal-Token`，值与
+   `AGENT_INTERNAL_TOKEN` 一致；未配置 token 时 fail-closed 返回 503，Actuator 保持只读公开。
 
 ## 3. 当前最终决策
 
 - 模型：`qwen3.8-flash`，千问 OpenAI-compatible `chat/completions`；
 - 工具：HTTP 调用 AtualCombatTraining `/api/act/internal/tools/**`，暂不 Dubbo 化；
-- 记忆：L1 进程内 `SessionMemory`，不实现 Redis L2/DB L3；
+- 记忆：L1 进程内 `SessionMemory` + Redis L2 `agent:session:{sessionId}`（7 天 TTL）
+  + AtualCombatTraining `act_ai_message` L3 重建；Redis 故障自动降级，不阻断主链路；
+- 监控：Actuator 暴露 `health/metrics/prometheus`；chat/workflow/LLM 提供计数与耗时直方图，
+  LLM outcome 区分 `success/rate_limited/timeout/server_error/transport_error`；
 - SSE：当前输出完整 `agent_message` 后立即 `message_end`，还不是逐 token 流；
 - provider 分流在 AtualCombatTraining：`agent.chat.provider=dify|native`，默认 dify；
 - native 失败不在同一轮自动重试 Dify，避免工具副作用重复执行。
@@ -61,6 +66,9 @@ cmd /c "mvnw.cmd -DskipTests package"
 
 真实 smoke 至少验证：
 
+- 无 token 调 `/internal/**` 返回 401，正确 token 可正常调用；
+- `GET /actuator/health` 无需 token，`GET /actuator/prometheus` 能看到 chat/workflow/LLM 指标；
+- Redis 写入 `agent:session:{sessionId}` 且 TTL 约 7 天；清 key 并重启 L1 后可由 Atual 端重建并回填；
 - 模糊需求不入工具；
 - 明确确认且已有场景规划才允许生成类工具；
 - 工具端点非 2xx / 非零业务码会回填可读错误；

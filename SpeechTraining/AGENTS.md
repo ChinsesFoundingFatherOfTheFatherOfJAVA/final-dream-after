@@ -18,6 +18,8 @@ AI 对练-话术训练业务：管理端（项目创建/评分维度/虚拟陪�
   百炼 CosyVoice TTS（`speech.tts.*`，v2 系列模型只认 `*_v2` 音色）、豆包 SAUC v3 流式 ASR（`speech.asr.doubao.*`）。
 - P3 native：`agent/NativeWorkflowClient` → AIGentService:8086；`DifyWorkflowSupportImpl`
   按 `agent.<name>.provider` 分流。`avatar-gen` 默认 native（ModelScope Qwen-Image）。
+- native workflow 请求必须携带 `X-Internal-Token`（`AGENT_INTERNAL_TOKEN`），与 AIGentService
+  和 AtualCombatTraining 使用同一共享值。
 
 ## 3. 铁律（违反即返工）
 

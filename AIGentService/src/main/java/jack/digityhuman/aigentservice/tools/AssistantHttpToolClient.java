@@ -22,17 +22,26 @@ public class AssistantHttpToolClient {
 
     private final ObjectMapper mapper;
     private final String baseUrl;
+    private final String internalToken;
     private final HttpClient httpClient;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public AssistantHttpToolClient(
             ObjectMapper mapper,
             @Value("${agent.tools.base-url:http://localhost:8082}") String baseUrl,
-            @Value("${agent.tools.connect-timeout-ms:5000}") long connectTimeoutMs) {
+            @Value("${agent.tools.connect-timeout-ms:5000}") long connectTimeoutMs,
+            @Value("${agent.internal-token:}") String internalToken) {
         this.mapper = mapper;
         this.baseUrl = baseUrl.replaceAll("/+$", "");
+        this.internalToken = internalToken;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(connectTimeoutMs))
                 .build();
+    }
+
+    public AssistantHttpToolClient(ObjectMapper mapper, String baseUrl,
+                                   long connectTimeoutMs) {
+        this(mapper, baseUrl, connectTimeoutMs, "");
     }
 
     public List<AgentTool> tools() {
@@ -87,12 +96,15 @@ public class AssistantHttpToolClient {
     private String call(String name, String arguments, ToolContext context) {
         try {
             String query = "?traceId=" + encode(context.traceId()) + "&sessionId=" + encode(context.sessionId());
-            HttpRequest request = HttpRequest.newBuilder(URI.create(
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(
                             baseUrl + "/api/act/internal/tools/" + name + query))
                     .timeout(Duration.ofSeconds(120))
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(arguments == null ? "{}" : arguments))
-                    .build();
+                    .POST(HttpRequest.BodyPublishers.ofString(arguments == null ? "{}" : arguments));
+            if (internalToken != null && !internalToken.isBlank()) {
+                requestBuilder.header("X-Internal-Token", internalToken);
+            }
+            HttpRequest request = requestBuilder.build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
                 return error("工具 HTTP " + response.statusCode() + ": " + response.body());

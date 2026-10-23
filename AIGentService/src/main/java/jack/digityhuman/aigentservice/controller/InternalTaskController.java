@@ -3,9 +3,10 @@ package jack.digityhuman.aigentservice.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jack.digityhuman.aigentservice.dto.AgentTaskRequest;
+import jack.digityhuman.aigentservice.metrics.AgentMetrics;
 import jack.digityhuman.aigentservice.workflow.WorkflowEngine;
 import jack.digityhuman.aigentservice.workflow.WorkflowProgressListener;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,22 +23,37 @@ import java.util.UUID;
 
 /** AIGentService 的 P2/P3 workflow 内部接口。 */
 @RestController
-@RequiredArgsConstructor
 public class InternalTaskController {
 
     private final WorkflowEngine workflowEngine;
     private final ObjectMapper mapper;
+    private final AgentMetrics agentMetrics;
+
+    public InternalTaskController(WorkflowEngine workflowEngine, ObjectMapper mapper) {
+        this(workflowEngine, mapper, null);
+    }
+
+    @Autowired
+    public InternalTaskController(WorkflowEngine workflowEngine, ObjectMapper mapper,
+                                  AgentMetrics agentMetrics) {
+        this.workflowEngine = workflowEngine;
+        this.mapper = mapper;
+        this.agentMetrics = agentMetrics;
+    }
 
     @PostMapping(value = "/internal/agent/task/{name}",
             consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     public TaskResponse task(@PathVariable String name,
                              @RequestBody AgentTaskRequest request) {
+        long startedAt = System.currentTimeMillis();
         try {
             Map<String, Object> outputs = workflowEngine.execute(
                     name, request == null ? Map.of() : request.inputs(), null);
+            recordWorkflow(name, true, startedAt);
             return new TaskResponse(0, "success", new TaskData(outputs));
         } catch (Exception e) {
+            recordWorkflow(name, false, startedAt);
             return new TaskResponse(500, message(e), new TaskData(Map.of()));
         }
     }
@@ -48,6 +64,7 @@ public class InternalTaskController {
     public ResponseEntity<StreamingResponseBody> themeStream(
             @RequestBody AgentTaskRequest request) {
         StreamingResponseBody stream = output -> {
+            long startedAt = System.currentTimeMillis();
             try {
                 Map<String, String> inputs = new LinkedHashMap<>();
                 if (request != null && request.inputs() != null) {
@@ -67,7 +84,9 @@ public class InternalTaskController {
                         "task_id", UUID.randomUUID().toString(),
                         "message_id", UUID.randomUUID().toString(),
                         "outputs", outputs)));
+                recordWorkflow("theme-gen", true, startedAt);
             } catch (Exception e) {
+                recordWorkflow("theme-gen", false, startedAt);
                 write(output, event("error", Map.of("message", message(e))));
             }
         };
@@ -105,6 +124,12 @@ public class InternalTaskController {
 
     private String nullToEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    private void recordWorkflow(String name, boolean success, long startedAt) {
+        if (agentMetrics != null) {
+            agentMetrics.recordWorkflow(name, success, System.currentTimeMillis() - startedAt);
+        }
     }
 
     public record TaskResponse(int code, String message, TaskData data) {

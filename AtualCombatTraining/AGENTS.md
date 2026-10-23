@@ -17,6 +17,9 @@ AI 设计助手（Dify/native 双 provider 编排 + 主题/案例生成工作流
   只替换编排调用，WS 帧、消息落库、工具 bizType 事件仍在本应用。
 - P2 workflow：`agent/WorkflowRuntimeRouter` → `NativeWorkflowClient`；主题
   `agent.theme-gen.provider`、案例 `agent.case-gen.provider` 默认 dify。
+- native 调用 AIGentService `/internal/**` 时携带 `X-Internal-Token`，值来自
+  `AGENT_INTERNAL_TOKEN`；`GET /api/act/internal/memory/{sessionId}` 只供 L3 记忆重建，
+  同样强制 token。
 
 ## 3. 铁律（违反即返工）
 
@@ -39,6 +42,9 @@ AI 设计助手（Dify/native 双 provider 编排 + 主题/案例生成工作流
    Dify（工具可能已产生副作用）；切换 provider 当前需要重启本应用，后续接 Nacos 动态配置再放开。
 7. **P2 workflow**：主题生成仍按 `node_finished` 逐段落 artifact 并推 `artifact-generated`；
    案例生成仍按单场景校验/合入；native 分支复用现有校验、重试和事件逻辑。
+8. **内部工具鉴权兼容**：`/api/act/internal/tools/**` 为保留 Dify fallback 调用契约，当前
+   不强制 `X-Internal-Token`；不得把该口径扩大到 memory 端点。若未来 Dify 工具也强制 token，
+   必须同步调整 Dify 侧工具配置后再改。
 
 ## 4. 本应用特有注意事项
 

@@ -8,6 +8,7 @@ import jack.digityhuman.atualcombattraining.dify.DifyWorkflowEventParser;
 import jack.digityhuman.common.api.BizException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -37,22 +38,31 @@ public class NativeWorkflowClient {
     private final int connectTimeoutMs;
     private final int readTimeoutMs;
     private final DifyCallLogService callLogService;
+    private final String internalToken;
     private final HttpClient httpClient;
 
     @Autowired
-    public NativeWorkflowClient(AigentProperties properties, DifyCallLogService callLogService) {
+    public NativeWorkflowClient(AigentProperties properties, DifyCallLogService callLogService,
+                                @Value("${agent.internal-token:}") String internalToken) {
         this(new ObjectMapper(), properties.getBaseUrl(), properties.getConnectTimeoutMs(),
-                properties.getTimeoutMs(), callLogService);
+                properties.getTimeoutMs(), callLogService, internalToken);
     }
 
     public NativeWorkflowClient(ObjectMapper mapper, String baseUrl,
                                 long connectTimeoutMs, int readTimeoutMs,
                                 DifyCallLogService callLogService) {
+        this(mapper, baseUrl, connectTimeoutMs, readTimeoutMs, callLogService, "");
+    }
+
+    public NativeWorkflowClient(ObjectMapper mapper, String baseUrl,
+                                long connectTimeoutMs, int readTimeoutMs,
+                                DifyCallLogService callLogService, String internalToken) {
         this.mapper = mapper;
         this.baseUrl = baseUrl == null ? "" : baseUrl.replaceAll("/+$", "");
         this.connectTimeoutMs = (int) connectTimeoutMs;
         this.readTimeoutMs = readTimeoutMs;
         this.callLogService = callLogService;
+        this.internalToken = internalToken == null ? "" : internalToken;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(connectTimeoutMs))
                 .build();
@@ -164,13 +174,16 @@ public class NativeWorkflowClient {
     }
 
     private HttpRequest request(String path, Map<String, Object> body, int timeoutMs) throws IOException {
-        return HttpRequest.newBuilder(URI.create(baseUrl + path))
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path))
                 .timeout(Duration.ofMillis(timeoutMs > 0 ? timeoutMs : readTimeoutMs))
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .POST(HttpRequest.BodyPublishers.ofString(
-                        mapper.writeValueAsString(body), StandardCharsets.UTF_8))
-                .build();
+                        mapper.writeValueAsString(body), StandardCharsets.UTF_8));
+        if (!internalToken.isBlank()) {
+            builder.header("X-Internal-Token", internalToken);
+        }
+        return builder.build();
     }
 
     private JsonNode parseSse(String line) {

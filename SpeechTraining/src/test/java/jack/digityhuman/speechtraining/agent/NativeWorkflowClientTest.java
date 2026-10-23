@@ -30,9 +30,11 @@ class NativeWorkflowClientTest {
     @Test
     void sendsTheTaskRequestAndReturnsOutputs() throws Exception {
         AtomicReference<String> body = new AtomicReference<>();
+        AtomicReference<String> token = new AtomicReference<>();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/internal/agent/task/gen-scene", exchange -> {
             body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            token.set(exchange.getRequestHeaders().getFirst("X-Internal-Token"));
             byte[] response = """
                     {"code":0,"message":"success","data":{"outputs":{"sceneResult":{"scene":"测试场景"}}}}
                     """.getBytes(StandardCharsets.UTF_8);
@@ -49,6 +51,7 @@ class NativeWorkflowClientTest {
         JsonNode sent = mapper.readTree(body.get());
         assertEquals("s1", sent.path("sessionId").asText());
         assertEquals("测试", sent.path("inputs").path("description").asText());
+        assertEquals("secret", token.get());
     }
 
     @Test
@@ -73,6 +76,7 @@ class NativeWorkflowClientTest {
                 mapper,
                 "http://127.0.0.1:" + server.getAddress().getPort(),
                 1000,
-                5000);
+                5000,
+                "secret");
     }
 }

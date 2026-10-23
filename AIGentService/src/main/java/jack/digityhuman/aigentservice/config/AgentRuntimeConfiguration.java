@@ -3,6 +3,7 @@ package jack.digityhuman.aigentservice.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jack.digityhuman.aigentservice.engine.ReActEngine;
 import jack.digityhuman.aigentservice.engine.SessionMemory;
+import jack.digityhuman.aigentservice.memory.SessionStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,8 +18,8 @@ public class AgentRuntimeConfiguration {
     }
 
     @Bean
-    public SessionMemory sessionMemory() {
-        return new SessionMemory();
+    public SessionMemory sessionMemory(SessionStore sessionStore) {
+        return new SessionMemory(24, sessionStore);
     }
 
     @Bean

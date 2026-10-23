@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import jack.digityhuman.aigentservice.metrics.AgentMetrics;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -11,6 +13,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -30,7 +33,9 @@ public class QwenClient implements LlmClient {
     private final double temperature;
     private final double topP;
     private final HttpClient httpClient;
+    private final AgentMetrics metrics;
 
+    @Autowired
     public QwenClient(
             ObjectMapper mapper,
             @Value("${agent.qwen.base-url}") String baseUrl,
@@ -40,7 +45,8 @@ public class QwenClient implements LlmClient {
             @Value("${agent.qwen.temperature:0.3}") double temperature,
             @Value("${agent.qwen.top-p:0.3}") double topP,
             @Value("${agent.qwen.connect-timeout-ms:10000}") long connectTimeoutMs,
-            @Value("${agent.qwen.read-timeout-ms:120000}") long readTimeoutMs) {
+            @Value("${agent.qwen.read-timeout-ms:120000}") long readTimeoutMs,
+            AgentMetrics metrics) {
         this.mapper = mapper;
         this.baseUrl = trimSlash(baseUrl);
         this.apiKey = apiKey;
@@ -52,13 +58,30 @@ public class QwenClient implements LlmClient {
                 .connectTimeout(Duration.ofMillis(connectTimeoutMs))
                 .build();
         this.readTimeoutMs = readTimeoutMs;
+        this.metrics = metrics;
+    }
+
+    public QwenClient(
+            ObjectMapper mapper,
+            String baseUrl,
+            String apiKey,
+            String model,
+            int maxTokens,
+            double temperature,
+            double topP,
+            long connectTimeoutMs,
+            long readTimeoutMs) {
+        this(mapper, baseUrl, apiKey, model, maxTokens, temperature, topP,
+                connectTimeoutMs, readTimeoutMs, null);
     }
 
     private final long readTimeoutMs;
 
     @Override
     public LlmResponse complete(LlmRequest request) {
+        long startedAt = System.currentTimeMillis();
         if (apiKey == null || apiKey.isBlank()) {
+            recordLlm("configuration_error", startedAt);
             return new LlmResponse("", List.of(), "Qwen API key 未配置");
         }
         try {
@@ -72,15 +95,42 @@ public class QwenClient implements LlmClient {
                     .build();
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
+                recordLlm(classifyStatus(response.statusCode()), startedAt);
                 return new LlmResponse("", List.of(),
                         "Qwen HTTP " + response.statusCode() + ": " + abbreviate(response.body()));
             }
-            return parse(response.body());
+            LlmResponse parsed = parse(response.body());
+            recordLlm(parsed.error() == null ? "success" : "invalid_response", startedAt);
+            return parsed;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            recordLlm("interrupted", startedAt);
             return new LlmResponse("", List.of(), "Qwen 调用被中断");
+        } catch (HttpTimeoutException e) {
+            recordLlm("timeout", startedAt);
+            return new LlmResponse("", List.of(), "Qwen 调用超时：" + e.getMessage());
         } catch (Exception e) {
+            recordLlm("transport_error", startedAt);
             return new LlmResponse("", List.of(), "Qwen 调用失败：" + e.getMessage());
+        }
+    }
+
+    private String classifyStatus(int statusCode) {
+        if (statusCode == 429) {
+            return "rate_limited";
+        }
+        if (statusCode == 408 || statusCode == 504) {
+            return "timeout";
+        }
+        if (statusCode >= 500) {
+            return "server_error";
+        }
+        return statusCode >= 400 ? "client_error" : "http_error";
+    }
+
+    private void recordLlm(String outcome, long startedAt) {
+        if (metrics != null) {
+            metrics.recordLlm(outcome, System.currentTimeMillis() - startedAt);
         }
     }
 

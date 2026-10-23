@@ -7,6 +7,7 @@ import jack.digityhuman.aigentservice.engine.ReActEngine;
 import jack.digityhuman.aigentservice.engine.ToolStageGuard;
 import jack.digityhuman.aigentservice.engine.ToolRegistry;
 import jack.digityhuman.aigentservice.llm.LlmClient;
+import jack.digityhuman.aigentservice.metrics.AgentMetrics;
 import jack.digityhuman.aigentservice.prompt.PromptProvider;
 import jack.digityhuman.aigentservice.tools.AssistantHttpToolClient;
 import lombok.RequiredArgsConstructor;
@@ -33,10 +34,12 @@ public class InternalAgentController {
     private final PromptProvider promptProvider;
     private final ObjectMapper mapper;
     private final ReActEngine reActEngine;
+    private final AgentMetrics agentMetrics;
 
     @PostMapping(value = "/internal/agent/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<StreamingResponseBody> chat(@RequestBody AgentChatRequest request) {
         StreamingResponseBody stream = output -> {
+            long startedAt = System.currentTimeMillis();
             try {
                 String sessionId = request.sessionId() == null ? "" : request.sessionId();
                 String traceId = request.traceId() == null ? "" : request.traceId();
@@ -63,7 +66,9 @@ public class InternalAgentController {
                         "conversation_id", sessionId,
                         "task_id", UUID.randomUUID().toString(),
                         "message_id", UUID.randomUUID().toString())));
+                agentMetrics.recordChat(true, System.currentTimeMillis() - startedAt);
             } catch (Exception e) {
+                agentMetrics.recordChat(false, System.currentTimeMillis() - startedAt);
                 write(output, event("error", Map.of(
                         "message", e.getMessage() == null ? "agent runtime 异常" : e.getMessage())));
             }

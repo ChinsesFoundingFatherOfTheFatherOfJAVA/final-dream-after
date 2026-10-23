@@ -3,6 +3,8 @@ package jack.digityhuman.aigentservice.llm;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import jack.digityhuman.aigentservice.metrics.AgentMetrics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -67,6 +69,7 @@ class QwenClientTest {
 
     @Test
     void reportsHttpFailuresAsErrors() throws Exception {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
             byte[] response = "{\"error\":\"rate limited\"}".getBytes(StandardCharsets.UTF_8);
@@ -76,11 +79,13 @@ class QwenClientTest {
         });
         server.start();
 
-        LlmResponse response = client().complete(new LlmRequest(
+        LlmResponse response = client(new AgentMetrics(registry)).complete(new LlmRequest(
                 List.of(LlmMessage.user("hi")), List.of()));
 
         assertTrue(response.error() != null);
         assertTrue(response.error().contains("429"));
+        assertEquals(1, registry.get("agent.llm.failures.by.reason")
+                .tag("reason", "rate_limited").counter().count());
     }
 
     @Test
@@ -117,6 +122,10 @@ class QwenClientTest {
     }
 
     private QwenClient client() {
+        return client(null);
+    }
+
+    private QwenClient client(AgentMetrics metrics) {
         return new QwenClient(
                 mapper,
                 "http://127.0.0.1:" + server.getAddress().getPort() + "/v1",
@@ -126,6 +135,7 @@ class QwenClientTest {
                 0.2,
                 0.3,
                 1000,
-                5000);
+                5000,
+                metrics);
     }
 }

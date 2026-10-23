@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jack.digityhuman.common.api.BizException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -23,20 +24,29 @@ public class NativeWorkflowClient {
     private final String baseUrl;
     private final int connectTimeoutMs;
     private final int defaultTimeoutMs;
+    private final String internalToken;
     private final HttpClient httpClient;
 
     @Autowired
-    public NativeWorkflowClient(AigentProperties properties) {
+    public NativeWorkflowClient(AigentProperties properties,
+                                @Value("${agent.internal-token:}") String internalToken) {
         this(new ObjectMapper(), properties.getBaseUrl(),
-                properties.getConnectTimeoutMs(), properties.getTimeoutMs());
+                properties.getConnectTimeoutMs(), properties.getTimeoutMs(), internalToken);
     }
 
     public NativeWorkflowClient(ObjectMapper mapper, String baseUrl,
                                 long connectTimeoutMs, int defaultTimeoutMs) {
+        this(mapper, baseUrl, connectTimeoutMs, defaultTimeoutMs, "");
+    }
+
+    public NativeWorkflowClient(ObjectMapper mapper, String baseUrl,
+                                long connectTimeoutMs, int defaultTimeoutMs,
+                                String internalToken) {
         this.mapper = mapper;
         this.baseUrl = baseUrl == null ? "" : baseUrl.replaceAll("/+$", "");
         this.connectTimeoutMs = (int) connectTimeoutMs;
         this.defaultTimeoutMs = defaultTimeoutMs;
+        this.internalToken = internalToken == null ? "" : internalToken;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(connectTimeoutMs))
                 .build();
@@ -49,14 +59,17 @@ public class NativeWorkflowClient {
             body.put("sessionId", sessionId == null ? "" : sessionId);
             body.put("traceId", traceId == null ? "" : traceId);
             body.put("inputs", inputs == null ? Map.of() : inputs);
-            HttpRequest request = HttpRequest.newBuilder(
+            HttpRequest.Builder builder = HttpRequest.newBuilder(
                             URI.create(baseUrl + "/internal/agent/task/" + taskName))
                     .timeout(Duration.ofMillis(timeoutMs > 0 ? timeoutMs : defaultTimeoutMs))
                     .header("Content-Type", "application/json")
                     .header("Accept", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(
-                            mapper.writeValueAsString(body), StandardCharsets.UTF_8))
-                    .build();
+                            mapper.writeValueAsString(body), StandardCharsets.UTF_8));
+            if (!internalToken.isBlank()) {
+                builder.header("X-Internal-Token", internalToken);
+            }
+            HttpRequest request = builder.build();
             HttpResponse<String> response = httpClient.send(
                     request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {

@@ -43,10 +43,12 @@ class AssistantHttpToolClientTest {
         AtomicReference<String> method = new AtomicReference<>();
         AtomicReference<String> query = new AtomicReference<>();
         AtomicReference<String> body = new AtomicReference<>();
+        AtomicReference<String> token = new AtomicReference<>();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api/act/internal/tools/create_topic", exchange -> {
             method.set(exchange.getRequestMethod());
             query.set(exchange.getRequestURI().getRawQuery());
+            token.set(exchange.getRequestHeaders().getFirst("X-Internal-Token"));
             body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] response = "{\"code\":0,\"message\":\"ok\",\"data\":{\"topicId\":\"t1\"}}"
                     .getBytes(StandardCharsets.UTF_8);
@@ -56,7 +58,7 @@ class AssistantHttpToolClientTest {
         });
         server.start();
         AssistantHttpToolClient client = new AssistantHttpToolClient(
-                mapper, "http://127.0.0.1:" + server.getAddress().getPort(), 1000);
+                mapper, "http://127.0.0.1:" + server.getAddress().getPort(), 1000, "secret");
         AgentTool createTopic = client.tools().stream()
                 .filter(tool -> "create_topic".equals(tool.name()))
                 .findFirst()
@@ -69,6 +71,7 @@ class AssistantHttpToolClientTest {
         assertEquals("POST", method.get());
         assertTrue(query.get().contains("traceId=trace%261"));
         assertTrue(query.get().contains("sessionId=session+1"));
+        assertEquals("secret", token.get());
         assertEquals("投诉处理", mapper.readTree(body.get()).path("topic").asText());
         assertEquals("t1", mapper.readTree(result).path("topicId").asText());
     }

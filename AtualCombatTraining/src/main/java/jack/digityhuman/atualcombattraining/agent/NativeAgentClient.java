@@ -7,6 +7,7 @@ import jack.digityhuman.common.api.BizException;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -41,16 +42,18 @@ public class NativeAgentClient {
     private final String baseUrl;
     private final int timeoutMs;
     private final DifyCallLogService callLogService;
+    private final String internalToken;
     private final HttpClient httpClient;
     private final ScheduledExecutorService watchdog;
 
     @Autowired
-    public NativeAgentClient(NativeAgentProperties properties, DifyCallLogService callLogService) {
+    public NativeAgentClient(NativeAgentProperties properties, DifyCallLogService callLogService,
+                             @Value("${agent.internal-token:}") String internalToken) {
         this(new ObjectMapper(),
                 properties.getBaseUrl(),
                 properties.getConnectTimeoutMs(),
                 properties.getTimeoutMs(),
-                callLogService);
+                callLogService, internalToken);
     }
 
     public NativeAgentClient(ObjectMapper mapper, String baseUrl,
@@ -61,10 +64,17 @@ public class NativeAgentClient {
     public NativeAgentClient(ObjectMapper mapper, String baseUrl,
                              long connectTimeoutMs, int timeoutMs,
                              DifyCallLogService callLogService) {
+        this(mapper, baseUrl, connectTimeoutMs, timeoutMs, callLogService, "");
+    }
+
+    public NativeAgentClient(ObjectMapper mapper, String baseUrl,
+                             long connectTimeoutMs, int timeoutMs,
+                             DifyCallLogService callLogService, String internalToken) {
         this.mapper = mapper;
         this.baseUrl = trimSlash(baseUrl);
         this.timeoutMs = timeoutMs;
         this.callLogService = callLogService;
+        this.internalToken = internalToken == null ? "" : internalToken;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(connectTimeoutMs))
                 .build();
@@ -97,13 +107,16 @@ public class NativeAgentClient {
 
         HttpRequest request;
         try {
-            request = HttpRequest.newBuilder(URI.create(baseUrl + "/internal/agent/chat"))
+            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + "/internal/agent/chat"))
                     .timeout(Duration.ofMillis(timeoutMs))
                     .header("Content-Type", "application/json")
                     .header("Accept", "text/event-stream")
                     .POST(HttpRequest.BodyPublishers.ofString(
-                            mapper.writeValueAsString(body), StandardCharsets.UTF_8))
-                    .build();
+                            mapper.writeValueAsString(body), StandardCharsets.UTF_8));
+            if (!internalToken.isBlank()) {
+                builder.header("X-Internal-Token", internalToken);
+            }
+            request = builder.build();
         } catch (Exception e) {
             return new StreamResult(sessionId, null, null, "",
                     "native 请求构造失败：" + safeMessage(e));

@@ -38,9 +38,11 @@ class NativeAgentClientTest {
     @Test
     void sendsRuntimeContextAndParsesAgentMessageAndMessageEnd() throws Exception {
         AtomicReference<String> requestBody = new AtomicReference<>();
+        AtomicReference<String> token = new AtomicReference<>();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/internal/agent/chat", exchange -> {
             requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            token.set(exchange.getRequestHeaders().getFirst("X-Internal-Token"));
             byte[] response = """
                     data: {"event":"agent_message","conversation_id":"s1","answer":"你"}
 
@@ -75,6 +77,7 @@ class NativeAgentClientTest {
         assertEquals("trace-1", sent.path("traceId").asText());
         assertEquals("请给方案", sent.path("query").asText());
         assertEquals("draft", sent.path("inputs").path("theme_status").asText());
+        assertEquals("secret", token.get());
     }
 
     @Test
@@ -136,6 +139,8 @@ class NativeAgentClientTest {
                 mapper,
                 "http://127.0.0.1:" + server.getAddress().getPort(),
                 1000,
-                5000);
+                5000,
+                null,
+                "secret");
     }
 }
