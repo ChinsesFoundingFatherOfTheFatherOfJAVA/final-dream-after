@@ -1,11 +1,13 @@
 package jack.digityhuman.atualcombattraining.service.impl;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import jack.digityhuman.atualcombattraining.agent.KngAiSourceClient;
 import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.common.BizTypes;
 import jack.digityhuman.atualcombattraining.common.JsonSupport;
 import jack.digityhuman.atualcombattraining.config.AssistantProperties;
 import jack.digityhuman.atualcombattraining.dto.resp.FileUploadResp;
+import jack.digityhuman.atualcombattraining.dto.resp.ImportKngMaterialsResp;
 import jack.digityhuman.atualcombattraining.entity.ActAiMaterial;
 import jack.digityhuman.atualcombattraining.entity.ActAiSession;
 import jack.digityhuman.atualcombattraining.mapper.ActAiMaterialMapper;
@@ -34,6 +36,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -75,6 +78,8 @@ class AssistantMaterialServiceImplTest {
     private DocumentTextExtractor textExtractor;
     @Mock
     private AssistantEventPublisher eventPublisher;
+    @Mock
+    private KngAiSourceClient kngAiSourceClient;
 
     @TempDir
     Path tempDir;
@@ -99,7 +104,7 @@ class AssistantMaterialServiceImplTest {
         AssistantProperties properties = new AssistantProperties();
         properties.setFileDir(tempDir.toString());
         materialService = new AssistantMaterialServiceImpl(sessionService, materialMapper, artifactService,
-                textExtractor, eventPublisher, properties, executor);
+                textExtractor, eventPublisher, properties, executor, kngAiSourceClient);
     }
 
     @AfterEach
@@ -252,5 +257,118 @@ class AssistantMaterialServiceImplTest {
         materialService.linkSessionMaterials(SESSION_ID, THEME_ID);
 
         verify(artifactService, never()).appendOrUpdateMaterial(anyString(), any());
+    }
+
+    // ---------------------------------------------------------------- 在线课堂材料导入
+
+    /** 在线课堂抽取结果（只给正文与元信息，不含磁盘路径） */
+    private KngAiSourceClient.ExtractedSource kngSource(String coursewareId, String title, String text) {
+        KngAiSourceClient.ExtractedSource source = new KngAiSourceClient.ExtractedSource();
+        source.coursewareId = coursewareId;
+        source.coursewareTitle = title;
+        source.sourceFileId = "file-" + coursewareId;
+        source.fileName = title + ".pptx";
+        source.fileType = "pptx";
+        source.fileSize = 108_148L;
+        source.text = text;
+        source.chars = text.length();
+        return source;
+    }
+
+    @Test
+    void 在线课堂导入_落库为kng前缀并推解析完成卡片() {
+        when(sessionService.requireSession(SESSION_ID)).thenReturn(session(THEME_ID));
+        when(kngAiSourceClient.extract(eq("cw-1"), eq("designAssistant"), any()))
+                .thenReturn(kngSource("cw-1", "平缝机产品知识培训", "平缝机产品知识正文"));
+
+        ImportKngMaterialsResp resp = materialService.importKngMaterials(
+                SESSION_ID, List.of("cw-1"), "Bearer token");
+
+        assertEquals(1, resp.getMaterials().size());
+        assertTrue(resp.getFailures().isEmpty());
+        ImportKngMaterialsResp.Material imported = resp.getMaterials().get(0);
+        // fileId 前缀区分来源：同会话重复选择靠它 upsert，不产生重复材料
+        assertEquals("kng_cw-1", imported.getFileId());
+        assertEquals(3, imported.getFileSource());
+        assertEquals("cw-1", imported.getSourceId());
+        assertEquals("平缝机产品知识培训", imported.getName());
+
+        ArgumentCaptor<ActAiMaterial> captured = ArgumentCaptor.forClass(ActAiMaterial.class);
+        verify(materialMapper).insert(captured.capture());
+        assertEquals("kng_cw-1", captured.getValue().getFileId());
+        assertEquals(THEME_ID, captured.getValue().getThemeId());
+        assertTrue(captured.getValue().getExtractText().contains("平缝机产品知识正文"));
+
+        // 在线课堂材料写进 artifact 时必须标 fileSource=3 与 sourceId
+        ArgumentCaptor<ObjectNode> materialCaptor = ArgumentCaptor.forClass(ObjectNode.class);
+        verify(artifactService).appendOrUpdateMaterial(eq(THEME_ID), materialCaptor.capture());
+        assertEquals(3, JsonSupport.integer(materialCaptor.getValue(), "fileSource"));
+        assertEquals("cw-1", JsonSupport.text(materialCaptor.getValue(), "sourceId"));
+
+        // 消息流"解析完成"卡片（已确认决策：卡片与 tab 更新都要）
+        ArgumentCaptor<Map<String, Object>> eventCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(eventPublisher).push(eq(SESSION_ID), isNull(), eq(BizTypes.PARSE_FILE), eventCaptor.capture());
+        Map<String, Object> params = eventCaptor.getValue();
+        assertEquals(1, filesOf(params).get(0).get("status"));
+        assertEquals("kng_cw-1", filesOf(params).get(0).get("id"));
+    }
+
+    @Test
+    void 在线课堂导入_单条失败不阻塞其他课件() {
+        when(sessionService.requireSession(SESSION_ID)).thenReturn(session(THEME_ID));
+        when(kngAiSourceClient.extract(eq("cw-bad"), eq("designAssistant"), any()))
+                .thenThrow(new BizException("课件源文件不存在，可能已被清理"));
+        when(kngAiSourceClient.extract(eq("cw-ok"), eq("designAssistant"), any()))
+                .thenReturn(kngSource("cw-ok", "可用课件", "可用正文"));
+
+        ImportKngMaterialsResp resp = materialService.importKngMaterials(
+                SESSION_ID, List.of("cw-bad", "cw-ok"), null);
+
+        assertEquals(1, resp.getMaterials().size());
+        assertEquals("kng_cw-ok", resp.getMaterials().get(0).getFileId());
+        assertEquals(1, resp.getFailures().size());
+        assertEquals("cw-bad", resp.getFailures().get(0).getCoursewareId());
+        assertTrue(resp.getFailures().get(0).getReason().contains("源文件不存在"));
+    }
+
+    @Test
+    void 在线课堂导入_重复课件按fileId更新不新增() {
+        ActAiMaterial existing = new ActAiMaterial();
+        existing.setId("mat-kng");
+        existing.setFileId("kng_cw-1");
+        existing.setVisibility(1);
+        doReturn(existing).when(materialMapper).selectOne(any());
+        when(sessionService.requireSession(SESSION_ID)).thenReturn(session(THEME_ID));
+        when(kngAiSourceClient.extract(eq("cw-1"), eq("designAssistant"), any()))
+                .thenReturn(kngSource("cw-1", "平缝机产品知识培训", "第二次抽取的正文"));
+
+        materialService.importKngMaterials(SESSION_ID, List.of("cw-1"), null);
+
+        verify(materialMapper, never()).insert(any(ActAiMaterial.class));
+        ArgumentCaptor<ActAiMaterial> captured = ArgumentCaptor.forClass(ActAiMaterial.class);
+        verify(materialMapper).updateById(captured.capture());
+        assertEquals("mat-kng", captured.getValue().getId());
+        assertTrue(captured.getValue().getExtractText().contains("第二次抽取"));
+    }
+
+    @Test
+    void 在线课堂导入_超过上限直接拒绝() {
+        assertThrows(BizException.class, () -> materialService.importKngMaterials(
+                SESSION_ID, List.of("a", "b", "c", "d", "e", "f"), null));
+        verify(kngAiSourceClient, never()).extract(any(), any(), any());
+    }
+
+    @Test
+    void 在线课堂导入_未建主题时不写产物() {
+        when(sessionService.requireSession(SESSION_ID)).thenReturn(session(null));
+        when(kngAiSourceClient.extract(eq("cw-1"), eq("designAssistant"), any()))
+                .thenReturn(kngSource("cw-1", "平铺方案", "正文"));
+
+        materialService.importKngMaterials(SESSION_ID, List.of("cw-1"), null);
+
+        verify(artifactService, never()).appendOrUpdateMaterial(anyString(), any());
+        // 不推 artifact 更新事件（没有 artifact 可写），但解析卡要推
+        verify(eventPublisher, never()).push(anyString(), any(), eq(BizTypes.ARTIFACT_UPDATED), any());
+        verify(eventPublisher).push(eq(SESSION_ID), isNull(), eq(BizTypes.PARSE_FILE), any());
     }
 }

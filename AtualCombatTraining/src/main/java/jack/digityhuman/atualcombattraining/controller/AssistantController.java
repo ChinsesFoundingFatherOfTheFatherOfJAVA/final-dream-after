@@ -3,8 +3,10 @@ package jack.digityhuman.atualcombattraining.controller;
 import jack.digityhuman.common.api.ApiResponse;
 import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.dto.req.AssistantSessionReq;
+import jack.digityhuman.atualcombattraining.dto.req.ImportKngMaterialsReq;
 import jack.digityhuman.atualcombattraining.dto.resp.AssistantSessionResp;
 import jack.digityhuman.atualcombattraining.dto.resp.FileUploadResp;
+import jack.digityhuman.atualcombattraining.dto.resp.ImportKngMaterialsResp;
 import jack.digityhuman.atualcombattraining.dto.resp.MaterialBriefResp;
 import jack.digityhuman.atualcombattraining.dto.resp.MessagePageResp;
 import jack.digityhuman.atualcombattraining.service.AssistantAsrService;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -91,6 +94,24 @@ public class AssistantController {
             materialService.acceptParse(sessionId, stored);
         }
         return ApiResponse.success(stored);
+    }
+
+    /**
+     * 导入在线课堂培训材料（AI 设计助手接入在线课堂，2026-10-28，03-接口文档 §3 API-04）
+     * <p>
+     * 逐条抽取后落 act_ai_material（file_id=kng_&lt;coursewareId&gt;，不复制源文件到 act-files），
+     * 有主题时同步写 artifact.materials，并推"解析完成"卡片 + 材料更新事件。
+     * 单条失败进 failures，不阻塞其他课件。
+     */
+    @PostMapping("/materials/from-kng")
+    public ApiResponse<ImportKngMaterialsResp> importKngMaterials(
+            @RequestBody ImportKngMaterialsReq req,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        if (req == null || req.getSessionId() == null || req.getSessionId().isBlank()) {
+            throw new BizException("会话不存在，请重新进入 AI 助手");
+        }
+        return ApiResponse.success(materialService.importKngMaterials(
+                req.getSessionId(), req.getCoursewareIds(), authorization));
     }
 
     /** FP-32 语音识别（multipart 字段 audio，16kHz 单声道 WAV） */

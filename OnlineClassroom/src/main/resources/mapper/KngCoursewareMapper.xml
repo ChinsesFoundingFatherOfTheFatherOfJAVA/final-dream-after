@@ -104,4 +104,83 @@
         from kng_courseware
         where platform_no like concat(#{prefix}, '%')
     </select>
+
+    <!--
+      AI 素材源（AI 设计助手 / AI 出题接入在线课堂，2026-10-28）。
+      固定条件：已发布(2)、已上架(on_sale=1)、文档(type=1)，且 id 落在"拥有文档源文件"的候选集合内。
+      候选集合由 KngCoursewareFileMapper 先按扩展名算出，本文件不跨表 JOIN（持久层规范）。
+      purpose 只影响抽取上限，不参与筛选，故不出现在 SQL 里。
+    -->
+    <sql id="aiSourceFilters">
+        <where>
+            status = 2
+            and on_sale = 1
+            and type = 1
+            <if test="candidateIds != null and candidateIds.size() > 0">
+                and id in
+                <foreach collection="candidateIds" item="candidateId" open="(" separator="," close=")">
+                    #{candidateId}
+                </foreach>
+            </if>
+            <if test="candidateIds == null or candidateIds.size() == 0">
+                and 1 = 0
+            </if>
+            <if test="query != null and query.keyword != null and query.keyword != ''">
+                and (
+                    title like concat('%', #{query.keyword}, '%')
+                    or catalog_name like concat('%', #{query.keyword}, '%')
+                    or created_by_name like concat('%', #{query.keyword}, '%')
+                )
+            </if>
+            <if test="catalogIds != null and catalogIds.size() > 0">
+                and catalog_id in
+                <foreach collection="catalogIds" item="catalogId" open="(" separator="," close=")">
+                    #{catalogId}
+                </foreach>
+            </if>
+            <if test="query != null and query.createTimeStart != null and query.createTimeStart != ''">
+                and created_at &gt;= #{query.createTimeStart}
+            </if>
+            <if test="query != null and query.createTimeEnd != null and query.createTimeEnd != ''">
+                and created_at &lt; date_add(#{query.createTimeEnd}, interval 1 day)
+            </if>
+            <if test="query != null and query.includeHidden != null and !query.includeHidden">
+                and (hidden is null or hidden = 0)
+            </if>
+        </where>
+    </sql>
+
+    <select id="countAiSources" resultType="long">
+        select count(*)
+        from kng_courseware
+        <include refid="aiSourceFilters"/>
+    </select>
+
+    <select id="selectPageAiSources" resultType="jack.digityhuman.onlineclassroom.entity.KngCourseware">
+        select *
+        from kng_courseware
+        <include refid="aiSourceFilters"/>
+        <!-- 排序白名单：orderBy 已在 Service 归一化成 updateTime/credits/duration，其余一律回落更新时间 -->
+        <choose>
+            <when test="orderBy == 'credits' and orderType == 'asc'">
+                order by study_score asc, id asc
+            </when>
+            <when test="orderBy == 'credits'">
+                order by study_score desc, id desc
+            </when>
+            <when test="orderBy == 'duration' and orderType == 'asc'">
+                order by (ifnull(standard_minutes, 0) * 60 + ifnull(standard_seconds, 0)) asc, id asc
+            </when>
+            <when test="orderBy == 'duration'">
+                order by (ifnull(standard_minutes, 0) * 60 + ifnull(standard_seconds, 0)) desc, id desc
+            </when>
+            <when test="orderType == 'asc'">
+                order by updated_at asc, id asc
+            </when>
+            <otherwise>
+                order by updated_at desc, id desc
+            </otherwise>
+        </choose>
+        limit #{offset}, #{limit}
+    </select>
 </mapper>

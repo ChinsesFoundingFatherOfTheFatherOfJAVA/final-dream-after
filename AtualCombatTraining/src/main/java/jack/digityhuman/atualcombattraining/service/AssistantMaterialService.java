@@ -1,6 +1,7 @@
 package jack.digityhuman.atualcombattraining.service;
 
 import jack.digityhuman.atualcombattraining.dto.resp.FileUploadResp;
+import jack.digityhuman.atualcombattraining.dto.resp.ImportKngMaterialsResp;
 import jack.digityhuman.atualcombattraining.dto.resp.MaterialBriefResp;
 
 import java.util.List;
@@ -43,4 +44,20 @@ public interface AssistantMaterialService {
      * @return 材料列表（无材料返回空列表，不报错）
      */
     List<MaterialBriefResp> listSessionMaterials(String sessionId);
+
+    /**
+     * 导入在线课堂培训材料（AI 设计助手接入在线课堂，2026-10-28）。
+     * <p>
+     * 链路：逐个课件调在线课堂抽取接口 → 规则摘要 → 以 {@code file_id=kng_<coursewareId>} upsert
+     * act_ai_material（不复制源文件到 act-files）→ 有主题时写 artifact.materials（fileSource=3）
+     * → 推一张"解析完成"卡片（biz-common-parse-file）+ artifact 更新事件。
+     * <p>
+     * 单条失败不阻塞其他课件：失败原因进 {@code failures}，用户能看到是哪门课件、为什么没进来。
+     *
+     * @param sessionId     会话 ID（必填，会话须存在）
+     * @param coursewareIds 课件 ID（1~5 个，内部去重）
+     * @param authorization 当前请求的 Authorization，转发给在线课堂做鉴权
+     * @return 成功材料与逐条失败原因
+     */
+    ImportKngMaterialsResp importKngMaterials(String sessionId, List<String> coursewareIds, String authorization);
 }

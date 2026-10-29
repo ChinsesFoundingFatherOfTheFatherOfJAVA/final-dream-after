@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="jack.digityhuman.onlineclassroom.mapper.KngCoursewareFileMapper">
+
+    <!--
+      AI 素材源：有文档类源文件的课件 id。
+      只扫本表（kng_courseware_file），跨表条件交回 Service 与课件查询组合（持久层规范：XML 不跨表 JOIN）。
+      扩展名匹配用 storage_path 后缀，不用 file_name：改名后展示名会变，存储路径扩展名才是真实格式。
+    -->
+    <select id="selectCoursewareIdsWithExtensions" resultType="string">
+        select distinct courseware_id
+        from kng_courseware_file
+        where courseware_id is not null
+        and (
+        <foreach collection="extensions" item="ext" separator=" or ">
+            lower(storage_path) like concat('%.', #{ext})
+        </foreach>
+        )
+    </select>
+
+    <!-- 一批课件的源文件（按 sort_order, id 升序）：列表页一次对齐来源文件，抽取取第一个文档文件 -->
+    <select id="selectByCoursewareIdsOrdered" resultType="jack.digityhuman.onlineclassroom.entity.KngCoursewareFile">
+        select *
+        from kng_courseware_file
+        where courseware_id in
+        <foreach collection="coursewareIds" item="coursewareId" open="(" separator="," close=")">
+            #{coursewareId}
+        </foreach>
+        order by sort_order asc, id asc
+    </select>
+</mapper>

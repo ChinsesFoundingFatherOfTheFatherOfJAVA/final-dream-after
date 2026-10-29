@@ -2,10 +2,12 @@ package jack.digityhuman.atualcombattraining.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import jack.digityhuman.atualcombattraining.agent.KngAiSourceClient;
 import jack.digityhuman.atualcombattraining.common.BizTypes;
 import jack.digityhuman.atualcombattraining.common.JsonSupport;
 import jack.digityhuman.atualcombattraining.config.AssistantProperties;
 import jack.digityhuman.atualcombattraining.dto.resp.FileUploadResp;
+import jack.digityhuman.atualcombattraining.dto.resp.ImportKngMaterialsResp;
 import jack.digityhuman.atualcombattraining.dto.resp.MaterialBriefResp;
 import jack.digityhuman.atualcombattraining.entity.ActAiMaterial;
 import jack.digityhuman.atualcombattraining.entity.ActAiSession;
@@ -16,6 +18,7 @@ import jack.digityhuman.atualcombattraining.service.AssistantMaterialService;
 import jack.digityhuman.atualcombattraining.service.AssistantSessionService;
 import jack.digityhuman.atualcombattraining.service.DocumentTextExtractor;
 import jack.digityhuman.atualcombattraining.service.MaterialTextSummarizer;
+import jack.digityhuman.common.api.BizException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -49,6 +52,14 @@ public class AssistantMaterialServiceImpl implements AssistantMaterialService {
     private static final int DEFAULT_VISIBILITY = 1;
     /** 材料来源标记（2=服务端存储，与 03 §3.5 示例语义一致） */
     private static final int FILE_SOURCE_SERVER = 2;
+    /** 在线课堂材料来源标记（3=在线课堂，与前端 MaterialsTab 的来源标签口径一致） */
+    private static final int FILE_SOURCE_KNG = 3;
+    /** 一次导入的课件上限（原平台设计助手抽屉上限 5） */
+    private static final int MAX_KNG_IMPORT = 5;
+    /** 在线课堂材料 file_id 前缀：与本地文件（UUID.ext）在此分界，同会话按它 upsert */
+    private static final String KNG_FILE_ID_PREFIX = "kng_";
+    /** 在线课堂材料在 act_ai_material 里勾选的用途（决定抽取上限 3 万字） */
+    private static final String KNG_PURPOSE = "designAssistant";
     /** 材料名/类型列宽（DDL） */
     private static final int LEN_NAME = 200;
     private static final int LEN_FILE_TYPE = 16;
@@ -61,6 +72,8 @@ public class AssistantMaterialServiceImpl implements AssistantMaterialService {
     private final AssistantEventPublisher eventPublisher;
     private final AssistantProperties properties;
     private final ThreadPoolTaskExecutor parseExecutor;
+    /** 在线课堂素材抽取客户端（不直读 kng_*，正文由在线课堂给） */
+    private final KngAiSourceClient kngAiSourceClient;
 
     public AssistantMaterialServiceImpl(AssistantSessionService sessionService,
                                         ActAiMaterialMapper materialMapper,
@@ -68,7 +81,8 @@ public class AssistantMaterialServiceImpl implements AssistantMaterialService {
                                         DocumentTextExtractor textExtractor,
                                         AssistantEventPublisher eventPublisher,
                                         AssistantProperties properties,
-                                        @Qualifier("parseExecutor") ThreadPoolTaskExecutor parseExecutor) {
+                                        @Qualifier("parseExecutor") ThreadPoolTaskExecutor parseExecutor,
+                                        KngAiSourceClient kngAiSourceClient) {
         this.sessionService = sessionService;
         this.materialMapper = materialMapper;
         this.artifactService = artifactService;
@@ -76,6 +90,7 @@ public class AssistantMaterialServiceImpl implements AssistantMaterialService {
         this.eventPublisher = eventPublisher;
         this.properties = properties;
         this.parseExecutor = parseExecutor;
+        this.kngAiSourceClient = kngAiSourceClient;
     }
 
     /**
@@ -244,5 +259,240 @@ public class AssistantMaterialServiceImpl implements AssistantMaterialService {
             return null;
         }
         return value.length() <= maxLength ? value : value.substring(0, maxLength);
+    }
+
+    // ---------------------------------------------------------------- 在线课堂材料导入
+
+    /**
+     * 导入在线课堂培训材料（2026-10-28）。
+     * <p>
+     * 与本地文件解析分开走：本地是"先落盘再异步 Tika"，这里是"在线课堂同步抽取后直接落库"。
+     * 之所以同步：用户点了确定就在等结果，抽完能立刻看到"解析完成"卡片和材料 tab；
+     * 单条耗时由在线课堂自己控（120s 超时），逐条失败也不会拖垮其余条目。
+     * <p>
+     * 不复制源文件到 act-files：在线课堂是课件的唯一宿主，复制会造成双份存储与版本漂移；
+     * 预览/可见性/归集都走 act_ai_material 里的 extract_text。
+     */
+    @Override
+    public ImportKngMaterialsResp importKngMaterials(String sessionId, List<String> coursewareIds,
+                                                     String authorization) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new BizException("会话不存在，请重新进入 AI 助手");
+        }
+        ActAiSession session = sessionService.requireSession(sessionId);
+        List<String> ids = normalizeCoursewareIds(coursewareIds);
+
+        ImportKngMaterialsResp resp = new ImportKngMaterialsResp();
+        List<Map<String, Object>> fileEntries = new ArrayList<>();
+        List<String> successNames = new ArrayList<>();
+        for (String coursewareId : ids) {
+            try {
+                KngAiSourceClient.ExtractedSource source =
+                        kngAiSourceClient.extract(coursewareId, KNG_PURPOSE, authorization);
+                ActAiMaterial stored = persistKng(session, source);
+                if (stored.getThemeId() != null) {
+                    artifactService.appendOrUpdateMaterial(stored.getThemeId(), toKngArtifactMaterial(stored, source));
+                }
+                resp.getMaterials().add(toImportMaterial(stored, source));
+                successNames.add(stored.getName());
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("id", stored.getFileId());
+                entry.put("name", stored.getName());
+                entry.put("status", 1);
+                fileEntries.add(entry);
+            } catch (Exception e) {
+                // 单条失败不影响其余课件：把原因收集起来，前端逐条提示
+                String reason = e.getMessage() == null || e.getMessage().isBlank()
+                        ? "课件解析失败" : e.getMessage();
+                log.warn("在线课堂材料导入失败 sessionId={} coursewareId={} 原因={}",
+                        sessionId, coursewareId, reason);
+                resp.getFailures().add(ImportKngMaterialsResp.Failure.of(coursewareId, reason));
+            }
+        }
+
+        // 一张卡片承载本次全部导入（已确认决策：消息流要"解析完成"卡片，且培训材料 tab 同时更新）
+        pushKngParseEvent(sessionId, fileEntries, successNames, resp.getFailures().size());
+        if (!resp.getMaterials().isEmpty()) {
+            pushKngArtifactUpdated(session);
+        }
+        return resp;
+    }
+
+    /** 课件 id 去重 + 上限校验（1~5 个；空列表直接拒绝，避免"点了确定什么都没发生"） */
+    private List<String> normalizeCoursewareIds(List<String> coursewareIds) {
+        if (coursewareIds == null || coursewareIds.isEmpty()) {
+            throw new BizException("请先选择在线课堂课件");
+        }
+        List<String> ids = new ArrayList<>();
+        for (String id : coursewareIds) {
+            String trimmed = id == null ? "" : id.trim();
+            if (trimmed.isEmpty() || ids.contains(trimmed)) {
+                continue;
+            }
+            ids.add(trimmed);
+        }
+        if (ids.isEmpty()) {
+            throw new BizException("请先选择在线课堂课件");
+        }
+        if (ids.size() > MAX_KNG_IMPORT) {
+            throw new BizException("一次最多导入 " + MAX_KNG_IMPORT + " 个在线课堂课件");
+        }
+        return ids;
+    }
+
+    /**
+     * 在线课堂材料落库：按 file_id=kng_&lt;coursewareId&gt; upsert。
+     * <p>
+     * 同一会话重复选同一门课件时更新文本与摘要，不新增行（作业要求：重复选择不产生重复材料）。
+     */
+    private ActAiMaterial persistKng(ActAiSession session, KngAiSourceClient.ExtractedSource source) {
+        String fileId = KNG_FILE_ID_PREFIX + source.coursewareId;
+        ActAiMaterial existing = materialMapper.selectOne(new LambdaQueryWrapper<ActAiMaterial>()
+                .eq(ActAiMaterial::getFileId, fileId)
+                .eq(ActAiMaterial::getSessionId, session.getId())
+                .last("LIMIT 1"));
+        String summary = MaterialTextSummarizer.summarize(source.text);
+        boolean insert = existing == null;
+        ActAiMaterial row = insert ? new ActAiMaterial() : existing;
+        if (insert) {
+            row.setFileId(truncate(fileId, LEN_FILE_ID));
+            row.setVisibility(DEFAULT_VISIBILITY);
+            row.setCreatedAt(LocalDateTime.now());
+        }
+        row.setSessionId(session.getId());
+        row.setThemeId(session.getThemeId());
+        // 材料名用课件名（不是源文件名）：设计助手侧看到的是"课件"，与本地上传的"文件"语义不同
+        row.setName(truncate(source.coursewareTitle, LEN_NAME));
+        row.setFileType(truncate(source.fileType, LEN_FILE_TYPE));
+        row.setFileSize(source.fileSize);
+        row.setExtractText(source.text);
+        row.setSummary(summary);
+        if (insert) {
+            materialMapper.insert(row);
+        } else {
+            materialMapper.updateById(row);
+        }
+        return row;
+    }
+
+    /** 在线课堂材料 → artifact.materials 条目（fileSource=3，sourceId=coursewareId） */
+    private ObjectNode toKngArtifactMaterial(ActAiMaterial stored, KngAiSourceClient.ExtractedSource source) {
+        ObjectNode material = JsonSupport.blankObject();
+        JsonSupport.putText(material, "id", truncate(stored.getFileId(), LEN_FILE_ID));
+        JsonSupport.putText(material, "name", truncate(stored.getName(), LEN_NAME));
+        JsonSupport.putText(material, "fileType", truncate(stored.getFileType(), LEN_FILE_TYPE));
+        material.put("fileSize", source.fileSize);
+        JsonSupport.putText(material, "fileSizeUnit", "B");
+        JsonSupport.putInt(material, "visibility", DEFAULT_VISIBILITY);
+        JsonSupport.putInt(material, "fileSource", FILE_SOURCE_KNG);
+        JsonSupport.putText(material, "sourceId", source.coursewareId);
+        return material;
+    }
+
+    /** act_ai_material → 导入响应条目 */
+    private ImportKngMaterialsResp.Material toImportMaterial(ActAiMaterial stored,
+                                                             KngAiSourceClient.ExtractedSource source) {
+        ImportKngMaterialsResp.Material material = new ImportKngMaterialsResp.Material();
+        material.setId(stored.getId());
+        material.setFileId(stored.getFileId());
+        material.setName(stored.getName());
+        material.setFileType(stored.getFileType());
+        material.setFileSize(stored.getFileSize());
+        material.setFileSource(FILE_SOURCE_KNG);
+        material.setSourceId(source.coursewareId);
+        material.setVisibility(stored.getVisibility());
+        return material;
+    }
+
+    /**
+     * 本次导入的"解析完成"卡片。
+     * <p>
+     * 与本地文件解析共用同一个 bizType 和两态卡片的 data 结构：一次导入只发完成态
+     * （用户点确定后抽取已同步做完，不再有"解析中"中间态），前端按 files[] 逐条列出课件名与状态。
+     */
+    private void pushKngParseEvent(String sessionId, List<Map<String, Object>> fileEntries,
+                                   List<String> successNames, int failureCount) {
+        if (fileEntries.isEmpty() && failureCount == 0) {
+            return;
+        }
+        Map<String, Object> params = new LinkedHashMap<>();
+        String contextId = UUID.randomUUID().toString().replace("-", "");
+        params.put("context_id", contextId);
+        params.put("call_id", contextId);
+        StringBuilder content = new StringBuilder();
+        if (successNames.isEmpty()) {
+            content.append("在线课堂材料导入失败（").append(failureCount).append(" 个课件未能解析）");
+        } else {
+            content.append("已从在线课堂导入 ").append(successNames.size()).append(" 份培训材料");
+            if (failureCount > 0) {
+                content.append("，另有 ").append(failureCount).append(" 个课件解析失败");
+            }
+            content.append("。");
+        }
+        params.put("content", content.toString());
+        // 失败项的 fileId 也列出，保证用户可以在卡片里看到"哪一门没进来"
+        params.put("files", fileEntries);
+        if (!successNames.isEmpty()) {
+            params.put("summary", MaterialTextSummarizer.preview(String.join("、", successNames), EVENT_PREVIEW_CHARS));
+        }
+        eventPublisher.push(sessionId, null, BizTypes.PARSE_FILE, params);
+    }
+
+    /**
+     * 通知右面板材料变化。
+     * <p>
+     * 推 full_replace 补丁的 /materials 段（与 Dify update_artifact / 可见性开关同一形状），
+     * 前端 applyPatch 据此原地刷新"培训材料"tab；无主题时没有 artifact 可写，前端靠解析卡与
+     * 会话材料接口兜底，不发这条事件。
+     */
+    private void pushKngArtifactUpdated(ActAiSession session) {
+        if (session.getThemeId() == null || session.getThemeId().isBlank()) {
+            return;
+        }
+        List<ActAiMaterial> rows = materialMapper.selectList(new LambdaQueryWrapper<ActAiMaterial>()
+                .eq(ActAiMaterial::getSessionId, session.getId())
+                .orderByAsc(ActAiMaterial::getCreatedAt)
+                .orderByAsc(ActAiMaterial::getId));
+        if (rows.isEmpty()) {
+            return;
+        }
+        var materials = JsonSupport.blankArray();
+        for (ActAiMaterial row : rows) {
+            ObjectNode item = JsonSupport.blankObject();
+            JsonSupport.putText(item, "id", truncate(row.getFileId(), LEN_FILE_ID));
+            JsonSupport.putText(item, "name", truncate(row.getName(), LEN_NAME));
+            JsonSupport.putText(item, "fileType", truncate(row.getFileType(), LEN_FILE_TYPE));
+            if (row.getFileSize() != null) {
+                item.put("fileSize", row.getFileSize());
+            } else {
+                item.putNull("fileSize");
+            }
+            JsonSupport.putText(item, "fileSizeUnit", "B");
+            JsonSupport.putInt(item, "visibility", row.getVisibility() == null ? DEFAULT_VISIBILITY : row.getVisibility());
+            boolean fromKng = row.getFileId() != null && row.getFileId().startsWith(KNG_FILE_ID_PREFIX);
+            JsonSupport.putInt(item, "fileSource", fromKng ? FILE_SOURCE_KNG : FILE_SOURCE_SERVER);
+            if (fromKng) {
+                JsonSupport.putText(item, "sourceId", row.getFileId().substring(KNG_FILE_ID_PREFIX.length()));
+            }
+            materials.add(item);
+        }
+        ObjectNode patch = JsonSupport.blankObject();
+        JsonSupport.putText(patch, "op", "full_replace");
+        JsonSupport.putText(patch, "path", "/materials");
+        patch.set("value", materials);
+
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("id", null);
+        params.put("version", "");
+        // content 的形状是 JSON-Patch 数组（与 update_artifact / 可见性开关一致）
+        params.put("content", JsonSupport.plainNode(arrayOf(patch)));
+        eventPublisher.push(session.getId(), null, BizTypes.ARTIFACT_UPDATED, params);
+    }
+
+    /** 单条补丁包成数组（事件 content 的形状是 JSON-Patch 数组） */
+    private com.fasterxml.jackson.databind.node.ArrayNode arrayOf(ObjectNode patch) {
+        var array = JsonSupport.blankArray();
+        array.add(patch);
+        return array;
     }
 }
