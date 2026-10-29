@@ -137,17 +137,17 @@ class ReportGenerationServiceTest {
     }
 
     @Test
-    void 语音依据维度_无语音时不计分且不参与总分() {
-        ScoringDimension dim = dimension("语速适中", 2, null);
+    void 语速指标_无语音时记0分并占权重() {
+        ScoringDimension dim = dimension("语速适中", 2,
+                "{\"metric\":\"speech_speed\",\"params\":{\"bestMin\":150,\"bestMax\":250}}");
 
         List<ReportGenerationServiceImpl.DimensionPlan> plans =
                 service.planDimensions(List.of(dim), List.of(), List.of(),
                         new ForbiddenWordChecker.ForbiddenResult(0, Map.of()));
 
-        assertFalse(plans.get(0).participates());
-        assertTrue(plans.get(0).excludeReason().contains("未参与本次评分"));
-        assertFalse(plans.get(0).excludeReason().contains("权重已计入总分"));
-        assertNull(plans.get(0).measured());
+        assertTrue(plans.get(0).participates());
+        assertEquals(0, plans.get(0).measured().score());
+        assertTrue(plans.get(0).measured().comment().contains("按 0 分计入总分"));
     }
 
     @Test

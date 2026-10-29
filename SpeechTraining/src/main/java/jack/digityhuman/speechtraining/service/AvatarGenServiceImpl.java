@@ -50,9 +50,9 @@ public class AvatarGenServiceImpl implements AvatarGenService {
             log.error("Dify生图工作流调用失败", e);
             throw new BizException("形象生成失败，请重试或上传本地图片");
         }
-        String imageUrl = outputs == null ? null : String.valueOf(outputs.get("image_url"));
-        if (imageUrl == null || imageUrl.isBlank() || "null".equals(imageUrl)) {
-            log.warn("Dify生图工作流未返回image_url: {}", outputs);
+        String imageUrl = imageUrl(outputs);
+        if (imageUrl == null) {
+            log.warn("生图工作流未返回图片地址: {}", outputs);
             throw new BizException("形象生成失败，请重试或上传本地图片");
         }
 
@@ -70,6 +70,20 @@ public class AvatarGenServiceImpl implements AvatarGenService {
             log.error("生图下载转存失败: {}", imageUrl, e);
             throw new BizException("形象生成失败，请重试或上传本地图片");
         }
+    }
+
+    /** native 返回 imageUrl，Dify 返回 image_url。只认其中一个，避免空值被当成地址。 */
+    static String imageUrl(Map<String, Object> outputs) {
+        if (outputs == null) {
+            return null;
+        }
+        for (String key : new String[]{"imageUrl", "image_url"}) {
+            Object value = outputs.get(key);
+            if (value instanceof String text && !text.isBlank()) {
+                return text;
+            }
+        }
+        return null;
     }
 
     /** 从 URL 提取扩展名（默认 png） */

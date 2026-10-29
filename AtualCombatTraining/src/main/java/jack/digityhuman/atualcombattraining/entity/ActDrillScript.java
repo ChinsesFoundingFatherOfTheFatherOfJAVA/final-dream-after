@@ -10,8 +10,8 @@ import java.time.LocalDateTime;
 /**
  * 编译产物实体（表 act_drill_script，列数=7，与 DDL 逐列对应）
  * <p>
- * 发布初始化产物：每个案例编译一条自包含剧本（角色全量设定+开场白+情境+评估维度 ID 列表）。
- * 编译过程是纯 Java 组装，不调用 LLM（发布不产生 AI 费用）。
+ * 发布初始化产物：每个已确认案例原样落一行，不在发布时再组装一份。
+ * 线上学员端用的是案例生成时的正文，本地生成只有一份 JSON，所以这里只存这一份。
  * compiled_payload 为 JSON 列，String 原样承载（无 JacksonTypeHandler，避免二次转义）。
  */
 @Data

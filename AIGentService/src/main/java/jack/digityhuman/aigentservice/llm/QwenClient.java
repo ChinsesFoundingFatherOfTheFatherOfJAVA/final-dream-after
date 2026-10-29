@@ -41,7 +41,7 @@ public class QwenClient implements LlmClient {
             @Value("${agent.qwen.base-url}") String baseUrl,
             @Value("${agent.qwen.api-key:}") String apiKey,
             @Value("${agent.qwen.model:qwen3.8-flash}") String model,
-            @Value("${agent.qwen.max-tokens:3000}") int maxTokens,
+            @Value("${agent.qwen.max-tokens:104857}") int maxTokens,
             @Value("${agent.qwen.temperature:0.3}") double temperature,
             @Value("${agent.qwen.top-p:0.3}") double topP,
             @Value("${agent.qwen.connect-timeout-ms:10000}") long connectTimeoutMs,

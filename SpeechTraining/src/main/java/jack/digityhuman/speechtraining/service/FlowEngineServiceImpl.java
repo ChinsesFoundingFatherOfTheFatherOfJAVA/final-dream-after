@@ -64,7 +64,7 @@ public class FlowEngineServiceImpl implements FlowEngineService {
     /** 节点类型 */
     private static final int NODE_START = 1;
     private static final int NODE_ROUND = 2;   // 陪练者问学员（大节点）
-    private static final int NODE_ROUND_ALT = 3; // 学员问陪练者（大节点，与 type2 同样处理）
+    private static final int NODE_ROUND_ALT = 3; // 学员问陪练者。开场不播陪练者句，等学员说完再播 trainerQuestion
     private static final int NODE_END = 4;
     private static final int NODE_NARRATION = 5; // 旁白节点（v1.2：消息 role=3 灰条，不占轮次）
     private static final int ROLE_NARRATION = 3;
@@ -147,9 +147,12 @@ public class FlowEngineServiceImpl implements FlowEngineService {
                     ROLE_NARRATION, narration, 1, null, null, 0, seqCursor++, null);
             allMessages.add(persisted);
         }
-        TrainingSessionMessage firstMessage = insertMessage(session.getId(), firstRoundNode, ROLE_TRAINER,
-                firstRoundNode.getTrainerQuestion(), 1, null, null, 0, seqCursor, null);
-        allMessages.add(firstMessage);
+        // type 3 是学员先说：开场只留旁白，陪练者句等学员说完再播
+        if (firstRoundNode.getNodeType() != NODE_ROUND_ALT) {
+            TrainingSessionMessage firstMessage = insertMessage(session.getId(), firstRoundNode, ROLE_TRAINER,
+                    firstRoundNode.getTrainerQuestion(), 1, null, null, 0, seqCursor, null);
+            allMessages.add(firstMessage);
+        }
 
         // 5. 组装响应（v1.1 增加 dialogueMode/trainerAvatar）
         VirtualTrainer trainer = trainerOf(projectId);
@@ -394,13 +397,20 @@ public class FlowEngineServiceImpl implements FlowEngineService {
                 roundNo, verdict.hitPointsJson(), 1, 0, nextSeq, voice);
         persistVoice(studentMessage, wav, voice, roundNo);
         session.setFinishedRounds(session.getFinishedRounds() + 1);
+        // type 3 本轮陪练者回应先落库；下一轮路由仍走下面的共用逻辑
+        TrainingSessionMessage currentReply = null;
+        if (currentNode.getNodeType() == NODE_ROUND_ALT) {
+            currentReply = insertMessage(sessionId, currentNode, ROLE_TRAINER,
+                    currentNode.getTrainerQuestion(), roundNo, null, null, 0, nextSeq + 1, null);
+        }
 
         // 4. 按出边权重随机路由
         TrainingNode next = routeByWeight(session.getProjectId(), currentNode.getId());
         // v1.2 旁白节点：途中遇到的旁白节点逐个落旁白消息（role=3 灰条）并继续路由，
         // 直到到达大节点或结束节点；旁白消息 seq 在 nextSeq 基础上连续递增
         List<TrainingSessionMessage> narrationMessages = new java.util.ArrayList<>();
-        int seqCursor = nextSeq + 1;
+        // type 3 已占用 nextSeq+1 播本轮陪练者回应，后续消息从 nextSeq+2 起
+        int seqCursor = currentNode.getNodeType() == NODE_ROUND_ALT ? nextSeq + 2 : nextSeq + 1;
         while (next != null && isNarrationNode(next)) {
             narrationMessages.add(insertMessage(sessionId, next, ROLE_NARRATION,
                     next.getNarration() == null ? "" : next.getNarration(),
@@ -413,15 +423,27 @@ public class FlowEngineServiceImpl implements FlowEngineService {
             SendMessageResp finished = SendMessageResp.finished(keyPointContents,
                     session.getFinishedRounds(), session.getTotalRounds());
             finished.setNarrationMessages(narrationMessages.stream().map(this::toMessageResp).toList());
+            if (currentReply != null) {
+                finished.setCurrentTrainerReply(toMessageResp(currentReply));
+            }
             return new SendOutcome(finished, studentMessage);
         }
         if (!isRoundNode(next)) {
             throw new BizException("流程拓扑异常：下游节点类型不合法");
         }
-        // 4.2 流转到下一个大节点：current_node_id 前进 + 落库陪练者问
-        //（roundNo=即将进行的轮次 finishedRounds+1；withdrawn=0；seq=nextSeq+1）
+        // 4.2 流转到下一个大节点：current_node_id 前进。
+        // type 2 立刻播陪练者句；type 3 等学员先说，陪练者句留到本轮通过后再播。
         session.setCurrentNodeId(next.getId());
         sessionMapper.updateById(session);
+        if (next.getNodeType() == NODE_ROUND_ALT) {
+            SendMessageResp waiting = SendMessageResp.passed(keyPointContents, null,
+                    session.getFinishedRounds(), session.getTotalRounds());
+            waiting.setNarrationMessages(narrationMessages.stream().map(this::toMessageResp).toList());
+            if (currentReply != null) {
+                waiting.setCurrentTrainerReply(toMessageResp(currentReply));
+            }
+            return new SendOutcome(waiting, studentMessage);
+        }
         TrainingSessionMessage trainerMessage = insertMessage(sessionId, next, ROLE_TRAINER,
                 next.getTrainerQuestion(), session.getFinishedRounds() + 1, null, null, 0, seqCursor, null);
 
@@ -429,6 +451,9 @@ public class FlowEngineServiceImpl implements FlowEngineService {
         SendMessageResp passed = SendMessageResp.passed(keyPointContents, nextMsg,
                 session.getFinishedRounds(), session.getTotalRounds());
         passed.setNarrationMessages(narrationMessages.stream().map(this::toMessageResp).toList());
+        if (currentReply != null) {
+            passed.setCurrentTrainerReply(toMessageResp(currentReply));
+        }
         return new SendOutcome(passed, studentMessage);
     }
 

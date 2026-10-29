@@ -13,4 +13,9 @@ import java.util.List;
  */
 public record MetricOutcome(int score, String factText, String comment,
                             List<String> goodPoints, List<String> improvements) {
+
+    /** 指标要求的数据一次都没有：记 0 分并占权重，而不是把这一维从总分里拿掉。 */
+    public static MetricOutcome zero(String comment) {
+        return new MetricOutcome(0, null, comment, List.of(), List.of(comment));
+    }
 }

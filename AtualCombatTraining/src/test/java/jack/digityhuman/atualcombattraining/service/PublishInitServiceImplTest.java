@@ -3,12 +3,13 @@ package jack.digityhuman.atualcombattraining.service;
 import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.dto.resp.PublishResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ScriptProgressResp;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jack.digityhuman.atualcombattraining.entity.ActAiArtifact;
 import jack.digityhuman.atualcombattraining.entity.ActCaseScript;
+import jack.digityhuman.atualcombattraining.entity.ActScenarioUnit;
 import jack.digityhuman.atualcombattraining.entity.ActTheme;
 import jack.digityhuman.atualcombattraining.mapper.ActCaseScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActDrillScriptMapper;
-import jack.digityhuman.atualcombattraining.mapper.ActEvaluationDimensionMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActScenarioUnitMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
 import jack.digityhuman.atualcombattraining.service.impl.PublishInitServiceImpl;
@@ -29,12 +30,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * 发布与初始化单测（FP-41）：
- * 进度计算（total/completed/failed/progress）、无案例时直接完成、发布前置校验（未确认内容 / 状态不允许）、
+ * 进度计算（total/completed/failed/progress）、无案例时拒绝发布、发布前置校验（未确认内容 / 状态不允许）、
  * 重试无失败项时拒绝。
  */
 @ExtendWith(MockitoExtension.class)
@@ -48,8 +50,6 @@ class PublishInitServiceImplTest {
     private ActDrillScriptMapper drillScriptMapper;
     @Mock
     private ActScenarioUnitMapper unitMapper;
-    @Mock
-    private ActEvaluationDimensionMapper dimensionMapper;
     @Mock
     private ArtifactService artifactService;
     @Mock
@@ -77,12 +77,27 @@ class PublishInitServiceImplTest {
 
     /** 案例（指定状态） */
     private ActCaseScript caseScript(String id, String status) {
+        return caseScript(id, status, null);
+    }
+
+    private ActCaseScript caseScript(String id, String status, String unitId) {
         ActCaseScript script = new ActCaseScript();
         script.setId(id);
         script.setThemeId("theme-1");
         script.setVersionNo(1);
         script.setStatus(status);
+        script.setScenarioUnitId(unitId);
         return script;
+    }
+
+    private List<ActScenarioUnit> units(String... ids) {
+        List<ActScenarioUnit> units = new ArrayList<>();
+        for (String id : ids) {
+            ActScenarioUnit unit = new ActScenarioUnit();
+            unit.setId(id);
+            units.add(unit);
+        }
+        return units;
     }
 
     private void stubConfirmedArtifact() {
@@ -97,11 +112,12 @@ class PublishInitServiceImplTest {
     void 进度计算_按案例状态统计并四舍五入() {
         when(themeMapper.selectById("theme-1")).thenReturn(theme(1, 1));
         List<ActCaseScript> cases = new ArrayList<>();
-        cases.add(caseScript("c1", "compiled"));
-        cases.add(caseScript("c2", "compiled"));
-        cases.add(caseScript("c3", "failed"));
-        cases.add(caseScript("c4", "draft"));
+        cases.add(caseScript("c1", "compiled", "s1"));
+        cases.add(caseScript("c2", "compiled", "s1"));
+        cases.add(caseScript("c3", "failed", "s2"));
+        cases.add(caseScript("c4", "draft", "s2"));
         when(caseScriptMapper.selectList(any())).thenReturn(cases);
+        when(unitMapper.selectList(any())).thenReturn(units("s1", "s2", "s3"));
 
         ScriptProgressResp progress = publishInitService.scriptProgress("theme-1");
 
@@ -110,18 +126,21 @@ class PublishInitServiceImplTest {
         assertEquals(1, progress.getFailed());
         assertEquals(50, progress.getProgress());
         assertEquals(1, progress.getStatus());
+        assertEquals(3, progress.getSceneTotal());
+        assertEquals(1, progress.getSceneCompleted());
     }
 
     @Test
-    void 进度计算_无案例时进度为100() {
-        when(themeMapper.selectById("theme-1")).thenReturn(theme(3, 1));
+    void 进度计算_无案例时进度为0() {
+        when(themeMapper.selectById("theme-1")).thenReturn(theme(0, 1));
         when(caseScriptMapper.selectList(any())).thenReturn(new ArrayList<>());
+        when(unitMapper.selectList(any())).thenReturn(new ArrayList<>());
 
         ScriptProgressResp progress = publishInitService.scriptProgress("theme-1");
 
         assertEquals(0, progress.getTotal());
-        assertEquals(100, progress.getProgress());
-        assertEquals(3, progress.getStatus());
+        assertEquals(0, progress.getProgress());
+        assertEquals(0, progress.getStatus());
     }
 
     @Test
@@ -132,6 +151,7 @@ class PublishInitServiceImplTest {
         cases.add(caseScript("c2", "draft"));
         cases.add(caseScript("c3", "draft"));
         when(caseScriptMapper.selectList(any())).thenReturn(cases);
+        when(unitMapper.selectList(any())).thenReturn(new ArrayList<>());
 
         assertEquals(33, publishInitService.scriptProgress("theme-1").getProgress());
     }
@@ -149,7 +169,7 @@ class PublishInitServiceImplTest {
     void 发布_状态不允许时拒绝() {
         when(themeMapper.selectById("theme-1")).thenReturn(theme(1, 1));
         stubConfirmedArtifact();
-        when(caseScriptMapper.selectList(any())).thenReturn(new ArrayList<>());
+        when(caseScriptMapper.selectList(any())).thenReturn(List.of(caseScript("c1", "draft")));
         // 条件更新影响 0 行 = 状态已不是草稿/已发布
         when(themeMapper.update(any(), any())).thenReturn(0);
 
@@ -175,20 +195,38 @@ class PublishInitServiceImplTest {
     }
 
     @Test
-    void 发布_无案例时直接完成并新建版本() {
+    void 发布落库_按场景名和案例名取回原JSON() {
+        ActAiArtifact artifact = new ActAiArtifact();
+        artifact.setContent("""
+                {"scenarios":[
+                  {"name":"其他场景","cases":[{"scriptName":"同名案例","scriptOpening":"不是这条"}]},
+                  {"name":"初次拜访","cases":[{"scriptName":"同名案例","scriptOpening":"就是这条"}]}
+                ]}
+                """);
+        when(artifactService.findLatestConfirmed("theme-1")).thenReturn(artifact);
+        ActScenarioUnit unit = new ActScenarioUnit();
+        unit.setUnitName("初次拜访");
+        when(unitMapper.selectById("unit-1")).thenReturn(unit);
+        ActCaseScript script = caseScript("c1", "draft");
+        script.setScenarioUnitId("unit-1");
+        script.setScriptName("同名案例");
+
+        ObjectNode found = publishInitService.confirmedCase("theme-1", script);
+
+        assertEquals("就是这条", found.get("scriptOpening").asText());
+    }
+
+    @Test
+    void 发布_无案例时拒绝且不改状态() {
         when(themeMapper.selectById("theme-1")).thenReturn(theme(0, 1));
         stubConfirmedArtifact();
         when(caseScriptMapper.selectList(any())).thenReturn(new ArrayList<>());
-        when(themeMapper.update(any(), any())).thenReturn(1);
-        when(themeVersionService.createVersionFromCurrent("theme-1")).thenReturn(2);
-        when(unitMapper.selectList(any())).thenReturn(new ArrayList<>());
-        when(drillScriptMapper.selectList(any())).thenReturn(new ArrayList<>());
 
-        PublishResp resp = publishInitService.publish("theme-1");
+        BizException error = assertThrows(BizException.class, () -> publishInitService.publish("theme-1"));
 
-        assertEquals(3, resp.getStatus());
-        assertEquals(0, resp.getTotalCases());
-        verify(themeVersionService).createVersionFromCurrent("theme-1");
+        assertTrue(error.getMessage().contains("请先在 AI 助手中生成并确认实战案例"));
+        verify(themeMapper, never()).update(any(), any());
+        verify(themeVersionService, never()).createVersionFromCurrent(anyString());
     }
 
     @Test

@@ -77,6 +77,8 @@ public final class AiGenDtos {
     @Data
     public static class RoundItem {
         private Integer round;
+        /** student｜trainer：该轮先说的一方。缺省时导入才按 firstSpeaker 回退。 */
+        private String speakerOrder;
         private String trainerQuestion;
         private String standardScript;
         private List<KeyPointItem> keyPoints;

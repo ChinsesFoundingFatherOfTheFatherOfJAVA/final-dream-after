@@ -16,7 +16,7 @@ AI 设计助手（Dify/native 双 provider 编排 + 主题/案例生成工作流
 - native 编排：`agent/AgentRuntimeRouter` → `NativeAgentClient` → AIGentService:8086；
   只替换编排调用，WS 帧、消息落库、工具 bizType 事件仍在本应用。
 - P2 workflow：`agent/WorkflowRuntimeRouter` → `NativeWorkflowClient`；主题
-  `agent.theme-gen.provider`、案例 `agent.case-gen.provider` 默认 dify。
+  `agent.theme-gen.provider`、案例 `agent.case-gen.provider` 默认 native。同一轮失败不自动改打 Dify。
 - native 调用 AIGentService `/internal/**` 时携带 `X-Internal-Token`，值来自
   `AGENT_INTERNAL_TOKEN`；`GET /api/act/internal/memory/{sessionId}` 只供 L3 记忆重建，
   同样强制 token。
@@ -38,7 +38,7 @@ AI 设计助手（Dify/native 双 provider 编排 + 主题/案例生成工作流
 5. **响应契约**：`ApiResponse{code,message,data}`、`PageResult{records,total}`、`BizException`、`GlobalExceptionHandler`、
    MyBatis-Plus 分页插件统一来自 **`after-end-common`** 模块（`jack.digityHuman:after-end-common`，经 AutoConfiguration 自动装配），
    **禁止在本工程重建这些类**；code=0 成功、业务失败 HTTP 200 + 非零 code，id 一律 string。
-6. **编排 provider**：`agent.chat.provider=dify|native`，默认 dify。native 失败不得在同一轮自动重试
+6. **编排 provider**：`agent.chat.provider=dify|native`，默认 native。native 失败不得在同一轮自动重试
    Dify（工具可能已产生副作用）；切换 provider 当前需要重启本应用，后续接 Nacos 动态配置再放开。
 7. **P2 workflow**：主题生成仍按 `node_finished` 逐段落 artifact 并推 `artifact-generated`；
    案例生成仍按单场景校验/合入；native 分支复用现有校验、重试和事件逻辑。

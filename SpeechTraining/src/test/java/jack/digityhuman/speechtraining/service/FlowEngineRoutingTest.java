@@ -237,4 +237,40 @@ class FlowEngineRoutingTest {
                 m.getSessionId() == 500L && (m.getSeq() == 0 || m.getSeq() == 1)));
         verify(sessionMapper).insert(argThat((TrainingSession s) -> s.getCurrentNodeId().equals(20L)));
     }
+
+    @Test
+    void 学员先说开场只落旁白() {
+        TrainingProject project = new TrainingProject();
+        project.setId(100L);
+        project.setStatus(1);
+        when(projectMapper.selectById(100L)).thenReturn(project);
+
+        TrainingNode start = new TrainingNode();
+        start.setId(1L);
+        start.setNodeType(1);
+        TrainingNode firstRound = round(20L, "学员开场");
+        firstRound.setNodeType(3);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(start, firstRound));
+        when(sessionMapper.insert(any(TrainingSession.class))).thenAnswer(inv -> {
+            inv.getArgument(0, TrainingSession.class).setId(500L);
+            return 1;
+        });
+        when(virtualTrainerMapper.selectOne(any())).thenReturn(null);
+
+        FlowEngineServiceImpl service = new FlowEngineServiceImpl(
+                sessionMapper, messageMapper, projectMapper, nodeMapper, edgeMapper,
+                virtualTrainerMapper, reportMapper, acousticMapper, difyScoringService,
+                userContext, reportGenerationService, fileStorageService,
+                new TransactionTemplate(mock(PlatformTransactionManager.class))) {
+            @Override
+            TrainingNode routeByWeight(Long projectId, Long fromNodeId) {
+                return firstRound;
+            }
+        };
+
+        StartSessionResp resp = service.start(100L);
+
+        assertEquals(0, resp.getMessages().size());
+        verify(messageMapper, never()).insert(any(TrainingSessionMessage.class));
+    }
 }

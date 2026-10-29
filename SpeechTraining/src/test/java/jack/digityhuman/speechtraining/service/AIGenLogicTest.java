@@ -58,6 +58,37 @@ class AIGenLogicTest {
     }
 
     @Test
+    void importScriptUsesSpeakerOrderOverLedMarker() {
+        AiGenDtos.ImportScriptReq req = new AiGenDtos.ImportScriptReq();
+        req.setFirstSpeaker("student");
+        AiGenDtos.RoundItem first = round(1);
+        first.setSpeakerOrder("student");
+        first.setAnalysis("学员主导型对话：模型误标，但顺序字段优先");
+        AiGenDtos.RoundItem second = round(2);
+        second.setSpeakerOrder("trainer");
+        req.setRounds(List.of(first, second));
+
+        AiGenRespDtos.ImportScriptResp resp = service.importScript(req);
+
+        assertThat(resp.getNodes().get(1).getNodeType()).isEqualTo(3);
+        assertThat(resp.getNodes().get(2).getNodeType()).isEqualTo(2);
+    }
+
+    @Test
+    void importScriptKeepsStudentLedRoundsAsType3() {
+        AiGenDtos.ImportScriptReq req = new AiGenDtos.ImportScriptReq();
+        req.setFirstSpeaker("student");
+        AiGenDtos.RoundItem first = round(1);
+        first.setAnalysis("学员主导型对话：学员持续发问");
+        req.setRounds(List.of(first, round(2)));
+
+        AiGenRespDtos.ImportScriptResp resp = service.importScript(req);
+
+        assertThat(resp.getNodes().get(1).getNodeType()).isEqualTo(3);
+        assertThat(resp.getNodes().get(2).getNodeType()).isEqualTo(3);
+    }
+
+    @Test
     void importScriptInsertsNarrationNodeWhenPresent() {
         // v1.2：narration 非空 → 开始节点与首个大节点之间插入 nodeType=5 旁白节点
         AiGenDtos.ImportScriptReq req = new AiGenDtos.ImportScriptReq();
@@ -71,7 +102,8 @@ class AIGenLogicTest {
         assertThat(resp.getNodes().get(1).getNodeType()).isEqualTo(5);
         assertThat(resp.getNodes().get(1).getNodeName()).isEqualTo("旁白");
         assertThat(resp.getNodes().get(1).getNarration()).contains("张伟");
-        assertThat(resp.getNodes().get(2).getNodeType()).isEqualTo(3); // 学员先说大节点
+        assertThat(resp.getNodes().get(2).getNodeType()).isEqualTo(3); // 第 1 轮学员先说
+        assertThat(resp.getNodes().get(3).getNodeType()).isEqualTo(2); // 第 2 轮起陪练者先说
         assertThat(resp.getNodes().get(2).getPositionY()).isEqualTo(100 + 2 * 260);
         assertThat(resp.getEdges()).hasSize(4);
         // 边链：开始0→旁白1→轮2→轮3→结束4

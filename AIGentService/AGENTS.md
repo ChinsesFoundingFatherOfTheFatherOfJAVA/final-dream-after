@@ -35,10 +35,10 @@
 - 监控：Actuator 暴露 `health/metrics/prometheus`；chat/workflow/LLM 提供计数与耗时直方图，
   LLM outcome 区分 `success/rate_limited/timeout/server_error/transport_error`；
 - SSE：当前输出完整 `agent_message` 后立即 `message_end`，还不是逐 token 流；
-- provider 分流在 AtualCombatTraining：`agent.chat.provider=dify|native`，默认 dify；
+- provider 分流在消费端：`agent.<name>.provider=dify|native`，2026-10-27 起默认 native。
 - native 失败不在同一轮自动重试 Dify，避免工具副作用重复执行。
 - P2：`/internal/agent/task/{name}` blocking + `/internal/agent/task/theme-gen/stream` SSE；
-- P3 文本任务：`gen-scene` / `gen-outline` / `gen-script` / `speech-score` / `report-score`；
+- P3 文本任务：`gen-scene` / `gen-outline` / `gen-script` / `speech-score` / `report-score` / `exam-gen`；
 - 文生图：`avatar-gen` 通过 ModelScope 异步接口生成，模型 `Qwen/Qwen-Image-2.1-Turbo`；
   Dify 仍可通过 provider 切回。
 - Workflow prompt/schema 从 DSL 自动提取到 `resources/prompts/workflows/`，不得手工改写；

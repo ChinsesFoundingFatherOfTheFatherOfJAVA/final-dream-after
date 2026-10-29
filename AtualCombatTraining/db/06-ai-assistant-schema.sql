@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS act_drill_script (
   version_no        INT          NOT NULL,
   case_script_id    VARCHAR(32)  NOT NULL,
   scenario_unit_id  VARCHAR(32)  NOT NULL,
-  compiled_payload  JSON         NOT NULL COMMENT 'self-contained drill script: actor setup + opening + scene + dimension refs',
+  compiled_payload  JSON         NOT NULL COMMENT 'confirmed case JSON, stored as-is at publish',
   compiled_at       DATETIME              DEFAULT NULL,
   PRIMARY KEY (id),
   KEY idx_act_drill_theme_version (theme_id, version_no),

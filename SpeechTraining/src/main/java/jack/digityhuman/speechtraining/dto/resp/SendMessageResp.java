@@ -27,6 +27,8 @@ public class SendMessageResp {
     private Integer totalRounds;
     /** 通过且未结束时：下一个陪练者问题 */
     private MessageResp nextTrainerMessage;
+    /** type 3 本轮陪练者回应，先于下一轮开场展示 */
+    private MessageResp currentTrainerReply;
     /** 流转途中经过的旁白消息（v1.2 role=3，微信撤回式灰条；可能连续多个旁白节点） */
     private List<MessageResp> narrationMessages;
 

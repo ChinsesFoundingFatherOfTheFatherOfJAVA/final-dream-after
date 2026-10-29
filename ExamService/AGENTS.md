@@ -41,7 +41,7 @@
 - **保密题库**（secrecy=1）：仅创建者及超管可编辑——列表/详情接口都要回填 `permissions` 能力集。
 - 查重：入库维护 `summary_norm`（去空白/HTML 归一）；`sim_hash` 列预留不实施。
 - `exam_answer_stat` 数据由考试模块上线后回填；演示可插种子，但**不要**在业务代码里造数。
-- Dify AI 建题（exam.dify.* 配置）按 FP-11 实施时才接线；未配置时该接口报清晰业务错误。
+- AI 出题默认 `agent.exam-gen.provider=native`，走 AIGentService `exam-gen`。改回 dify 并重启才用旧工作流；同一轮失败不自动降级。
 
 ## 5. 构建与验证
 

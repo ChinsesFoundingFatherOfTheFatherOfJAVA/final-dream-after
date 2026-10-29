@@ -52,6 +52,7 @@ AI 对练-话术训练业务：管理端（项目创建/评分维度/虚拟陪�
   已支持 native；`scoring` 映射 `speech-score`，`report-scoring` 映射 `report-score`，
   `avatar-gen` 调 ModelScope Qwen-Image。
   native 超时/非 0 业务码统一转 `BizException`，不静默回退 Dify。
+- **语速计分（2026-10-26）**：`speech_speed` 有语音轮按公式算；一次语音都没有记 0 分并占权重，雷达图画出。其它语音依据维度无数据仍 `score=null`，不进分子分母。不要把这两类再合成"未参与就不扣分"。
 - **语音链路**：TTS/ASR/语气评分（`speech.tone.*`）的分池线程与超时口径不要随意调整，改动前读
   `学员端话术训练模块\08-口型驱动与语音维度专项方案.md`。
 - 运行时上传文件（封面/音频/头像）目录见 `app.upload.*`，不进 git。

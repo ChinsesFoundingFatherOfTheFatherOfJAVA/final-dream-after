@@ -1,6 +1,8 @@
 package jack.digityhuman.examservice.service.impl;
 
 import jack.digityhuman.common.api.BizException;
+import jack.digityhuman.examservice.agent.ExamGenProvider;
+import jack.digityhuman.examservice.agent.NativeExamGenClient;
 import jack.digityhuman.examservice.dify.DifyProperties;
 import jack.digityhuman.examservice.dify.DifyWorkflowSupport;
 import jack.digityhuman.examservice.dto.req.AiGenDtos;
@@ -8,21 +10,28 @@ import jack.digityhuman.examservice.dto.resp.AiGenRespDtos;
 import jack.digityhuman.examservice.service.AiGenService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.io.RandomAccessReadBuffer;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.tika.Tika;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * AI 建题实现（FP-11）。
  *
- * <p>链路：素材文本 + 各题型数量 → Dify「AI出题」工作流（blocking）→ outputs.questions
+ * <p>链路：素材文本 + 各题型数量 → AIGentService exam-gen（默认）或 Dify「AI出题」→ outputs.questions
  * → 逐题校验题型编码后转成 {@link AiGenRespDtos.QuestionDraft} 返回前端卡片流。
  *
  * <p>本类只负责"生成草稿"，不落库——题目真正入库走 FP-10 的录入（/ques 或 /ques/batch-create）。
@@ -35,6 +44,10 @@ public class AiGenServiceImpl implements AiGenService {
 
     /** 03 §7.2：文件解析后文本上限。 */
     private static final int MAX_TEXT_CHARS = 20_000;
+    /** FP-11：单文件上限 100MB。 */
+    private static final long MAX_FILE_BYTES = 100L * 1024 * 1024;
+    private static final Set<String> SUPPORTED_FILE_EXTENSIONS =
+            Set.of(".doc", ".docx", ".ppt", ".pptx", ".pps", ".pdf");
     /** FP-11：每种题型 0~35。 */
     private static final int MAX_PER_TYPE = 35;
     /** 题型编码：0单选 1多选 2判断 3填空 4问答（组合题 5 不由 AI 生成）。 */
@@ -45,6 +58,8 @@ public class AiGenServiceImpl implements AiGenService {
 
     private final DifyProperties difyProperties;
     private final DifyWorkflowSupport difyWorkflowSupport;
+    private final ExamGenProvider examGenProvider;
+    private final NativeExamGenClient nativeExamGenClient;
 
     /** Tika 是线程安全的，复用一个实例即可。 */
     private final Tika tika = new Tika();
@@ -69,8 +84,8 @@ public class AiGenServiceImpl implements AiGenService {
             throw new BizException("请至少为一种题型设置题量");
         }
 
-        // 未配置就直说：否则前端要白等 120s 才拿到超时
-        if (!difyProperties.aiGenConfigured()) {
+        // native 不依赖 Dify key；只有显式切回 dify 时才检查旧配置。
+        if (!examGenProvider.usesNative() && !difyProperties.aiGenConfigured()) {
             throw new BizException(CODE_AI_GEN_FAILED,
                     "AI 生成失败：Dify「AI出题」工作流未配置（缺 exam.dify.ai-gen-api-key）");
         }
@@ -79,7 +94,9 @@ public class AiGenServiceImpl implements AiGenService {
         inputs.put("material_text", material);
         inputs.putAll(counts);
 
-        Map<String, Object> outputs = difyWorkflowSupport.runAiGen(inputs);
+        Map<String, Object> outputs = examGenProvider.usesNative()
+                ? nativeExamGenClient.run(inputs)
+                : difyWorkflowSupport.runAiGen(inputs);
 
         Object success = outputs.get("success");
         if (success != null && !Boolean.parseBoolean(String.valueOf(success))) {
@@ -125,8 +142,19 @@ public class AiGenServiceImpl implements AiGenService {
         if (file == null || file.isEmpty()) {
             throw new BizException("请选择要上传的文件");
         }
-        try (InputStream in = file.getInputStream()) {
-            String text = tika.parseToString(in);
+        String filename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename();
+        String extension = extensionOf(filename);
+        if (!SUPPORTED_FILE_EXTENSIONS.contains(extension)) {
+            throw new BizException(CODE_PARSE_FAILED,
+                    "文件解析异常：仅支持 .doc/.docx/.ppt/.pptx/.pps/.pdf");
+        }
+        if (file.getSize() > MAX_FILE_BYTES) {
+            throw new BizException(CODE_PARSE_FAILED, "文件解析异常：单个文件不能超过 100MB");
+        }
+        try {
+            String text = ".pdf".equals(extension)
+                    ? extractPdfText(file)
+                    : extractOfficeText(file);
             text = text == null ? "" : text.trim();
             if (text.isEmpty()) {
                 throw new BizException(CODE_PARSE_FAILED, "文件解析异常：未提取到文本（可能是扫描件或缺文本层）");
@@ -136,8 +164,31 @@ public class AiGenServiceImpl implements AiGenService {
         } catch (BizException e) {
             throw e;
         } catch (Exception e) {
-            log.warn("AI 建题文件解析失败: file={}, err={}", file.getOriginalFilename(), e.getMessage());
+            log.warn("AI 建题文件解析失败: file={}, err={}", filename, e.getMessage());
             throw new BizException(CODE_PARSE_FAILED, "文件解析异常（非模板格式/文件损坏）");
+        }
+    }
+
+    private String extensionOf(String filename) {
+        int dot = filename.lastIndexOf('.');
+        return dot < 0 ? "" : filename.substring(dot).toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * Tika 2.x 的 PDF 模块依赖 PDFBox 2，而本工程答卷导出已使用 PDFBox 3；
+     * 两者共存会在 Tika PDFParser 内触发 NoSuchMethodError，故 PDF 分支直接调用 PDFBox 3。
+     */
+    private String extractPdfText(MultipartFile file) throws IOException {
+        try (InputStream in = file.getInputStream();
+             RandomAccessReadBuffer source = new RandomAccessReadBuffer(in);
+             PDDocument document = Loader.loadPDF(source)) {
+            return new PDFTextStripper().getText(document);
+        }
+    }
+
+    private String extractOfficeText(MultipartFile file) throws Exception {
+        try (InputStream in = file.getInputStream()) {
+            return tika.parseToString(in);
         }
     }
 

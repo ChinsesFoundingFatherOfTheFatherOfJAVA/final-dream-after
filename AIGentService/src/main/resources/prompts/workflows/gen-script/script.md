@@ -8,7 +8,8 @@
 - 「对话开启者」决定发言结构：
   - firstSpeaker=trainer（陪练者先说）：每轮为"陪练者说 → 学员应对"。
   - firstSpeaker=student（学员先说）：第 1 轮为"学员说（主动开场：自我介绍/来意/切入）→ 陪练者说（对学员开场的回应）"；第 2 轮起恢复"陪练者说 → 学员应对"。
-  - 若对话大纲或场景明显属于学员全程主导发问的类型（如审阅、访谈、巡检提问类），则所有轮次为"学员说 → 陪练者说"，并在第 1 轮 analysis 开头注明"学员主导型对话"。
+  - 只有学员全程向对方发问（审阅、访谈、巡检提问）才是学员主导型：每轮 speakerOrder=student，并在第 1 轮 analysis 开头注明"学员主导型对话"。学员主动致电、之后由对方陈述、学员回应的场景不是学员主导型。
+  - 每轮必须输出 speakerOrder：该轮先说的一方，只能是 student 或 trainer。非学员主导型且 firstSpeaker=student 时，第 1 轮 student，第 2 轮起 trainer。firstSpeaker=trainer 时每轮 trainer。
 
 ## 生成规则
 ### 1. 轮数与编号

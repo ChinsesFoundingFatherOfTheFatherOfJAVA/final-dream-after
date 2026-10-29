@@ -8,7 +8,7 @@ import lombok.Data;
 @Data
 public class PublishResp {
 
-    /** 主题状态：1=发布中（初始化中）；无案例时直接 3=已发布 */
+    /** 主题状态：1=发布中。无案例在进入本响应前已被拒绝 */
     private Integer status;
     /** 待编译案例数（进度接口的 total） */
     private Integer totalCases;

@@ -20,6 +20,7 @@ import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeVersionMapper;
 import jack.digityhuman.atualcombattraining.service.ArtifactService;
 import jack.digityhuman.atualcombattraining.service.ArtifactSupport;
+import jack.digityhuman.atualcombattraining.service.AssistantContextService;
 import jack.digityhuman.atualcombattraining.service.AssistantEventPublisher;
 import jack.digityhuman.atualcombattraining.service.AssistantMaterialService;
 import jack.digityhuman.atualcombattraining.service.AssistantSessionService;
@@ -79,6 +80,7 @@ public class AssistantToolServiceImpl implements AssistantToolService {
     private final ThemeGenerationService themeGenerationService;
     private final CaseGenerationService caseGenerationService;
     private final AssistantMaterialService materialService;
+    private final AssistantContextService contextService;
     private final AssistantRoundRegistry roundRegistry;
     private final ActThemeMapper themeMapper;
     private final ActThemeVersionMapper versionMapper;
@@ -162,6 +164,13 @@ public class AssistantToolServiceImpl implements AssistantToolService {
     @Override
     public AcceptedResp generateTheme(String traceId, String sessionId, GenerateThemeReq req) {
         String resolvedSessionId = resolveSessionId(traceId, sessionId);
+        // 材料摘要以库里的解析结果为准。模型常把该参数留空，随后就声称“材料未解析”。
+        if (req != null) {
+            String stored = contextService.materialSummary(sessionService.requireSession(resolvedSessionId));
+            if (!stored.isBlank()) {
+                req.setMaterialSummary(stored);
+            }
+        }
         themeGenerationService.accept(resolvedSessionId, traceId, req);
         return AcceptedResp.of(GENERATE_TOOL_HINT);
     }

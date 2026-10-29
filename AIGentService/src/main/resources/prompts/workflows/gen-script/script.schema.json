@@ -33,6 +33,11 @@
           "round": {
             "type": "number"
           },
+          "speakerOrder": {
+            "type": "string",
+            "enum": ["student", "trainer"],
+            "description": "该轮先说的一方。student=学员说在前；trainer=陪练者说在前。"
+          },
           "standardScript": {
             "type": "string"
           },
@@ -42,6 +47,7 @@
         },
         "required": [
           "round",
+          "speakerOrder",
           "trainerQuestion",
           "standardScript",
           "keyPoints",

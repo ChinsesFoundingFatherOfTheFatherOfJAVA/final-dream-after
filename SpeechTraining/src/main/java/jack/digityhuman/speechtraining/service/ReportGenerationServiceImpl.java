@@ -48,10 +48,10 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
     /** 卡死报告扫描间隔（毫秒） */
     private static final long SWEEP_INTERVAL_MS = 60_000L;
     /**
-     * 语音依据维度在本次没有语音数据时的不参与原因。
-     * 措辞刻意不说"全程文字作答"：判定口径是"可作为评分依据的语音轮次为空"，
-     * 学员说过话但每轮都被撤回/未通过时同样落到这里，说"全程文字作答"与事实不符。
+     * 语速指标一次语音都没有时记 0 分。不说"全程文字作答"：说过但全部撤回时同样没有可用语速。
      */
+    private static final String NO_SPEECH_SPEED_REASON =
+            "本次没有可用于计算语速的语音作答，该维度按 0 分计入总分";
     private static final String NO_ACOUSTIC_REASON =
             "本次没有可用于评分的语音作答，该维度以语音表现为评分依据，未参与本次评分";
     private static final String TONE_UNAVAILABLE_REASON =
@@ -219,7 +219,7 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
             dimensionRows.add(row);
         }
 
-        // 7. 未参与维度权重照占、按 0 分计；权重全为 0 时退化为已评分维度简单平均
+        // 7. 语速指标无语音时已记 0 分并占权重；其余 score=null 的维度不进分子也不进分母
         BigDecimal totalScore = calculateTotalScore(dimensionRows);
 
         // 8. 排名 / 超过百分比 / 较上次变化（按项目内学员最高报告总分）
@@ -376,11 +376,17 @@ public class ReportGenerationServiceImpl implements ReportGenerationService {
         for (ScoringDimension dim : dimensions) {
             DimensionMetricConfig metric = DimensionMetricConfig.parse(dim.getMetricConfig());
             boolean toneMetric = metric != null && DimensionMetricConfig.METRIC_TONE.equals(metric.metric());
+            boolean speedMetric = metric != null && DimensionMetricConfig.METRIC_SPEECH_SPEED.equals(metric.metric());
             boolean needsAcoustic = dim.getEvidenceType() != null
                     && dim.getEvidenceType() == DimensionMetricConfig.EVIDENCE_ACOUSTIC;
             boolean hasAcousticRounds = toneMetric
                     ? toneRounds != null && !toneRounds.isEmpty()
                     : !roundSpeeds.isEmpty();
+            // 语速指标没有语音轮：按 0 分占权重，不能因为没开口就把这一维从总分和雷达图里拿掉
+            if (speedMetric && roundSpeeds.isEmpty()) {
+                plans.add(new DimensionPlan(dim, true, null, MetricOutcome.zero(NO_SPEECH_SPEED_REASON)));
+                continue;
+            }
             if (needsAcoustic && !hasAcousticRounds) {
                 plans.add(new DimensionPlan(dim, false, NO_ACOUSTIC_REASON, null));
                 continue;

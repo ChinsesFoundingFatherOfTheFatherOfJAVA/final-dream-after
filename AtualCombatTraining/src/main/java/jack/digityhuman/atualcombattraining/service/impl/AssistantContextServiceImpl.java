@@ -62,6 +62,14 @@ public class AssistantContextServiceImpl implements AssistantContextService {
         return inputs;
     }
 
+    @Override
+    public String materialSummary(ActAiSession session) {
+        if (session == null) {
+            return "";
+        }
+        return buildMaterialSummary(session.getThemeId(), session.getId());
+    }
+
     /** 主题状态 → DSL 状态机取值 */
     private String resolveThemeStatus(ActTheme theme) {
         if (theme == null || theme.getStatus() == null) {

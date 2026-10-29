@@ -29,7 +29,7 @@ import java.util.Map;
 /**
  * 试题接口（03 §3：/api/exam/ques）。
  *
- * <p>注意 {@code /ques/ai-generate} 由 {@link AiGenController} 提供（走 Dify），
+ * <p>注意 {@code /ques/ai-generate} 由 {@link AiGenController} 提供（默认 AIGentService），
  * 这里只做常规 CRUD，避免两条链路互相耦合。
  */
 @RestController

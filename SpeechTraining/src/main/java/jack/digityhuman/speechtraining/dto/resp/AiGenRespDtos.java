@@ -66,6 +66,8 @@ public final class AiGenRespDtos {
     @Data
     public static class RoundItem {
         private Integer round;
+        /** student｜trainer：该轮先说的一方。 */
+        private String speakerOrder;
         private String trainerQuestion;
         private String standardScript;
         private List<KeyPointItem> keyPoints;

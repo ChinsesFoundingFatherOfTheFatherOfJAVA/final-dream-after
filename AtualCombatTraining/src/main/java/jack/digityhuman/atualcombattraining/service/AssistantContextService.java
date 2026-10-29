@@ -19,4 +19,9 @@ public interface AssistantContextService {
      * @return {theme_status, artifact_summary, material_summary}
      */
     Map<String, String> buildInputs(ActAiSession session);
+
+    /**
+     * 已解析材料的摘要。主题生成不能依赖模型自填，模型会把空串当成“材料未解析”。
+     */
+    String materialSummary(ActAiSession session);
 }

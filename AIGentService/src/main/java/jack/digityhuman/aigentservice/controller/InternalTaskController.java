@@ -6,6 +6,8 @@ import jack.digityhuman.aigentservice.dto.AgentTaskRequest;
 import jack.digityhuman.aigentservice.metrics.AgentMetrics;
 import jack.digityhuman.aigentservice.workflow.WorkflowEngine;
 import jack.digityhuman.aigentservice.workflow.WorkflowProgressListener;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +26,8 @@ import java.util.UUID;
 /** AIGentService 的 P2/P3 workflow 内部接口。 */
 @RestController
 public class InternalTaskController {
+
+    private static final Logger log = LoggerFactory.getLogger(InternalTaskController.class);
 
     private final WorkflowEngine workflowEngine;
     private final ObjectMapper mapper;
@@ -54,6 +58,7 @@ public class InternalTaskController {
             return new TaskResponse(0, "success", new TaskData(outputs));
         } catch (Exception e) {
             recordWorkflow(name, false, startedAt);
+            log.warn("workflow {} failed: {}", name, message(e));
             return new TaskResponse(500, message(e), new TaskData(Map.of()));
         }
     }

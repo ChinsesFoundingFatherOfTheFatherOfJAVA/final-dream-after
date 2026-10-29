@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["questions"],
+  "properties": {
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "levelType", "stem", "options", "answer", "keywords", "analysis"],
+        "properties": {
+          "type": { "type": "number" },
+          "levelType": { "type": "number" },
+          "stem": { "type": "string" },
+          "options": { "type": "array", "items": { "type": "string" } },
+          "answer": { "type": "string" },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["keyword", "scoreRatio"],
+              "properties": {
+                "keyword": { "type": "string" },
+                "scoreRatio": { "type": "number" }
+              }
+            }
+          },
+          "analysis": { "type": "string" }
+        }
+      }
+    }
+  }
+}

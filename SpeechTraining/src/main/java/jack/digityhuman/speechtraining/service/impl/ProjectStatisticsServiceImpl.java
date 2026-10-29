@@ -477,9 +477,8 @@ public class ProjectStatisticsServiceImpl implements ProjectStatisticsService {
         Map<String, List<BigDecimal>> byDimension = new HashMap<>();
         for (Map<String, BigDecimal> reportScores : dimScores.values()) {
             for (String dimension : dimensions) {
-                BigDecimal score = reportScores.get(dimension);
-                if (score != null) {
-                    byDimension.computeIfAbsent(dimension, ignored -> new ArrayList<>()).add(score);
+                if (reportScores.containsKey(dimension) && reportScores.get(dimension) != null) {
+                    byDimension.computeIfAbsent(dimension, ignored -> new ArrayList<>()).add(reportScores.get(dimension));
                 }
             }
         }

@@ -132,17 +132,38 @@ public class AIGenServiceImpl implements AIGenService {
         return resp;
     }
 
-    /** SG-08 导入编排：话轮数组 + firstSpeaker → 前端画布 nodes/edges（Java 版 resolve_round_node）。 */
+    /** 有 speakerOrder 时以它为准。旧结果没有该字段，才回退到第 1 轮标记。 */
+    static boolean studentFirstRound(AiGenDtos.RoundItem round, boolean studentFirst,
+                                     boolean studentLed, int index) {
+        String order = round.getSpeakerOrder();
+        if ("student".equalsIgnoreCase(order)) {
+            return true;
+        }
+        if ("trainer".equalsIgnoreCase(order)) {
+            return false;
+        }
+        return studentLed || (studentFirst && index == 0);
+    }
+
+    /** 提示词约定：学员主导型在第 1 轮解析开头注明。导入只认这个标记，不另猜场景。 */
+    static boolean studentLed(List<AiGenDtos.RoundItem> rounds) {
+        if (rounds == null || rounds.isEmpty() || rounds.get(0).getAnalysis() == null) {
+            return false;
+        }
+        return rounds.get(0).getAnalysis().startsWith("学员主导型对话");
+    }
+
+    /** SG-08 导入编排：话轮数组 + firstSpeaker → 前端画布 nodes/edges。 */
     @Override
     public AiGenRespDtos.ImportScriptResp importScript(AiGenDtos.ImportScriptReq req) {
         List<AiGenDtos.RoundItem> rounds = req.getRounds();
         if (rounds == null || rounds.isEmpty()) {
             throw new BizException("请至少勾选一轮话术");
         }
-        // 大节点类型：学员先说=3"学员问陪练者说"，其余（含空值）=2"陪练者问学员说"——与标准 DSL 一致
+        // 学员先说只让第 1 轮用 type 3。第 2 轮起提示词已恢复陪练者先说，必须用 type 2。
+        // 学员主导型（第 1 轮解析注明）才全程 type 3。
         boolean studentFirst = "student".equalsIgnoreCase(req.getFirstSpeaker());
-        int roundNodeType = studentFirst ? 3 : 2;
-        String roundNodeName = studentFirst ? "学员问陪练者说" : "陪练者问学员说";
+        boolean studentLed = studentLed(rounds);
 
         // 与前端画布 BIG_NODE_STEP 常量一致（TemplateFlowDesign.vue），保证导入后布局节奏相同
         final int bigNodeStep = 260;
@@ -183,9 +204,10 @@ public class AIGenServiceImpl implements AIGenService {
 
         for (int i = 0; i < rounds.size(); i++) {
             AiGenDtos.RoundItem round = rounds.get(i);
+            boolean type3 = studentFirstRound(round, studentFirst, studentLed, i);
             AiGenRespDtos.ImportNode node = new AiGenRespDtos.ImportNode();
-            node.setNodeType(roundNodeType);
-            node.setNodeName(roundNodeName);
+            node.setNodeType(type3 ? 3 : 2);
+            node.setNodeName(type3 ? "学员问陪练者说" : "陪练者问学员说");
             node.setTrainerQuestion(round.getTrainerQuestion());
             node.setStandardScript(round.getStandardScript());
             node.setAnalysis(round.getAnalysis());
@@ -307,6 +329,7 @@ public class AIGenServiceImpl implements AIGenService {
                 Map<String, Object> map = (Map<String, Object>) item;
                 AiGenRespDtos.RoundItem round = new AiGenRespDtos.RoundItem();
                 round.setRound(number(map.get("round")));
+                round.setSpeakerOrder(text(map, "speakerOrder"));
                 round.setTrainerQuestion(text(map, "trainerQuestion"));
                 round.setStandardScript(text(map, "standardScript"));
                 round.setAnalysis(text(map, "analysis"));

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jack.digityhuman.aigentservice.llm.LlmClient;
 import jack.digityhuman.aigentservice.prompt.PromptProvider;
 import jack.digityhuman.aigentservice.workflow.CaseGenTask;
+import jack.digityhuman.aigentservice.workflow.ExamGenTask;
 import jack.digityhuman.aigentservice.workflow.AvatarGenTask;
 import jack.digityhuman.aigentservice.workflow.ImageGenerationClient;
 import jack.digityhuman.aigentservice.workflow.ReportScoreTask;
@@ -60,6 +61,11 @@ public class WorkflowTaskConfiguration {
     @Bean
     public WorkflowTask reportScoreTask(PromptProvider prompts, ObjectMapper mapper) {
         return new ReportScoreTask(prompts, mapper);
+    }
+
+    @Bean
+    public WorkflowTask examGenTask(PromptProvider prompts, ObjectMapper mapper) {
+        return new ExamGenTask(prompts, mapper);
     }
 
     @Bean

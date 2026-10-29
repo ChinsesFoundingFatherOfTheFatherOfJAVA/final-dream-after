@@ -2,20 +2,19 @@ package jack.digityhuman.atualcombattraining.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import jack.digityhuman.atualcombattraining.entity.ActAiArtifact;
 import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.common.JsonSupport;
 import jack.digityhuman.atualcombattraining.dto.resp.PublishResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ScriptProgressResp;
 import jack.digityhuman.atualcombattraining.entity.ActCaseScript;
 import jack.digityhuman.atualcombattraining.entity.ActDrillScript;
-import jack.digityhuman.atualcombattraining.entity.ActEvaluationDimension;
 import jack.digityhuman.atualcombattraining.entity.ActScenarioUnit;
 import jack.digityhuman.atualcombattraining.entity.ActTheme;
 import jack.digityhuman.atualcombattraining.mapper.ActCaseScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActDrillScriptMapper;
-import jack.digityhuman.atualcombattraining.mapper.ActEvaluationDimensionMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActScenarioUnitMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
 import jack.digityhuman.atualcombattraining.service.ArtifactService;
@@ -35,8 +34,8 @@ import java.util.Map;
 /**
  * 发布与剧本初始化实现（FP-41）
  * <p>
- * 编译本体（02 方案 §5.4 说明）：把"案例 + 场景单元 + 维度引用"组装成自包含 JSON 落 act_drill_script，
- * 供学员端二期直接消费——<b>纯 Java 组装，不调用任何 LLM</b>，因此发布不产生 AI 费用。
+ * 发布只把已确认案例 JSON 原样落入 act_drill_script，不调用 LLM，也不再拼一份运行时剧本。
+ * 线上学员端消费的是案例生成时的正文；本地生成只有一份，进度按案例数计。
  * <p>
  * 版本处理：全部成功后调用 {@link ThemeVersionService#createVersionFromCurrent} 复制出新版本，
  * 随后把案例剧本与编译产物的 version_no / scenario_unit_id 重挂到新版本（copyUnitsToVersion 会产生新单元行 ID，
@@ -65,7 +64,6 @@ public class PublishInitServiceImpl implements PublishInitService {
     private final ActCaseScriptMapper caseScriptMapper;
     private final ActDrillScriptMapper drillScriptMapper;
     private final ActScenarioUnitMapper unitMapper;
-    private final ActEvaluationDimensionMapper dimensionMapper;
     private final ArtifactService artifactService;
     private final ThemeVersionService themeVersionService;
     private final ThreadPoolTaskExecutor publishExecutor;
@@ -74,7 +72,6 @@ public class PublishInitServiceImpl implements PublishInitService {
                                   ActCaseScriptMapper caseScriptMapper,
                                   ActDrillScriptMapper drillScriptMapper,
                                   ActScenarioUnitMapper unitMapper,
-                                  ActEvaluationDimensionMapper dimensionMapper,
                                   ArtifactService artifactService,
                                   ThemeVersionService themeVersionService,
                                   @Qualifier("publishExecutor") ThreadPoolTaskExecutor publishExecutor) {
@@ -82,15 +79,14 @@ public class PublishInitServiceImpl implements PublishInitService {
         this.caseScriptMapper = caseScriptMapper;
         this.drillScriptMapper = drillScriptMapper;
         this.unitMapper = unitMapper;
-        this.dimensionMapper = dimensionMapper;
         this.artifactService = artifactService;
         this.themeVersionService = themeVersionService;
         this.publishExecutor = publishExecutor;
     }
 
     /**
-     * 发布：校验已确认内容与状态 → 原子抢占状态（防并发重复发布）→ 异步初始化。
-     * 无案例时直接完成（进度按 100 返回），避免 total=0 导致进度无法计算。
+     * 发布：先校验已确认内容且至少有 1 个案例，再抢占状态。
+     * 零案例不能先改成发布中，否则拒绝时主题已经离开草稿。
      */
     @Override
     public PublishResp publish(String themeId) {
@@ -99,6 +95,9 @@ public class PublishInitServiceImpl implements PublishInitService {
             throw new BizException("请先在 AI 助手中确认内容");
         }
         List<ActCaseScript> cases = listCases(themeId, theme.getCurrentVersionNo());
+        if (cases.isEmpty()) {
+            throw new BizException("请先在 AI 助手中生成并确认实战案例");
+        }
         // 原子抢占：只有把状态从 0/3 成功改成 1 的调用者才继续，避免并发重复发布
         int claimed = themeMapper.update(null, new LambdaUpdateWrapper<ActTheme>()
                 .eq(ActTheme::getId, themeId)
@@ -111,12 +110,6 @@ public class PublishInitServiceImpl implements PublishInitService {
 
         PublishResp resp = new PublishResp();
         resp.setTotalCases(cases.size());
-        if (cases.isEmpty()) {
-            // 无案例可编译：直接完成发布流程（版本照常 +1，保持两条路径语义一致）
-            finishPublish(themeId, theme.getCurrentVersionNo());
-            resp.setStatus(STATUS_PUBLISHED);
-            return resp;
-        }
         resp.setStatus(STATUS_PUBLISHING);
         List<String> caseIds = cases.stream().map(ActCaseScript::getId).toList();
         Integer versionNo = theme.getCurrentVersionNo();
@@ -144,9 +137,33 @@ public class PublishInitServiceImpl implements PublishInitService {
         resp.setTotal(total);
         resp.setCompleted(completed);
         resp.setFailed(failed);
-        resp.setProgress(total == 0 ? 100 : (int) Math.round(completed * 100.0 / total));
+        resp.setProgress(total == 0 ? 0 : (int) Math.round(completed * 100.0 / total));
         resp.setStatus(theme.getStatus());
+        // 横幅按场景计。一个场景下还有未 compiled 的案例，这个场景就不算完成。
+        List<ActScenarioUnit> units = listUnits(themeId, versionNo);
+        resp.setSceneTotal(units.size());
+        resp.setSceneCompleted(countCompletedScenes(cases));
         return resp;
+    }
+
+    /** 案例全部 compiled 的场景数。没有挂场景的案例不计入。 */
+    private int countCompletedScenes(List<ActCaseScript> cases) {
+        Map<String, Boolean> done = new HashMap<>();
+        for (ActCaseScript script : cases) {
+            String unitId = script.getScenarioUnitId();
+            if (unitId == null || unitId.isBlank()) {
+                continue;
+            }
+            boolean compiled = CASE_COMPILED.equals(script.getStatus());
+            done.merge(unitId, compiled, Boolean::logicalAnd);
+        }
+        int count = 0;
+        for (Boolean compiled : done.values()) {
+            if (Boolean.TRUE.equals(compiled)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /** 仅重试失败项：状态置回待编译并重新排队 */
@@ -222,64 +239,21 @@ public class PublishInitServiceImpl implements PublishInitService {
         return lastError;
     }
 
-    /** 组装并落库单个案例的编译产物（act_drill_script 以 case_script_id 幂等覆盖） */
+    /**
+     * 落库单个案例。学员端要的是生成时的案例正文，不是发布时再拼的场景摘要。
+     * 确认落库只留了扁平字段，所以这里从已确认 artifact 按场景和案例名找回原 JSON。
+     */
     private void compileOne(String themeId, Integer versionNo, String caseId) {
         ActCaseScript caseScript = caseScriptMapper.selectById(caseId);
         if (caseScript == null) {
             throw new BizException("案例不存在：" + caseId);
         }
-        ActScenarioUnit unit = caseScript.getScenarioUnitId() == null
-                ? null : unitMapper.selectById(caseScript.getScenarioUnitId());
-        List<ActEvaluationDimension> dimensions = unit == null ? List.of()
-                : dimensionMapper.selectList(new LambdaQueryWrapper<ActEvaluationDimension>()
-                .eq(ActEvaluationDimension::getScenarioUnitId, unit.getId())
-                .orderByAsc(ActEvaluationDimension::getSortOrder));
-
-        ObjectNode payload = JsonSupport.blankObject();
-        JsonSupport.putText(payload, "themeId", themeId);
-        JsonSupport.putInt(payload, "versionNo", versionNo);
-        JsonSupport.putText(payload, "caseScriptId", caseScript.getId());
-        JsonSupport.putText(payload, "scriptName", caseScript.getScriptName());
-        JsonSupport.putInt(payload, "difficulty", caseScript.getDifficulty());
-        JsonSupport.putText(payload, "scriptBackground", caseScript.getScriptBackground());
-        JsonSupport.putText(payload, "scriptOpening", caseScript.getScriptOpening());
-        // 角色全量设定
-        ObjectNode actor = JsonSupport.blankObject();
-        JsonSupport.putText(actor, "name", caseScript.getActorName());
-        JsonSupport.putText(actor, "position", caseScript.getActorPosition());
-        JsonSupport.putText(actor, "company", caseScript.getActorCompany());
-        JsonSupport.putText(actor, "type", caseScript.getActorType());
-        JsonSupport.putText(actor, "personality", caseScript.getActorPersonality());
-        JsonSupport.putText(actor, "communicationStyle", caseScript.getActorCommunicationStyle());
-        payload.set("actor", actor);
-        // 场景摘要
-        ObjectNode scene = JsonSupport.blankObject();
-        JsonSupport.putText(scene, "scenarioUnitId", unit == null ? null : unit.getId());
-        JsonSupport.putText(scene, "name", unit == null ? null : unit.getUnitName());
-        JsonSupport.putText(scene, "audience", unit == null ? null : unit.getAudience());
-        JsonSupport.putInt(scene, "timeLimitMinutes", unit == null ? null : unit.getTimeLimitMinutes());
-        JsonSupport.putText(scene, "businessGoal", unit == null ? null : unit.getBusinessGoal());
-        JsonSupport.putText(scene, "coreConflict", unit == null ? null : unit.getCoreConflict());
-        JsonSupport.putValue(scene, "behaviorGoals", unit == null ? null : unit.getBehaviorGoals());
-        JsonSupport.putValue(scene, "icebergElements", unit == null ? null : unit.getIcebergElements());
-        payload.set("scene", scene);
-        // 关联评估维度 ID 列表（学员端按 ID 取维度明细）
-        JsonSupport.putInt(payload, "passScore", unit == null ? null : unit.getPassScore());
-        ArrayNode dimensionIds = JsonSupport.blankArray();
-        ArrayNode dimensionRefs = JsonSupport.blankArray();
-        for (ActEvaluationDimension dimension : dimensions) {
-            dimensionIds.add(dimension.getId());
-            ObjectNode ref = JsonSupport.blankObject();
-            JsonSupport.putText(ref, "id", dimension.getId());
-            JsonSupport.putText(ref, "name", dimension.getDimensionName());
-            JsonSupport.putValue(ref, "weight", dimension.getWeight());
-            dimensionRefs.add(ref);
+        ObjectNode payload = confirmedCase(themeId, caseScript);
+        if (payload == null) {
+            throw new BizException("已确认内容里找不到该案例：" + caseScript.getScriptName());
         }
-        payload.set("dimensionIds", dimensionIds);
-        payload.set("dimensions", dimensionRefs);
-        JsonSupport.putText(payload, "compiledAt", LocalDateTime.now().toString());
 
-        // 幂等覆盖：同一案例重复编译只保留一条产物
+        // 幂等覆盖：同一案例重复发布只保留一条产物
         drillScriptMapper.delete(new LambdaQueryWrapper<ActDrillScript>()
                 .eq(ActDrillScript::getCaseScriptId, caseScript.getId()));
         ActDrillScript drill = new ActDrillScript();
@@ -290,6 +264,38 @@ public class PublishInitServiceImpl implements PublishInitService {
         drill.setCompiledPayload(JsonSupport.toJson(payload));
         drill.setCompiledAt(LocalDateTime.now());
         drillScriptMapper.insert(drill);
+    }
+
+    /**
+     * 从已确认 artifact 找回该案例的原 JSON。场景按单元名对齐，案例按标题对齐。
+     * 对不上就失败，不能用拼出来的摘要冒充生成正文。
+     */
+    /** 供单测核对场景名和案例名的匹配，不另开查询接口。 */
+    public ObjectNode confirmedCase(String themeId, ActCaseScript caseScript) {
+        ActAiArtifact artifact = artifactService.findLatestConfirmed(themeId);
+        ObjectNode root = artifact == null ? null : JsonSupport.obj(artifact.getContent());
+        if (root == null) {
+            return null;
+        }
+        ActScenarioUnit unit = caseScript.getScenarioUnitId() == null
+                ? null : unitMapper.selectById(caseScript.getScenarioUnitId());
+        String unitName = unit == null ? null : unit.getUnitName();
+        for (JsonNode scenario : JsonSupport.children(root, "scenarios")) {
+            if (scenario == null || !scenario.isObject()) {
+                continue;
+            }
+            ObjectNode scene = (ObjectNode) scenario;
+            if (unitName != null && !unitName.equals(JsonSupport.text(scene, "name"))) {
+                continue;
+            }
+            for (JsonNode item : JsonSupport.children(scene, "cases")) {
+                if (item != null && item.isObject()
+                        && caseScript.getScriptName().equals(JsonSupport.text((ObjectNode) item, "scriptName"))) {
+                    return (ObjectNode) item;
+                }
+            }
+        }
+        return null;
     }
 
     /** 标记案例编译结果 */
@@ -364,6 +370,13 @@ public class PublishInitServiceImpl implements PublishInitService {
             }
             drillScriptMapper.updateById(update);
         }
+    }
+
+    /** 当前版本场景数，横幅分母。空场景也计入，和详情页场景数一致。 */
+    private List<ActScenarioUnit> listUnits(String themeId, Integer versionNo) {
+        return new ArrayList<>(unitMapper.selectList(new LambdaQueryWrapper<ActScenarioUnit>()
+                .eq(ActScenarioUnit::getThemeId, themeId)
+                .eq(ActScenarioUnit::getVersionNo, versionNo)));
     }
 
     /** 当前版本全部案例（进度口径 = 案例总数） */
