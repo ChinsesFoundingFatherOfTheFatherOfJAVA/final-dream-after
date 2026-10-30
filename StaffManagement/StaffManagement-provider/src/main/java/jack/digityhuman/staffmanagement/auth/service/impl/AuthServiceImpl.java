@@ -89,7 +89,13 @@ public class AuthServiceImpl implements AuthService {
         List<String> permissions = current.superAdmin()
                 ? List.of(ALL_PERMISSIONS)
                 : permissionService.codesOfUser(Long.valueOf(current.userId()));
-        return new MeVo(current.userId(), current.name(), permissions);
+        MeVo vo = new MeVo(current.userId(), current.name(), permissions);
+        SysUser user = userMapper.selectById(Long.valueOf(current.userId()));
+        if (user != null) {
+            vo.setDeptName(user.getDeptName());
+            vo.setPositionName(user.getPositionName());
+        }
+        return vo;
     }
 
     /**

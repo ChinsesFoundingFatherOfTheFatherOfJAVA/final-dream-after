@@ -15,6 +15,7 @@ import jack.digityhuman.atualcombattraining.mapper.ActAiMaterialMapper;
 import jack.digityhuman.atualcombattraining.service.ArtifactService;
 import jack.digityhuman.atualcombattraining.service.AssistantEventPublisher;
 import jack.digityhuman.atualcombattraining.service.AssistantMaterialService;
+import jack.digityhuman.atualcombattraining.service.preview.MaterialPreviewService;
 import jack.digityhuman.atualcombattraining.service.AssistantSessionService;
 import jack.digityhuman.atualcombattraining.service.DocumentTextExtractor;
 import jack.digityhuman.atualcombattraining.service.MaterialTextSummarizer;
@@ -74,6 +75,8 @@ public class AssistantMaterialServiceImpl implements AssistantMaterialService {
     private final ThreadPoolTaskExecutor parseExecutor;
     /** 在线课堂素材抽取客户端（不直读 kng_*，正文由在线课堂给） */
     private final KngAiSourceClient kngAiSourceClient;
+    /** 材料预览（契约 11）：上传后分类 + Office 异步转 PDF；失败不影响上传/解析/发布 */
+    private final MaterialPreviewService materialPreviewService;
 
     public AssistantMaterialServiceImpl(AssistantSessionService sessionService,
                                         ActAiMaterialMapper materialMapper,
@@ -82,7 +85,8 @@ public class AssistantMaterialServiceImpl implements AssistantMaterialService {
                                         AssistantEventPublisher eventPublisher,
                                         AssistantProperties properties,
                                         @Qualifier("parseExecutor") ThreadPoolTaskExecutor parseExecutor,
-                                        KngAiSourceClient kngAiSourceClient) {
+                                        KngAiSourceClient kngAiSourceClient,
+                                        MaterialPreviewService materialPreviewService) {
         this.sessionService = sessionService;
         this.materialMapper = materialMapper;
         this.artifactService = artifactService;
@@ -91,6 +95,7 @@ public class AssistantMaterialServiceImpl implements AssistantMaterialService {
         this.properties = properties;
         this.parseExecutor = parseExecutor;
         this.kngAiSourceClient = kngAiSourceClient;
+        this.materialPreviewService = materialPreviewService;
     }
 
     /**
@@ -149,6 +154,11 @@ public class AssistantMaterialServiceImpl implements AssistantMaterialService {
         row.setSummary(summary);
         if (insert) {
             materialMapper.insert(row);
+            // 契约 11：本地上传即分类预览（PDF/TXT/MD 直读；Office 异步转 PDF）。
+            // 在线课堂材料（kng_ 前缀）无本地文件，走在线课堂自身 viewer，不进预览链路。
+            if (file.getFileId() == null || !file.getFileId().startsWith(KNG_FILE_ID_PREFIX)) {
+                materialPreviewService.classifyAndEnqueue(row);
+            }
         } else {
             materialMapper.updateById(row);
         }

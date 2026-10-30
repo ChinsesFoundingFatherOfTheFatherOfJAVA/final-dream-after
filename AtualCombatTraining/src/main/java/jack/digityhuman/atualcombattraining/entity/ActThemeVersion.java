@@ -71,4 +71,12 @@ public class ActThemeVersion {
     private Integer inProgressCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    // ---- 版本来源与发布元数据（2026-10-30 学员端契约新增） ----
+    /** legacy_working/legacy_content/initial_publish/ai_confirm/manual_republish */
+    private String sourceType;
+    private String sourceArtifactId;
+    private Integer sourceArtifactVersion;
+    private String contentHash;
+    private LocalDateTime publishedAt;
+    private String publishedBy;
 }

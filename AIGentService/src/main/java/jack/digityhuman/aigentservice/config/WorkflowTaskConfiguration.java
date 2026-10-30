@@ -4,7 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jack.digityhuman.aigentservice.llm.LlmClient;
 import jack.digityhuman.aigentservice.prompt.PromptProvider;
 import jack.digityhuman.aigentservice.workflow.CaseGenTask;
+import jack.digityhuman.aigentservice.workflow.DrillChatTurn;
+import jack.digityhuman.aigentservice.workflow.DrillReportTask;
+import jack.digityhuman.aigentservice.workflow.DrillScriptTask;
+import jack.digityhuman.aigentservice.workflow.DrillSuggestTask;
 import jack.digityhuman.aigentservice.workflow.ExamGenTask;
+import jack.digityhuman.aigentservice.workflow.ProductProfileGenTask;
 import jack.digityhuman.aigentservice.workflow.AvatarGenTask;
 import jack.digityhuman.aigentservice.workflow.ImageGenerationClient;
 import jack.digityhuman.aigentservice.workflow.ReportScoreTask;
@@ -66,6 +71,36 @@ public class WorkflowTaskConfiguration {
     @Bean
     public WorkflowTask examGenTask(PromptProvider prompts, ObjectMapper mapper) {
         return new ExamGenTask(prompts, mapper);
+    }
+
+    @Bean
+    public WorkflowTask drillScriptTask(PromptProvider prompts, ObjectMapper mapper) {
+        // 学员端随机/自定义练习脚本（契约 08 AG-D01）
+        return new DrillScriptTask(prompts, mapper);
+    }
+
+    @Bean
+    public WorkflowTask drillReportTask(PromptProvider prompts, ObjectMapper mapper) {
+        // 训练/考核结构化报告（契约 08 AG-D04）
+        return new DrillReportTask(prompts, mapper);
+    }
+
+    @Bean
+    public WorkflowTask drillSuggestTask(PromptProvider prompts, ObjectMapper mapper) {
+        // 训练模式建议（契约 08 AG-D03）
+        return new DrillSuggestTask(prompts, mapper);
+    }
+
+    @Bean
+    public WorkflowTask productProfileGenTask(PromptProvider prompts, ObjectMapper mapper) {
+        // 管理端产品档案候选生成（契约 09 §5.2；候选只返回不落库）
+        return new ProductProfileGenTask(prompts, mapper);
+    }
+
+    @Bean
+    public DrillChatTurn drillChatTurn(PromptProvider prompts, ObjectMapper mapper) {
+        // 对练一轮生成（契约 08 AG-D02 的模型部分；SSE 由 InternalDrillController 编排）
+        return new DrillChatTurn(prompts, mapper);
     }
 
     @Bean

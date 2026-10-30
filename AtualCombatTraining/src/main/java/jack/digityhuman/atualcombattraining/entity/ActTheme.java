@@ -37,8 +37,16 @@ public class ActTheme {
     private Integer jurisdictionType;
     /** 占位：来源 1单独安排 2项目安排（前端暂不传值） */
     private Integer sourceType;
-    /** 当前版本指针（回滚=仅切此字段） */
+    /** 当前版本指针（迁移兼容列：新代码读 working/published，不再用它当公开版本） */
     private Integer currentVersionNo;
+    /** 工作内容版本：首次发布前=0（隐藏 v0），发布后=当前工作/公开版本基线 */
+    private Integer workingVersionNo;
+    /** 当前公开内容版本：首次发布前为 null */
+    private Integer publishedVersionNo;
+    /** 首次发布时间 */
+    private LocalDateTime firstPublishedAt;
+    /** 已发布内容 hash（AI 确认幂等比较用） */
+    private String contentHash;
     /** 占位统计：通过率(%) */
     private BigDecimal passRate;
     /** 占位统计：通过人数 */

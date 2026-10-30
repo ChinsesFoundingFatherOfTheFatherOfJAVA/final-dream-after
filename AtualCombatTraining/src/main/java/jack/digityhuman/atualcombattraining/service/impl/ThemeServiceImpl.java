@@ -10,14 +10,18 @@ import jack.digityhuman.atualcombattraining.dto.resp.ThemeDetailResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ThemeListResp;
 import jack.digityhuman.atualcombattraining.dto.resp.StatusResp;
 import jack.digityhuman.atualcombattraining.entity.ActTheme;
+import jack.digityhuman.atualcombattraining.entity.ActPracticeReport;
 import jack.digityhuman.atualcombattraining.entity.ActThemeVersion;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
+import jack.digityhuman.atualcombattraining.mapper.ActPracticeReportMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeVersionMapper;
 import jack.digityhuman.atualcombattraining.service.ScenarioUnitService;
 import jack.digityhuman.atualcombattraining.service.ThemeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -37,6 +41,7 @@ public class ThemeServiceImpl implements ThemeService {
     private final ActThemeMapper themeMapper;
     private final ActThemeVersionMapper versionMapper;
     private final ScenarioUnitService scenarioUnitService;
+    private final ActPracticeReportMapper reportMapper;
 
     /**
      * FP-06 分页查询主题列表：
@@ -95,11 +100,54 @@ public class ThemeServiceImpl implements ThemeService {
         stats.setTotalTrainingCount(theme.getTotalTrainingCount());
         resp.setStats(stats);
 
+        fillPracticeStats(stats, id);
         resp.setScenarioUnitCount((int) scenarioUnitService.countUnits(id, theme.getCurrentVersionNo()));
         Long versionCount = versionMapper.selectCount(new LambdaQueryWrapper<ActThemeVersion>()
                 .eq(ActThemeVersion::getThemeId, id));
         resp.setVersionCount(versionCount == null ? 0 : versionCount.intValue());
         return resp;
+    }
+
+    /**
+     * 练习统计：按报告表聚合训练/考核的次数与均分。
+     * 只统计已生成报告的 attempt（act_practice_report 一行对应一次已完成练习），
+     * 与契约 03 §9 的口径一致；不做跨表 JOIN，按 themeId 拉两列在内存里聚合。
+     */
+    private void fillPracticeStats(ThemeDetailResp.Stats stats, String themeId) {
+        List<ActPracticeReport> reports = reportMapper.selectList(new LambdaQueryWrapper<ActPracticeReport>()
+                .select(ActPracticeReport::getStudyMode, ActPracticeReport::getTotalScore)
+                .eq(ActPracticeReport::getThemeId, themeId));
+        int trainingCount = 0;
+        int examCount = 0;
+        BigDecimal trainingSum = BigDecimal.ZERO;
+        BigDecimal examSum = BigDecimal.ZERO;
+        for (ActPracticeReport report : reports) {
+            boolean exam = report.getStudyMode() != null && report.getStudyMode() == 2;
+            if (exam) {
+                examCount++;
+                if (report.getTotalScore() != null) {
+                    examSum = examSum.add(report.getTotalScore());
+                }
+            } else {
+                trainingCount++;
+                if (report.getTotalScore() != null) {
+                    trainingSum = trainingSum.add(report.getTotalScore());
+                }
+            }
+        }
+        stats.setTotalPracticeCount(reports.size());
+        stats.setTrainingCount(trainingCount);
+        stats.setExamCount(examCount);
+        stats.setTrainingAverage(average(trainingSum, trainingCount));
+        stats.setExamAverage(average(examSum, examCount));
+    }
+
+    /** 均分：保留 2 位，无样本返回 null（前端显示 --） */
+    private BigDecimal average(BigDecimal sum, int count) {
+        if (count <= 0) {
+            return null;
+        }
+        return sum.divide(BigDecimal.valueOf(count), 2, RoundingMode.HALF_UP);
     }
 
     /**

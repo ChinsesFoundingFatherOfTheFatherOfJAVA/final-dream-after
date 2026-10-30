@@ -3,12 +3,23 @@ package jack.digityhuman.atualcombattraining.support;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import jack.digityhuman.atualcombattraining.entity.ActAiArtifact;
+import jack.digityhuman.atualcombattraining.entity.ActAntiCheatEvent;
 import jack.digityhuman.atualcombattraining.entity.ActAiMaterial;
+import jack.digityhuman.atualcombattraining.entity.ActAttemptEvent;
+import jack.digityhuman.atualcombattraining.entity.ActAttemptMessage;
 import jack.digityhuman.atualcombattraining.entity.ActCaseScript;
+import jack.digityhuman.atualcombattraining.entity.ActContentVersionMaterial;
 import jack.digityhuman.atualcombattraining.entity.ActCustomerProfile;
 import jack.digityhuman.atualcombattraining.entity.ActEvaluationDimension;
+import jack.digityhuman.atualcombattraining.entity.ActExamQuotaAdjustment;
+import jack.digityhuman.atualcombattraining.entity.ActPracticeAttempt;
+import jack.digityhuman.atualcombattraining.entity.ActProductProfile;
+import jack.digityhuman.atualcombattraining.entity.ActScenarioProductProfile;
 import jack.digityhuman.atualcombattraining.entity.ActScenarioUnit;
+import jack.digityhuman.atualcombattraining.entity.ActStudentScenarioStat;
 import jack.digityhuman.atualcombattraining.entity.ActTheme;
+import jack.digityhuman.atualcombattraining.entity.ActThemeParticipant;
+import jack.digityhuman.atualcombattraining.entity.ActThemeSettings;
 import jack.digityhuman.atualcombattraining.entity.ActThemeVersion;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 
@@ -30,9 +41,14 @@ public final class MybatisTestSupport {
         MapperBuilderAssistant assistant = new MapperBuilderAssistant(new MybatisConfiguration(), "");
         assistant.setCurrentNamespace("test");
         for (Class<?> entity : new Class<?>[]{
-                ActAiArtifact.class, ActAiMaterial.class, ActCaseScript.class, ActCustomerProfile.class,
-                ActEvaluationDimension.class, ActScenarioUnit.class, ActTheme.class, ActThemeVersion.class}) {
+                ActAiArtifact.class, ActAntiCheatEvent.class, ActAiMaterial.class, ActAttemptEvent.class, ActAttemptMessage.class,
+                ActCaseScript.class, ActContentVersionMaterial.class, ActCustomerProfile.class,
+                ActEvaluationDimension.class, ActExamQuotaAdjustment.class, ActPracticeAttempt.class,
+                ActProductProfile.class, ActScenarioProductProfile.class, ActScenarioUnit.class,
+                ActStudentScenarioStat.class, ActTheme.class, ActThemeParticipant.class,
+                ActThemeSettings.class, ActThemeVersion.class}) {
             TableInfoHelper.initTableInfo(assistant, entity);
         }
     }
 }
+

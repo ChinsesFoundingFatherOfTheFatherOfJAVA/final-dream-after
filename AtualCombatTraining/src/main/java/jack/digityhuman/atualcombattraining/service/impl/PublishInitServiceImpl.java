@@ -18,8 +18,8 @@ import jack.digityhuman.atualcombattraining.mapper.ActDrillScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActScenarioUnitMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
 import jack.digityhuman.atualcombattraining.service.ArtifactService;
+import jack.digityhuman.atualcombattraining.service.ContentVersionService;
 import jack.digityhuman.atualcombattraining.service.PublishInitService;
-import jack.digityhuman.atualcombattraining.service.ThemeVersionService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -37,9 +37,9 @@ import java.util.Map;
  * 发布只把已确认案例 JSON 原样落入 act_drill_script，不调用 LLM，也不再拼一份运行时剧本。
  * 线上学员端消费的是案例生成时的正文；本地生成只有一份，进度按案例数计。
  * <p>
- * 版本处理：全部成功后调用 {@link ThemeVersionService#createVersionFromCurrent} 复制出新版本，
- * 随后把案例剧本与编译产物的 version_no / scenario_unit_id 重挂到新版本（copyUnitsToVersion 会产生新单元行 ID，
- * 按 sort_order 一一对应回挂，保证场景与案例的关联不断），实现"发布完成 → 版本历史 +1"。
+ * 版本处理（2026-10-30 重构）：首次发布由 {@link ContentVersionService#firstPublish} 把 v0 固化为 v1，
+ * 随后把案例剧本与编译产物的 version_no / scenario_unit_id 重挂到 v1（copyUnitsToVersion 会产生新单元行 ID，
+ * 按 sort_order 一一对应回挂，保证场景与案例的关联不断）。
  */
 @Slf4j
 @Service
@@ -65,7 +65,7 @@ public class PublishInitServiceImpl implements PublishInitService {
     private final ActDrillScriptMapper drillScriptMapper;
     private final ActScenarioUnitMapper unitMapper;
     private final ArtifactService artifactService;
-    private final ThemeVersionService themeVersionService;
+    private final ContentVersionService contentVersionService;
     private final ThreadPoolTaskExecutor publishExecutor;
 
     public PublishInitServiceImpl(ActThemeMapper themeMapper,
@@ -73,35 +73,39 @@ public class PublishInitServiceImpl implements PublishInitService {
                                   ActDrillScriptMapper drillScriptMapper,
                                   ActScenarioUnitMapper unitMapper,
                                   ArtifactService artifactService,
-                                  ThemeVersionService themeVersionService,
+                                  ContentVersionService contentVersionService,
                                   @Qualifier("publishExecutor") ThreadPoolTaskExecutor publishExecutor) {
         this.themeMapper = themeMapper;
         this.caseScriptMapper = caseScriptMapper;
         this.drillScriptMapper = drillScriptMapper;
         this.unitMapper = unitMapper;
         this.artifactService = artifactService;
-        this.themeVersionService = themeVersionService;
+        this.contentVersionService = contentVersionService;
         this.publishExecutor = publishExecutor;
     }
 
     /**
-     * 发布：先校验已确认内容且至少有 1 个案例，再抢占状态。
-     * 零案例不能先改成发布中，否则拒绝时主题已经离开草稿。
+     * 首次发布（仅草稿）：先做发布校验与状态抢占，异步编译完成后由
+     * {@link #finishFirstPublish} 把 v0 工作内容固化为公开 v1。
      */
     @Override
     public PublishResp publish(String themeId) {
         ActTheme theme = requireTheme(themeId);
+        if (theme.getPublishedVersionNo() != null) {
+            throw new BizException("主题已发布，后续内容更新走 AI 助手确认");
+        }
         if (artifactService.findLatestConfirmed(themeId) == null) {
             throw new BizException("请先在 AI 助手中确认内容");
         }
-        List<ActCaseScript> cases = listCases(themeId, theme.getCurrentVersionNo());
+        Integer workingVersionNo = theme.getWorkingVersionNo() == null ? 0 : theme.getWorkingVersionNo();
+        List<ActCaseScript> cases = listCases(themeId, workingVersionNo);
         if (cases.isEmpty()) {
             throw new BizException("请先在 AI 助手中生成并确认实战案例");
         }
-        // 原子抢占：只有把状态从 0/3 成功改成 1 的调用者才继续，避免并发重复发布
+        // 原子抢占：只有草稿(0)能进入发布中，避免并发重复发布
         int claimed = themeMapper.update(null, new LambdaUpdateWrapper<ActTheme>()
                 .eq(ActTheme::getId, themeId)
-                .in(ActTheme::getStatus, STATUS_DRAFT, STATUS_PUBLISHED)
+                .eq(ActTheme::getStatus, STATUS_DRAFT)
                 .set(ActTheme::getStatus, STATUS_PUBLISHING)
                 .set(ActTheme::getUpdatedAt, LocalDateTime.now()));
         if (claimed == 0) {
@@ -112,16 +116,25 @@ public class PublishInitServiceImpl implements PublishInitService {
         resp.setTotalCases(cases.size());
         resp.setStatus(STATUS_PUBLISHING);
         List<String> caseIds = cases.stream().map(ActCaseScript::getId).toList();
-        Integer versionNo = theme.getCurrentVersionNo();
-        publishExecutor.execute(() -> compileBatch(themeId, versionNo, caseIds));
-        log.info("发布受理 themeId={} version={} 案例数={}", themeId, versionNo, caseIds.size());
+        publishExecutor.execute(() -> {
+            int failed = compileBatch(themeId, workingVersionNo, caseIds);
+            if (failed == 0) {
+                try {
+                    finishFirstPublish(themeId, workingVersionNo);
+                } catch (Exception e) {
+                    log.error("首次发布收尾失败 themeId={}", themeId, e);
+                }
+            }
+        });
+        log.info("首次发布受理 themeId={} workingVersion={} 案例数={}",
+                themeId, workingVersionNo, caseIds.size());
         return resp;
     }
 
     @Override
     public ScriptProgressResp scriptProgress(String themeId) {
         ActTheme theme = requireTheme(themeId);
-        Integer versionNo = theme.getCurrentVersionNo();
+        Integer versionNo = theme.getWorkingVersionNo() == null ? 0 : theme.getWorkingVersionNo();
         List<ActCaseScript> cases = listCases(themeId, versionNo);
         int total = cases.size();
         int completed = 0;
@@ -170,7 +183,7 @@ public class PublishInitServiceImpl implements PublishInitService {
     @Override
     public void retry(String themeId) {
         ActTheme theme = requireTheme(themeId);
-        Integer versionNo = theme.getCurrentVersionNo();
+        Integer versionNo = theme.getWorkingVersionNo() == null ? 0 : theme.getWorkingVersionNo();
         List<ActCaseScript> failedCases = caseScriptMapper.selectList(new LambdaQueryWrapper<ActCaseScript>()
                 .eq(ActCaseScript::getThemeId, themeId)
                 .eq(ActCaseScript::getVersionNo, versionNo)
@@ -195,15 +208,24 @@ public class PublishInitServiceImpl implements PublishInitService {
             throw new BizException("当前状态不允许重试");
         }
         List<String> caseIds = failedCases.stream().map(ActCaseScript::getId).toList();
-        publishExecutor.execute(() -> compileBatch(themeId, versionNo, caseIds));
+        publishExecutor.execute(() -> {
+            int failed = compileBatch(themeId, versionNo, caseIds);
+            if (failed == 0 && theme.getPublishedVersionNo() == null) {
+                try {
+                    finishFirstPublish(themeId, versionNo);
+                } catch (Exception e) {
+                    log.error("首次发布收尾失败（重试路径）themeId={}", themeId, e);
+                }
+            }
+        });
         log.info("发布重试受理 themeId={} version={} 失败项={}", themeId, versionNo, caseIds.size());
     }
 
     /**
-     * 批量编译：逐案例编译（失败重试 1 次），全部成功才完成发布。
-     * 单案例失败不中断整批，最终以 failed 计数暴露给进度接口。
+     * 批量编译：逐案例编译（失败重试 1 次）。
+     * 单案例失败不中断整批，返回失败数；全部成功由调用方决定收尾动作（首次发布置已发布；升版路径无需收尾）。
      */
-    private void compileBatch(String themeId, Integer versionNo, List<String> caseIds) {
+    private int compileBatch(String themeId, Integer versionNo, List<String> caseIds) {
         int failedCount = 0;
         for (String caseId : caseIds) {
             String error = compileWithRetry(themeId, versionNo, caseId);
@@ -211,15 +233,10 @@ public class PublishInitServiceImpl implements PublishInitService {
                 failedCount++;
             }
         }
-        if (failedCount == 0) {
-            try {
-                finishPublish(themeId, versionNo);
-            } catch (Exception e) {
-                log.error("发布收尾失败 themeId={}", themeId, e);
-            }
-        } else {
-            log.warn("发布初始化存在失败项 themeId={} 失败数={}（保持发布中，可重试）", themeId, failedCount);
+        if (failedCount > 0) {
+            log.warn("编译存在失败项 themeId={} version={} 失败数={}", themeId, versionNo, failedCount);
         }
+        return failedCount;
     }
 
     /** 编译单个案例，失败重试 1 次；返回 null 表示成功，否则返回错误信息 */
@@ -309,20 +326,20 @@ public class PublishInitServiceImpl implements PublishInitService {
     }
 
     /**
-     * 发布收尾：新建业务版本 → 案例与编译产物重挂到新版本 → 主题置已发布。
+     * 首次发布收尾：v0 工作内容固化为公开 v1 → 案例与编译产物重挂到 v1 → 主题置已发布。
      * 重挂依据 sort_order 建立"旧单元行 → 新单元行"映射（copyUnitsToVersion 保持 sort_order 不变）。
      */
-    private void finishPublish(String themeId, Integer oldVersionNo) {
-        int newVersionNo = themeVersionService.createVersionFromCurrent(themeId);
+    private void finishFirstPublish(String themeId, Integer workingVersionNo) {
+        int publishedVersionNo = contentVersionService.firstPublish(themeId, "admin");
         Map<Integer, String> newUnitIdBySortOrder = new HashMap<>();
         for (ActScenarioUnit unit : unitMapper.selectList(new LambdaQueryWrapper<ActScenarioUnit>()
                 .eq(ActScenarioUnit::getThemeId, themeId)
-                .eq(ActScenarioUnit::getVersionNo, newVersionNo))) {
+                .eq(ActScenarioUnit::getVersionNo, publishedVersionNo))) {
             newUnitIdBySortOrder.put(unit.getSortOrder(), unit.getId());
         }
         List<ActScenarioUnit> oldUnits = unitMapper.selectList(new LambdaQueryWrapper<ActScenarioUnit>()
                 .eq(ActScenarioUnit::getThemeId, themeId)
-                .eq(ActScenarioUnit::getVersionNo, oldVersionNo));
+                .eq(ActScenarioUnit::getVersionNo, workingVersionNo));
         Map<String, String> unitIdMapping = new HashMap<>();
         for (ActScenarioUnit oldUnit : oldUnits) {
             String newUnitId = newUnitIdBySortOrder.get(oldUnit.getSortOrder());
@@ -330,13 +347,31 @@ public class PublishInitServiceImpl implements PublishInitService {
                 unitIdMapping.put(oldUnit.getId(), newUnitId);
             }
         }
-        remapCases(themeId, oldVersionNo, newVersionNo, unitIdMapping);
-        remapDrills(themeId, oldVersionNo, newVersionNo, unitIdMapping);
+        remapCases(themeId, workingVersionNo, publishedVersionNo, unitIdMapping);
+        remapDrills(themeId, workingVersionNo, publishedVersionNo, unitIdMapping);
         themeMapper.update(null, new LambdaUpdateWrapper<ActTheme>()
                 .eq(ActTheme::getId, themeId)
                 .set(ActTheme::getStatus, STATUS_PUBLISHED)
                 .set(ActTheme::getUpdatedAt, LocalDateTime.now()));
-        log.info("发布完成 themeId={} 新版本={} 场景重挂数={}", themeId, newVersionNo, unitIdMapping.size());
+        log.info("首次发布完成 themeId={} 公开版本={} 场景重挂数={}",
+                themeId, publishedVersionNo, unitIdMapping.size());
+    }
+
+    @Override
+    public void compileNewVersionAsync(String themeId, int versionNo) {
+        List<ActCaseScript> cases = listCases(themeId, versionNo).stream()
+                .filter(c -> CASE_DRAFT.equals(c.getStatus()) || CASE_FAILED.equals(c.getStatus()))
+                .toList();
+        if (cases.isEmpty()) {
+            log.info("升版无需编译 themeId={} version={}（无待编译案例）", themeId, versionNo);
+            return;
+        }
+        List<String> caseIds = cases.stream().map(ActCaseScript::getId).toList();
+        publishExecutor.execute(() -> {
+            int failed = compileBatch(themeId, versionNo, caseIds);
+            log.info("升版编译完成 themeId={} version={} 编译数={} 失败数={}",
+                    themeId, versionNo, caseIds.size(), failed);
+        });
     }
 
     /** 案例剧本重挂到新版本与新单元行 */

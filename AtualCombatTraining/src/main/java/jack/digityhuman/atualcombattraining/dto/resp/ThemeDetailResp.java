@@ -45,5 +45,13 @@ public class ThemeDetailResp {
         private Integer participantCount;
         private BigDecimal avgScore;
         private Integer totalTrainingCount;
+        /** 练习总次数（训练 + 考核，来自报告） */
+        private Integer totalPracticeCount;
+        /** 训练次数 / 考核次数（按报告 studyMode 拆分） */
+        private Integer trainingCount;
+        private Integer examCount;
+        /** 训练均分 / 考核均分（只统计已生成报告） */
+        private BigDecimal trainingAverage;
+        private BigDecimal examAverage;
     }
 }

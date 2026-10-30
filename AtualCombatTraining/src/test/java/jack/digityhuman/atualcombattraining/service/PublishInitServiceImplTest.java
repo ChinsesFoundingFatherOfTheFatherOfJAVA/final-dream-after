@@ -53,7 +53,7 @@ class PublishInitServiceImplTest {
     @Mock
     private ArtifactService artifactService;
     @Mock
-    private ThemeVersionService themeVersionService;
+    private ContentVersionService contentVersionService;
     @Mock
     private ThreadPoolTaskExecutor publishExecutor;
 
@@ -66,12 +66,14 @@ class PublishInitServiceImplTest {
         MybatisTestSupport.initTableInfo();
     }
 
-    /** 主题（当前版本 1） */
+    /** 主题：草稿 working=0/published=null；其余状态 working=published=versionNo */
     private ActTheme theme(int status, int versionNo) {
         ActTheme theme = new ActTheme();
         theme.setId("theme-1");
         theme.setStatus(status);
         theme.setCurrentVersionNo(versionNo);
+        theme.setWorkingVersionNo(versionNo);
+        theme.setPublishedVersionNo(status == 0 ? null : versionNo);
         return theme;
     }
 
@@ -166,11 +168,20 @@ class PublishInitServiceImplTest {
     }
 
     @Test
-    void 发布_状态不允许时拒绝() {
-        when(themeMapper.selectById("theme-1")).thenReturn(theme(1, 1));
+    void 发布_已发布主题拒绝并提示走AI确认() {
+        // 已发布主题（published=1）：publish 按钮不再可用，内容更新走 AI 确认
+        when(themeMapper.selectById("theme-1")).thenReturn(theme(3, 1));
+
+        BizException error = assertThrows(BizException.class, () -> publishInitService.publish("theme-1"));
+        assertTrue(error.getMessage().contains("主题已发布"));
+    }
+
+    @Test
+    void 发布_状态抢占失败时拒绝() {
+        when(themeMapper.selectById("theme-1")).thenReturn(theme(0, 1));
         stubConfirmedArtifact();
         when(caseScriptMapper.selectList(any())).thenReturn(List.of(caseScript("c1", "draft")));
-        // 条件更新影响 0 行 = 状态已不是草稿/已发布
+        // 条件更新影响 0 行 = 并发抢占失败
         when(themeMapper.update(any(), any())).thenReturn(0);
 
         BizException error = assertThrows(BizException.class, () -> publishInitService.publish("theme-1"));
@@ -226,7 +237,7 @@ class PublishInitServiceImplTest {
 
         assertTrue(error.getMessage().contains("请先在 AI 助手中生成并确认实战案例"));
         verify(themeMapper, never()).update(any(), any());
-        verify(themeVersionService, never()).createVersionFromCurrent(anyString());
+        verify(contentVersionService, never()).firstPublish(anyString(), anyString());
     }
 
     @Test

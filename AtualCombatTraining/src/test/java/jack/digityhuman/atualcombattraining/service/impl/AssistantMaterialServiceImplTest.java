@@ -2,6 +2,7 @@ package jack.digityhuman.atualcombattraining.service.impl;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jack.digityhuman.atualcombattraining.agent.KngAiSourceClient;
+import jack.digityhuman.atualcombattraining.service.preview.MaterialPreviewService;
 import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.common.BizTypes;
 import jack.digityhuman.atualcombattraining.common.JsonSupport;
@@ -80,6 +81,8 @@ class AssistantMaterialServiceImplTest {
     private AssistantEventPublisher eventPublisher;
     @Mock
     private KngAiSourceClient kngAiSourceClient;
+    @Mock
+    private MaterialPreviewService materialPreview;
 
     @TempDir
     Path tempDir;
@@ -104,7 +107,8 @@ class AssistantMaterialServiceImplTest {
         AssistantProperties properties = new AssistantProperties();
         properties.setFileDir(tempDir.toString());
         materialService = new AssistantMaterialServiceImpl(sessionService, materialMapper, artifactService,
-                textExtractor, eventPublisher, properties, executor, kngAiSourceClient);
+                textExtractor, eventPublisher, properties, executor, kngAiSourceClient,
+                materialPreview);
     }
 
     @AfterEach
@@ -372,3 +376,5 @@ class AssistantMaterialServiceImplTest {
         verify(eventPublisher).push(eq(SESSION_ID), isNull(), eq(BizTypes.PARSE_FILE), any());
     }
 }
+
+

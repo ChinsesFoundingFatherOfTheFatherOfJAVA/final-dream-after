@@ -43,6 +43,24 @@ public class AssistantExecutorConfig {
         return buildExecutor("assistant-publish-", properties.getPublishPool());
     }
 
+    /**
+     * 材料预览转换线程池（契约 11 §4.2）：Office→PDF 是分钟级外部进程调用，
+     * 必须与解析/生成/发布隔离——转换再慢也不阻塞上传、训练和发布。
+     * 容量刻意小（core=1/max=2/queue=32）：转换是重 IO 外部进程，多了互相拖慢。
+     */
+    @Bean("previewExecutor")
+    public ThreadPoolTaskExecutor previewExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(2);
+        executor.setQueueCapacity(32);
+        executor.setThreadNamePrefix("material-preview-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
+        executor.initialize();
+        return executor;
+    }
+
     /** 按配置构造线程池（显式设置线程名前缀，便于日志排查） */
     private ThreadPoolTaskExecutor buildExecutor(String threadNamePrefix, AssistantProperties.Pool pool) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

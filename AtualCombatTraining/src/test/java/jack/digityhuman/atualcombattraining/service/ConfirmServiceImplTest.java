@@ -18,6 +18,8 @@ import jack.digityhuman.atualcombattraining.mapper.ActCustomerProfileMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActEvaluationDimensionMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActScenarioUnitMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
+import jack.digityhuman.atualcombattraining.service.ContentVersionService;
+import jack.digityhuman.atualcombattraining.service.PublishInitService;
 import jack.digityhuman.atualcombattraining.service.impl.ArtifactServiceImpl;
 import jack.digityhuman.atualcombattraining.service.impl.ConfirmServiceImpl;
 import jack.digityhuman.atualcombattraining.support.MybatisTestSupport;
@@ -73,6 +75,10 @@ class ConfirmServiceImplTest {
     private ArtifactService artifactService;
     @Mock
     private AssistantSessionService sessionService;
+    @Mock
+    private ContentVersionService contentVersionService;
+    @Mock
+    private PublishInitService publishInitService;
 
     @InjectMocks
     private ConfirmServiceImpl confirmService;
@@ -144,11 +150,13 @@ class ConfirmServiceImplTest {
         when(sessionService.requireSession("sess-1")).thenReturn(session);
     }
 
-    /** 主题（当前版本 2） */
+    /** 主题（未发布草稿：工作版本 2，内容确认写入该版本，不产生可见版本） */
     private void stubTheme() {
         ActTheme theme = new ActTheme();
         theme.setId("theme-1");
         theme.setCurrentVersionNo(2);
+        theme.setWorkingVersionNo(2);
+        theme.setPublishedVersionNo(null);
         when(themeMapper.selectById("theme-1")).thenReturn(theme);
     }
 
@@ -316,6 +324,40 @@ class ConfirmServiceImplTest {
         verify(themeMapper).updateById(themeCaptor.capture());
         assertEquals(1, themeCaptor.getValue().getCustomerProfileCount());
         assertEquals("sess-1", themeCaptor.getValue().getConversationId());
+    }
+
+    @Test
+    void 已发布主题_确认创建新版本并立即发布() {
+        stubSession();
+        // 已发布主题：published=2，AI 确认 → 新版本 3
+        ActTheme theme = new ActTheme();
+        theme.setId("theme-1");
+        theme.setCurrentVersionNo(2);
+        theme.setWorkingVersionNo(2);
+        theme.setPublishedVersionNo(2);
+        when(themeMapper.selectById("theme-1")).thenReturn(theme);
+        when(contentVersionService.startNewVersionFromPublished("theme-1", "admin")).thenReturn(3);
+        stubUnitInsertWithIds();
+        ActAiArtifact artifact = new ActAiArtifact();
+        artifact.setId("art-6");
+        artifact.setVersionNo(6);
+        artifact.setStatus(ArtifactServiceImpl.STATUS_WORKING);
+        artifact.setContent(ARTIFACT_JSON);
+        artifact.setContentHash("other");
+        when(artifactService.get("art-6", 6)).thenReturn(artifact);
+        when(artifactMapper.update(any(), any())).thenReturn(1);
+        when(unitMapper.selectList(any())).thenReturn(new ArrayList<>());
+        when(materialMapper.selectList(any())).thenReturn(new ArrayList<>());
+
+        confirmService.confirm("sess-1", "art-6", 6);
+
+        // 内容写到新版本 3
+        ArgumentCaptor<ActScenarioUnit> unitCaptor = ArgumentCaptor.forClass(ActScenarioUnit.class);
+        verify(unitMapper, org.mockito.Mockito.times(2)).insert(unitCaptor.capture());
+        assertEquals(3, unitCaptor.getAllValues().get(0).getVersionNo());
+        // 立即发布：切指针 + 异步编译该版本剧本
+        verify(contentVersionService).markPublished("theme-1", 3, "admin");
+        verify(publishInitService).compileNewVersionAsync("theme-1", 3);
     }
 
     @Test

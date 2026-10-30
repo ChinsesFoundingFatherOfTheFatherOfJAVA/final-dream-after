@@ -3,6 +3,7 @@ package jack.digityhuman.atualcombattraining.service;
 import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.entity.ActTheme;
 import jack.digityhuman.atualcombattraining.entity.ActThemeVersion;
+import jack.digityhuman.atualcombattraining.mapper.ActPracticeReportMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeVersionMapper;
 import jack.digityhuman.atualcombattraining.service.impl.ThemeServiceImpl;
@@ -33,6 +34,8 @@ class ThemeServiceImplTest {
     private ActThemeVersionMapper versionMapper;
     @Mock
     private ScenarioUnitService scenarioUnitService;
+    @Mock
+    private ActPracticeReportMapper reportMapper;
 
     @InjectMocks
     private ThemeServiceImpl themeService;

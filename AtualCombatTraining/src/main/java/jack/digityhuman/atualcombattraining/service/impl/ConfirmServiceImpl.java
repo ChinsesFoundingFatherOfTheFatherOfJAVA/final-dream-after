@@ -26,6 +26,8 @@ import jack.digityhuman.atualcombattraining.service.ArtifactService;
 import jack.digityhuman.atualcombattraining.service.ArtifactSupport;
 import jack.digityhuman.atualcombattraining.service.AssistantSessionService;
 import jack.digityhuman.atualcombattraining.service.ConfirmService;
+import jack.digityhuman.atualcombattraining.service.ContentVersionService;
+import jack.digityhuman.atualcombattraining.service.PublishInitService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -79,6 +81,11 @@ public class ConfirmServiceImpl implements ConfirmService {
     private final ActCustomerProfileMapper profileMapper;
     private final ActCaseScriptMapper caseScriptMapper;
     private final ActAiMaterialMapper materialMapper;
+    private final ContentVersionService contentVersionService;
+    private final PublishInitService publishInitService;
+
+    /** 确认操作人占位（登录体系接入后替换） */
+    private static final String CONFIRM_OPERATOR = "admin";
     private final ArtifactService artifactService;
     private final AssistantSessionService sessionService;
 
@@ -126,19 +133,34 @@ public class ConfirmServiceImpl implements ConfirmService {
         if (theme == null) {
             throw new BizException("主题不存在");
         }
-        Integer versionNo = theme.getCurrentVersionNo();
+        // 版本语义（2026-10-30 契约）：
+        // 未发布 → 内容写进隐藏工作版本 v0（working_version_no=0），不产生可见版本；
+        // 已发布 → 新建版本行（max+1）并写入，随后同事务发布（切指针），发布后异步编译剧本。
+        boolean published = theme.getPublishedVersionNo() != null;
+        int versionNo;
+        if (published) {
+            versionNo = contentVersionService.startNewVersionFromPublished(themeId, CONFIRM_OPERATOR);
+        } else {
+            versionNo = theme.getWorkingVersionNo() == null ? 0 : theme.getWorkingVersionNo();
+        }
         ObjectNode root = JsonSupport.obj(artifact.getContent());
         if (root == null) {
             throw new BizException("产物内容非法，无法落库");
         }
         LocalDateTime now = LocalDateTime.now();
-        // 1. 覆盖当前版本的场景单元与案例（先删后插）
+        // 1. 覆盖目标版本的场景单元与案例（先删后插）
         clearCurrentVersionRows(themeId, versionNo);
         Map<String, String> unitIdByScenarioId = translateScenarios(themeId, versionNo, root, now);
         translateCustomerProfiles(themeId, versionNo, root, now);
         translateMaterials(themeId, root, now);
         syncTheme(theme, session.getId(), root, now);
-        log.info("确认落库完成 themeId={} version={} 场景数={}", themeId, versionNo, unitIdByScenarioId.size());
+        // 2. 已发布主题：内容写完立即发布（切指针），再异步编译该版本剧本
+        if (published) {
+            contentVersionService.markPublished(themeId, versionNo, CONFIRM_OPERATOR);
+            publishInitService.compileNewVersionAsync(themeId, versionNo);
+        }
+        log.info("确认落库完成 themeId={} version={} published={} 场景数={}",
+                themeId, versionNo, published, unitIdByScenarioId.size());
         return new ConfirmResult(artifact.getId(), artifact.getVersionNo(), themeId);
     }
 

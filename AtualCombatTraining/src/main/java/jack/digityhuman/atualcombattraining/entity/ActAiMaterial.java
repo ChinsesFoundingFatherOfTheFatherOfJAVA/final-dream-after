@@ -36,5 +36,11 @@ public class ActAiMaterial {
     private String extractText;
     /** 材料摘要（喂给编排智能体） */
     private String summary;
+    /** PDF/文本双模式预览状态（契约 11 §2）：not_needed/pending/ready/text_only/failed */
+    private String previewStatus;
+    /** 预览 PDF 内部文件名（file-dir/previews/ 下） */
+    private String previewFileId;
+    /** 转换失败摘要（不返回给学员） */
+    private String previewError;
     private LocalDateTime createdAt;
 }

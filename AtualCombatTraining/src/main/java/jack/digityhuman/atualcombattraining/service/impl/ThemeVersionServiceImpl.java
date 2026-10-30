@@ -1,6 +1,7 @@
 package jack.digityhuman.atualcombattraining.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.dto.req.ThemeSettingsSaveReq;
 import jack.digityhuman.atualcombattraining.dto.resp.RollbackResp;
@@ -8,11 +9,13 @@ import jack.digityhuman.atualcombattraining.dto.resp.ThemeSaveResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ThemeSettingsResp;
 import jack.digityhuman.atualcombattraining.dto.resp.VersionResp;
 import jack.digityhuman.atualcombattraining.entity.ActTheme;
+import jack.digityhuman.atualcombattraining.entity.ActThemeSettings;
 import jack.digityhuman.atualcombattraining.entity.ActThemeVersion;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeVersionMapper;
 import jack.digityhuman.atualcombattraining.service.ScenarioUnitService;
 import jack.digityhuman.atualcombattraining.service.ThemeService;
+import jack.digityhuman.atualcombattraining.service.ThemeSettingsService;
 import jack.digityhuman.atualcombattraining.service.ThemeVersionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,7 +28,15 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * 主题版本服务实现（FP-13~17 设置读取 / FP-18 保存 / FP-19 版本列表与回滚 / AI 路径版本复制）
+ * 主题版本服务实现（2026-10-30 版本语义重构后的接口门面）
+ * <p>
+ * 职责变化（对比旧实现）：
+ * <ul>
+ *   <li>设置读/写全部委托 {@link ThemeSettingsService}（act_theme_settings 一行，不升版）；</li>
+ *   <li>版本历史只列已发布版本（1..published_version_no）；v0 工作版本不对用户返回；</li>
+ *   <li>回滚改为"公开指针回切"：published/working 一起切到目标已发布版本，不新增版本行；</li>
+ *   <li>内容版本的创建/发布走 {@link ContentVersionService}（首次发布、AI 确认升版），不再由本类负责。</li>
+ * </ul>
  */
 @Slf4j
 @Service
@@ -45,79 +56,76 @@ public class ThemeVersionServiceImpl implements ThemeVersionService {
     private final ActThemeVersionMapper versionMapper;
     private final ThemeService themeService;
     private final ScenarioUnitService scenarioUnitService;
+    private final ThemeSettingsService themeSettingsService;
 
     /**
-     * FP-13~17 读取当前版本五表单 + 内容概览：
-     * 1. 查主题 → 2. 查当前版本行 → 3. 组装五表单（CSV/0-1 与数组/布尔互转）
-     * 4. 内容概览：单元数实时 count、冰山合并去重、维度名合并去重、客户画像读主题表占位字段
+     * 设置读取：五表单来自 act_theme_settings（全局、与版本无关），
+     * 内容概览按 working_version_no 统计（首次发布前统计 v0 工作内容）。
      */
     @Override
     public ThemeSettingsResp getSettings(String themeId) {
         ActTheme theme = requireTheme(themeId);
-        ActThemeVersion version = requireVersion(themeId, theme.getCurrentVersionNo());
+        ActThemeSettings settings = themeSettingsService.require(themeId);
+        int workingVersionNo = theme.getWorkingVersionNo() == null ? 0 : theme.getWorkingVersionNo();
 
         ThemeSettingsResp resp = new ThemeSettingsResp();
-        resp.setVersionNo(String.valueOf(version.getVersionNo()));
+        resp.setVersionNo(String.valueOf(
+                theme.getPublishedVersionNo() == null ? 0 : theme.getPublishedVersionNo()));
 
-        // 01 基本信息
         ThemeSettingsResp.Basic basic = new ThemeSettingsResp.Basic();
-        basic.setThemeName(version.getThemeName());
-        basic.setThemeDesc(version.getThemeDesc());
-        basic.setOwnerUserId(version.getOwnerUserId() == null || version.getOwnerUserId().isBlank()
-                ? OWNER_USER_ID : version.getOwnerUserId());
-        basic.setPlanStartTime(version.getPlanStartTime());
-        basic.setPlanEndTime(version.getPlanEndTime());
+        // 名称/描述以 act_theme 冗余列为准（设置保存时同步），版本行里只是历史快照
+        basic.setThemeName(theme.getThemeName());
+        basic.setThemeDesc(theme.getThemeDesc());
+        basic.setOwnerUserId(settings.getOwnerUserId() == null || settings.getOwnerUserId().isBlank()
+                ? OWNER_USER_ID : settings.getOwnerUserId());
+        basic.setPlanStartTime(settings.getPlanStartTime());
+        basic.setPlanEndTime(settings.getPlanEndTime());
         resp.setBasic(basic);
 
-        // 02 访问控制
         ThemeSettingsResp.Access access = new ThemeSettingsResp.Access();
-        access.setTotalDrillCount(version.getTotalDrillCount());
+        access.setTotalDrillCount(settings.getTotalDrillCount());
         access.setRemainingEnterpriseCapacity(REMAINING_ENTERPRISE_CAPACITY);
-        access.setPerSceneLimit(version.getPerSceneLimit());
-        access.setJoinMode(version.getJoinMode());
-        access.setGuestAccessEnabled(toBool(version.getGuestAccessEnabled()));
+        access.setPerSceneLimit(settings.getPerSceneLimit());
+        access.setJoinMode(settings.getJoinMode());
+        access.setGuestAccessEnabled(toBool(settings.getGuestAccessEnabled()));
         resp.setAccess(access);
 
-        // 03 训练策略（含防作弊占位分组）
         ThemeSettingsResp.Strategy strategy = new ThemeSettingsResp.Strategy();
-        strategy.setAiResponseMode(version.getAiResponseMode());
-        strategy.setTrainingModeEnabled(toBool(version.getTrainingModeEnabled()));
-        strategy.setAssessmentModeEnabled(toBool(version.getAssessmentModeEnabled()));
-        strategy.setCoachReviewEnabled(toBool(version.getCoachReviewEnabled()));
-        strategy.setSuggestionEnabled(toBool(version.getSuggestionEnabled()));
-        strategy.setPracticeMethods(splitCsv(version.getPracticeMethods()));
-        strategy.setDifficulty(version.getDifficulty());
-        strategy.setAllowCustomDifficulty(toBool(version.getAllowCustomDifficulty()));
+        strategy.setAiResponseMode(settings.getAiResponseMode());
+        strategy.setTrainingModeEnabled(toBool(settings.getTrainingModeEnabled()));
+        strategy.setAssessmentModeEnabled(toBool(settings.getAssessmentModeEnabled()));
+        strategy.setCoachReviewEnabled(toBool(settings.getCoachReviewEnabled()));
+        strategy.setSuggestionEnabled(toBool(settings.getSuggestionEnabled()));
+        strategy.setPracticeMethods(splitCsv(settings.getPracticeMethods()));
+        strategy.setDifficulty(settings.getDifficulty());
+        strategy.setAllowCustomDifficulty(toBool(settings.getAllowCustomDifficulty()));
         ThemeSettingsResp.AntiCheat antiCheat = new ThemeSettingsResp.AntiCheat();
-        antiCheat.setFaceCheckEnabled(toBool(version.getFaceCheckEnabled()));
-        antiCheat.setFaceCheckStage(version.getFaceCheckStage());
-        antiCheat.setScreenSwitchMode(version.getScreenSwitchMode());
-        antiCheat.setScreenSwitchLimit(version.getScreenSwitchLimit());
+        antiCheat.setFaceCheckEnabled(toBool(settings.getFaceCheckBeforeEnabled()));
+        antiCheat.setFaceCheckStage(toBool(settings.getFaceCheckOngoingEnabled()) ? "ongoing" : "before");
+        antiCheat.setScreenSwitchMode(settings.getScreenSwitchMode());
+        antiCheat.setScreenSwitchLimit(settings.getScreenSwitchLimit());
         strategy.setAntiCheat(antiCheat);
         resp.setStrategy(strategy);
 
-        // 04 通过标准
         ThemeSettingsResp.PassStandard passStandard = new ThemeSettingsResp.PassStandard();
-        passStandard.setScenePassType(version.getScenePassType());
-        passStandard.setScenePassCount(version.getScenePassCount());
+        passStandard.setScenePassType(settings.getScenePassType());
+        passStandard.setScenePassCount(settings.getScenePassCount());
         resp.setPassStandard(passStandard);
 
-        // 05 内容概览
         ThemeSettingsResp.ContentOverview overview = new ThemeSettingsResp.ContentOverview();
-        overview.setScenarioUnitCount((int) scenarioUnitService.countUnits(themeId, version.getVersionNo()));
+        overview.setScenarioUnitCount((int) scenarioUnitService.countUnits(themeId, workingVersionNo));
         overview.setCustomerProfileCount(theme.getCustomerProfileCount());
-        overview.setIcebergElementCount(scenarioUnitService.countDistinctIcebergElements(themeId, version.getVersionNo()));
-        overview.setEvaluationDimensionCount(scenarioUnitService.countDistinctDimensionNames(themeId, version.getVersionNo()));
+        overview.setIcebergElementCount(
+                scenarioUnitService.countDistinctIcebergElements(themeId, workingVersionNo));
+        overview.setEvaluationDimensionCount(
+                scenarioUnitService.countDistinctDimensionNames(themeId, workingVersionNo));
         resp.setContentOverview(overview);
         return resp;
     }
 
     /**
-     * FP-18 整体保存主题设置（事务内）：
-     * 1. 主题存在且未结束校验 + 五表单字段校验
-     * 2. version_no = max+1 插入新版本行（creator='管理员'）
-     * 3. 复制当前版本场景单元+维度到新版本（内容不变，保证版本隔离）
-     * 4. 切 current_version_no 并同步主题表冗余字段（名称/模式/难度/更新时间）
+     * 设置保存：委托 ThemeSettingsService（不产生版本），响应里 versionNo 语义变为
+     * "当前公开版本号"（未发布主题为 0），前端只用于展示不用于回滚定位。
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -126,46 +134,43 @@ public class ThemeVersionServiceImpl implements ThemeVersionService {
         if (Objects.equals(theme.getStatus(), STATUS_FINISHED)) {
             throw new BizException("主题已结束，无法保存设置");
         }
-        validate(req);
-
-        Integer currentVersionNo = theme.getCurrentVersionNo();
-        int newVersionNo = maxVersionNo(themeId) + 1;
-
-        // 2. 构造并插入新版本行（显式 setter 赋值）
-        LocalDateTime now = LocalDateTime.now();
-        ActThemeVersion version = buildVersionEntity(themeId, newVersionNo, req, now);
-        versionMapper.insert(version);
-
-        // 3. 复制当前版本场景单元+维度到新版本
-        scenarioUnitService.copyUnitsToVersion(themeId, currentVersionNo, newVersionNo);
-
-        // 4. 切指针 + 同步冗余字段（syncRedundantFields 内部落库并推导 themeMode/assignMode）
-        themeService.syncRedundantFields(theme, version);
+        String themeName = req == null || req.getBasic() == null ? null : req.getBasic().getThemeName();
+        String themeDesc = req == null || req.getBasic() == null ? null : req.getBasic().getThemeDesc();
+        ThemeSettingsService.SaveResult result = themeSettingsService.save(
+                themeId, req, themeName, themeDesc, theme.getPublishedVersionNo());
 
         ThemeSaveResp resp = new ThemeSaveResp();
         resp.setId(theme.getId());
-        resp.setVersionNo(String.valueOf(newVersionNo));
-        resp.setThemeMode(theme.getThemeMode());
-        resp.setAssignMode(theme.getAssignMode());
+        resp.setVersionNo(String.valueOf(
+                theme.getPublishedVersionNo() == null ? 0 : theme.getPublishedVersionNo()));
+        resp.setThemeMode(result.themeMode());
+        resp.setAssignMode(result.assignMode());
         return resp;
     }
 
     /**
-     * FP-19 版本列表：version_no 倒序（新在上，回滚不改变排序），当前版本 current=true
+     * 版本历史：只列已发布版本（1..published_version_no），version_no 倒序。
+     * current=true 标在 published_version_no 上；未发布主题返回空列表（v0 不暴露）。
      */
     @Override
     public List<VersionResp> listVersions(String themeId) {
         ActTheme theme = requireTheme(themeId);
+        Integer published = theme.getPublishedVersionNo();
+        if (published == null) {
+            return List.of();
+        }
         List<ActThemeVersion> versions = versionMapper.selectList(
                 new LambdaQueryWrapper<ActThemeVersion>()
                         .eq(ActThemeVersion::getThemeId, themeId)
+                        .ge(ActThemeVersion::getVersionNo, 1)
+                        .le(ActThemeVersion::getVersionNo, published)
                         .orderByDesc(ActThemeVersion::getVersionNo));
-        return versions.stream().map(v -> toVersionResp(v, theme.getCurrentVersionNo())).toList();
+        return versions.stream().map(v -> toVersionResp(v, published)).toList();
     }
 
     /**
-     * FP-19 回滚：仅将 current_version_no 切到目标版本并同步冗余字段，
-     * 不产生新版本号、不修改任何版本记录内容；目标版本不存在或主题已结束返回 code=1
+     * 回滚（新语义）：把公开指针与工作指针一起切回目标已发布版本。
+     * 不新增版本行；目标必须是已发布范围（1..published_version_no）。
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -174,7 +179,19 @@ public class ThemeVersionServiceImpl implements ThemeVersionService {
         if (Objects.equals(theme.getStatus(), STATUS_FINISHED)) {
             throw new BizException("主题已结束，无法回滚");
         }
+        Integer published = theme.getPublishedVersionNo();
+        if (published == null) {
+            throw new BizException("主题尚未发布，无可回滚版本");
+        }
+        if (versionNo == null || versionNo < 1 || versionNo > published) {
+            throw new BizException("目标版本不在已发布范围内");
+        }
         ActThemeVersion target = requireVersion(themeId, versionNo);
+        themeMapper.update(null, new LambdaUpdateWrapper<ActTheme>()
+                .eq(ActTheme::getId, themeId)
+                .set(ActTheme::getWorkingVersionNo, target.getVersionNo())
+                .set(ActTheme::getPublishedVersionNo, target.getVersionNo())
+                .set(ActTheme::getUpdatedAt, java.time.LocalDateTime.now()));
         themeService.syncRedundantFields(theme, target);
 
         RollbackResp resp = new RollbackResp();
@@ -183,170 +200,11 @@ public class ThemeVersionServiceImpl implements ThemeVersionService {
         return resp;
     }
 
-    /**
-     * AI 路径：发布完成时按当前版本复制出下一版本（AI 路径"发布=第一版"）。
-     * 与 saveSettings 的差异只有"版本内容来源"——这里照抄当前版本行而不是接收前端请求。
-     */
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public int createVersionFromCurrent(String themeId) {
-        ActTheme theme = requireTheme(themeId);
-        ActThemeVersion current = requireVersion(themeId, theme.getCurrentVersionNo());
-        int newVersionNo = maxVersionNo(themeId) + 1;
-        LocalDateTime now = LocalDateTime.now();
-        ActThemeVersion copy = copyVersionEntity(current, newVersionNo, now);
-        versionMapper.insert(copy);
-        scenarioUnitService.copyUnitsToVersion(themeId, current.getVersionNo(), newVersionNo);
-        themeService.syncRedundantFields(theme, copy);
-        log.info("AI 路径新建版本 themeId={} version={}（源自 version={}）",
-                themeId, newVersionNo, current.getVersionNo());
-        return newVersionNo;
-    }
-
-    /** 版本行逐字段复制（显式 setter，禁长参数列表） */
-    private ActThemeVersion copyVersionEntity(ActThemeVersion source, int versionNo, LocalDateTime now) {
-        ActThemeVersion copy = new ActThemeVersion();
-        copy.setThemeId(source.getThemeId());
-        copy.setVersionNo(versionNo);
-        copy.setThemeName(source.getThemeName());
-        copy.setThemeDesc(source.getThemeDesc());
-        copy.setOwnerUserId(source.getOwnerUserId());
-        copy.setPlanStartTime(source.getPlanStartTime());
-        copy.setPlanEndTime(source.getPlanEndTime());
-        copy.setTotalDrillCount(source.getTotalDrillCount());
-        copy.setPerSceneLimit(source.getPerSceneLimit());
-        copy.setJoinMode(source.getJoinMode());
-        copy.setGuestAccessEnabled(source.getGuestAccessEnabled());
-        copy.setAiResponseMode(source.getAiResponseMode());
-        copy.setTrainingModeEnabled(source.getTrainingModeEnabled());
-        copy.setAssessmentModeEnabled(source.getAssessmentModeEnabled());
-        copy.setCoachReviewEnabled(source.getCoachReviewEnabled());
-        copy.setSuggestionEnabled(source.getSuggestionEnabled());
-        copy.setPracticeMethods(source.getPracticeMethods());
-        copy.setDifficulty(source.getDifficulty());
-        copy.setAllowCustomDifficulty(source.getAllowCustomDifficulty());
-        copy.setFaceCheckEnabled(source.getFaceCheckEnabled());
-        copy.setFaceCheckStage(source.getFaceCheckStage());
-        copy.setScreenSwitchMode(source.getScreenSwitchMode());
-        copy.setScreenSwitchLimit(source.getScreenSwitchLimit());
-        copy.setScenePassType(source.getScenePassType());
-        copy.setScenePassCount(source.getScenePassCount());
-        copy.setCreator(source.getCreator() == null || source.getCreator().isBlank() ? CREATOR : source.getCreator());
-        copy.setUsedUserCount(0);
-        copy.setCompletedCount(0);
-        copy.setInProgressCount(0);
-        copy.setCreatedAt(now);
-        copy.setUpdatedAt(now);
-        return copy;
-    }
-
-    /**
-     * 服务端兜底校验（FP-18 / 03 文档 2.7）：
-     * 名称非空≤50；描述≤100；总演练次数≥1；perSceneLimit 为 null 或 ≥1；
-     * 演练模式至少启用一种；训练模式开启时教练点评必须开；练习方式非空
-     */
-    private void validate(ThemeSettingsSaveReq req) {
-        if (req == null || req.getBasic() == null
-                || req.getBasic().getThemeName() == null || req.getBasic().getThemeName().isBlank()) {
-            throw new BizException("主题名称不能为空");
-        }
-        if (req.getBasic().getThemeName().length() > 50) {
-            throw new BizException("主题名称不能超过50字");
-        }
-        if (req.getBasic().getThemeDesc() != null && req.getBasic().getThemeDesc().length() > 100) {
-            throw new BizException("主题描述不能超过100字");
-        }
-        if (req.getAccess() == null || req.getAccess().getTotalDrillCount() == null
-                || req.getAccess().getTotalDrillCount() < 1) {
-            throw new BizException("总演练次数必须大于0");
-        }
-        if (req.getAccess().getPerSceneLimit() != null && req.getAccess().getPerSceneLimit() < 1) {
-            throw new BizException("单个学员每个场景演练次数必须大于0");
-        }
-        ThemeSettingsSaveReq.Strategy strategy = req.getStrategy();
-        boolean training = strategy != null && Boolean.TRUE.equals(strategy.getTrainingModeEnabled());
-        boolean assessment = strategy != null && Boolean.TRUE.equals(strategy.getAssessmentModeEnabled());
-        if (!training && !assessment) {
-            throw new BizException("至少启用一种演练模式");
-        }
-        if (training && !Boolean.TRUE.equals(strategy.getCoachReviewEnabled())) {
-            throw new BizException("训练模式开启时必须开启教练点评");
-        }
-        if (strategy == null || strategy.getPracticeMethods() == null || strategy.getPracticeMethods().isEmpty()) {
-            throw new BizException("至少保留一种练习方式");
-        }
-    }
-
-    /** 查询主题当前最大版本号（无版本时返回 0） */
-    private int maxVersionNo(String themeId) {
-        List<ActThemeVersion> top = versionMapper.selectList(
-                new LambdaQueryWrapper<ActThemeVersion>()
-                        .eq(ActThemeVersion::getThemeId, themeId)
-                        .orderByDesc(ActThemeVersion::getVersionNo)
-                        .last("LIMIT 1"));
-        return top.isEmpty() ? 0 : top.get(0).getVersionNo();
-    }
-
-    /** 由保存请求构造新版本实体（五表单全部字段，显式 setter 赋值） */
-    private ActThemeVersion buildVersionEntity(String themeId, int versionNo,
-                                               ThemeSettingsSaveReq req, LocalDateTime now) {
-        ActThemeVersion v = new ActThemeVersion();
-        v.setThemeId(themeId);
-        v.setVersionNo(versionNo);
-        // 01 基本信息（ownerUserId 占位：前端不传时保持 admin）
-        ThemeSettingsSaveReq.Basic basic = req.getBasic();
-        v.setThemeName(basic.getThemeName());
-        v.setThemeDesc(basic.getThemeDesc());
-        v.setOwnerUserId(basic.getOwnerUserId() == null || basic.getOwnerUserId().isBlank()
-                ? OWNER_USER_ID : basic.getOwnerUserId());
-        v.setPlanStartTime(basic.getPlanStartTime());
-        v.setPlanEndTime(basic.getPlanEndTime());
-        // 02 访问控制
-        ThemeSettingsSaveReq.Access access = req.getAccess();
-        v.setTotalDrillCount(access.getTotalDrillCount());
-        v.setPerSceneLimit(access.getPerSceneLimit());
-        v.setJoinMode(access.getJoinMode());
-        v.setGuestAccessEnabled(toInt(access.getGuestAccessEnabled()));
-        // 03 训练策略 + 防作弊占位
-        ThemeSettingsSaveReq.Strategy strategy = req.getStrategy();
-        v.setAiResponseMode(strategy.getAiResponseMode());
-        v.setTrainingModeEnabled(toInt(strategy.getTrainingModeEnabled()));
-        v.setAssessmentModeEnabled(toInt(strategy.getAssessmentModeEnabled()));
-        // 训练模式开启时教练点评强制置 1（业务规则兜底）
-        boolean training = Boolean.TRUE.equals(strategy.getTrainingModeEnabled());
-        v.setCoachReviewEnabled(training ? 1 : toInt(strategy.getCoachReviewEnabled()));
-        v.setSuggestionEnabled(toInt(strategy.getSuggestionEnabled()));
-        v.setPracticeMethods(String.join(",", strategy.getPracticeMethods()));
-        v.setDifficulty(strategy.getDifficulty());
-        v.setAllowCustomDifficulty(toInt(strategy.getAllowCustomDifficulty()));
-        ThemeSettingsSaveReq.AntiCheat antiCheat = strategy.getAntiCheat();
-        if (antiCheat != null) {
-            v.setFaceCheckEnabled(toInt(antiCheat.getFaceCheckEnabled()));
-            v.setFaceCheckStage(antiCheat.getFaceCheckStage());
-            v.setScreenSwitchMode(antiCheat.getScreenSwitchMode());
-            v.setScreenSwitchLimit(antiCheat.getScreenSwitchLimit());
-        }
-        // 04 通过标准
-        ThemeSettingsSaveReq.PassStandard passStandard = req.getPassStandard();
-        if (passStandard != null) {
-            v.setScenePassType(passStandard.getScenePassType());
-            v.setScenePassCount(passStandard.getScenePassCount());
-        }
-        // 版本元数据（占位统计字段归零）
-        v.setCreator(CREATOR);
-        v.setUsedUserCount(0);
-        v.setCompletedCount(0);
-        v.setInProgressCount(0);
-        v.setCreatedAt(now);
-        v.setUpdatedAt(now);
-        return v;
-    }
-
-    /** 版本实体转响应（current 由主题指针判定） */
-    private VersionResp toVersionResp(ActThemeVersion v, Integer currentVersionNo) {
+    /** 版本实体转响应（current 由公开指针判定） */
+    private VersionResp toVersionResp(ActThemeVersion v, Integer publishedVersionNo) {
         VersionResp resp = new VersionResp();
         resp.setVersionNo(String.valueOf(v.getVersionNo()));
-        resp.setCurrent(Objects.equals(v.getVersionNo(), currentVersionNo));
+        resp.setCurrent(Objects.equals(v.getVersionNo(), publishedVersionNo));
         resp.setCreatedAt(v.getCreatedAt());
         resp.setUsedUserCount(v.getUsedUserCount());
         resp.setCompletedCount(v.getCompletedCount());
@@ -367,7 +225,8 @@ public class ThemeVersionServiceImpl implements ThemeVersionService {
     private ActThemeVersion requireVersion(String themeId, Integer versionNo) {
         ActThemeVersion version = versionMapper.selectOne(new LambdaQueryWrapper<ActThemeVersion>()
                 .eq(ActThemeVersion::getThemeId, themeId)
-                .eq(ActThemeVersion::getVersionNo, versionNo));
+                .eq(ActThemeVersion::getVersionNo, versionNo)
+                .last("LIMIT 1"));
         if (version == null) {
             throw new BizException("目标版本不存在");
         }
@@ -377,11 +236,6 @@ public class ThemeVersionServiceImpl implements ThemeVersionService {
     /** Integer(0/1) 转 Boolean */
     private static boolean toBool(Integer value) {
         return Objects.equals(value, 1);
-    }
-
-    /** Boolean 转 Integer(0/1) */
-    private static int toInt(Boolean value) {
-        return Boolean.TRUE.equals(value) ? 1 : 0;
     }
 
     /** CSV 字符串拆为数组（过滤空项） */
