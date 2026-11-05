@@ -1,7 +1,9 @@
 package jack.digityhuman.aigentservice.workflow;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jack.digityhuman.aigentservice.llm.LlmClient;
 import jack.digityhuman.aigentservice.llm.LlmMessage;
 import jack.digityhuman.aigentservice.llm.LlmRequest;
@@ -47,6 +49,9 @@ public class DrillChatTurn {
      * @return {reply, coachReview, targetProgress, deltaReason, behaviorHits}
      */
     public Map<String, Object> turn(WorkflowContext context, LlmClient llm) {
+        // 模板里引用的角色画像/行为指引由 script_json 派生：调用方只按契约传 script_json，
+        // 让模型自己去 200 字 JSON 里翻找性格与指引既容易漏、也会把上下文挤长。
+        ensureDerivedInputs(context);
         String systemPrompt = context.render(prompts.load(PROMPT_RESOURCE));
         List<LlmMessage> messages = new ArrayList<>();
         messages.add(LlmMessage.system(systemPrompt));
@@ -76,6 +81,145 @@ public class DrillChatTurn {
                 "targetProgress", progress,
                 "deltaReason", deltaReason,
                 "behaviorHits", behaviorHits instanceof List<?> ? behaviorHits : List.of());
+    }
+
+    /**
+     * 从 script_json 派生模板所需的三个可读段落（缺失的权重给空串，不让 render 抛错）。
+     * <p>
+     * 兼容两种脚本形态：随机/自定义练习是 drill-script-v1（actor.personality 是数组、
+     * goals.behaviorGuidance 是数组），案例练习的快照是扁平字段（actorPosition /
+     * actorPersonality / scriptBackground 等都是单个字符串）。两种都读，缺什么留空。
+     */
+    private void ensureDerivedInputs(WorkflowContext context) {
+        if (context.hasInput("actor_profile")) {
+            return;
+        }
+        ObjectNode script = scriptOf(context);
+        if (script == null) {
+            context.putInput("actor_profile", "");
+            context.putInput("behavior_guidance", "");
+            context.putInput("user_role_profile", "");
+            return;
+        }
+        context.putInput("actor_profile", actorProfile(script));
+        context.putInput("behavior_guidance", behaviorGuidance(script));
+        context.putInput("user_role_profile", userRoleProfile(script));
+    }
+
+    private ObjectNode scriptOf(WorkflowContext context) {
+        Object raw = context.input("script_json");
+        if (!(raw instanceof String json) || json.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode node = mapper.readTree(json);
+            return node.isObject() ? (ObjectNode) node : null;
+        } catch (Exception e) {
+            // 脚本不合法时退化为空画像：点评少些依据，但整轮对话不该因此失败
+            return null;
+        }
+    }
+
+    /** AI 扮演角色：姓名 / 身份 / 年龄段 / 性格 / 沟通方式（drill-script-v1 与案例扁平字段都兼容） */
+    private String actorProfile(ObjectNode script) {
+        ObjectNode actor = objectOf(script, "actor");
+        List<String> lines = new ArrayList<>();
+        addLine(lines, "姓名", firstText(actor, "name", script, "actorName"));
+        addLine(lines, "身份", firstText(actor, "identity", script, "actorPosition"));
+        addLine(lines, "年龄段", firstText(actor, "ageRange", script, null));
+        addLine(lines, "性格", firstTextOrArray(actor, "personality", script, "actorPersonality"));
+        addLine(lines, "沟通方式", firstText(actor, "communicationStyle", script, "actorCommunicationStyle"));
+        addLine(lines, "公司", firstText(actor, "company", script, "actorCompany"));
+        addLine(lines, "情境背景", firstText(script, "scriptBackground", script, "scriptBackground"));
+        return String.join("；", lines);
+    }
+
+    /** 学员应做到的关键行为（goals.behaviorGuidance）；案例播放快照没有这一项时留空 */
+    private String behaviorGuidance(ObjectNode script) {
+        ObjectNode goals = objectOf(script, "goals");
+        List<String> items = stringsOf(goals == null ? null : goals.get("behaviorGuidance"));
+        if (items.isEmpty()) {
+            // 回退：场景定义里的行为指引（案例练习走场景快照这一支）
+            items = stringsOf(script.get("behaviorGuidance"));
+        }
+        if (items.isEmpty()) {
+            return "";
+        }
+        List<String> numbered = new ArrayList<>();
+        for (int i = 0; i < items.size(); i++) {
+            numbered.add((i + 1) + ". " + items.get(i));
+        }
+        return String.join("\n", numbered);
+    }
+
+    /** 学员本轮扮演的角色（userRole 名/身份/背景），点评判断「是否偏离角色」时会用到 */
+    private String userRoleProfile(ObjectNode script) {
+        ObjectNode userRole = objectOf(script, "userRole");
+        List<String> lines = new ArrayList<>();
+        addLine(lines, "姓名", firstText(userRole, "name", script, "userRoleName"));
+        addLine(lines, "身份", firstText(userRole, "identity", script, "userRoleDesc"));
+        addLine(lines, "背景", firstText(userRole, "background", script, null));
+        return String.join("；", lines);
+    }
+
+    private void addLine(List<String> lines, String label, String value) {
+        if (value != null && !value.isBlank()) {
+            lines.add(label + "：" + value.trim());
+        }
+    }
+
+    private ObjectNode objectOf(ObjectNode parent, String field) {
+        if (parent == null) {
+            return null;
+        }
+        JsonNode node = parent.get(field);
+        return node != null && node.isObject() ? (ObjectNode) node : null;
+    }
+
+    /** 优先嵌套对象字段，缺失回退扁平字段（flatFallback 为 null 表示只认嵌套） */
+    private String firstText(ObjectNode nested, String field, ObjectNode flat, String flatField) {
+        if (nested != null) {
+            JsonNode node = nested.get(field);
+            if (node != null && node.isTextual() && !node.asText().isBlank()) {
+                return node.asText();
+            }
+        }
+        if (flat == null || flatField == null) {
+            return null;
+        }
+        JsonNode node = flat.get(flatField);
+        return node != null && node.isTextual() && !node.asText().isBlank() ? node.asText() : null;
+    }
+
+    /** 性格可能是数组（drill-script-v1）也可能是整串（案例 actorPersonality），两种都收成一句话 */
+    private String firstTextOrArray(ObjectNode nested, String field, ObjectNode flat, String flatField) {
+        if (nested != null) {
+            JsonNode node = nested.get(field);
+            if (node != null) {
+                if (node.isArray()) {
+                    List<String> items = stringsOf(node);
+                    if (!items.isEmpty()) {
+                        return String.join("、", items);
+                    }
+                } else if (node.isTextual() && !node.asText().isBlank()) {
+                    return node.asText();
+                }
+            }
+        }
+        return firstText(null, field, flat, flatField);
+    }
+
+    private List<String> stringsOf(JsonNode node) {
+        List<String> items = new ArrayList<>();
+        if (node == null || !node.isArray()) {
+            return items;
+        }
+        for (JsonNode item : node) {
+            if (item.isTextual() && !item.asText().isBlank()) {
+                items.add(item.asText().trim());
+            }
+        }
+        return items;
     }
 
     /** 历史消息 → LlmMessage（只认 user/assistant；非文本或超限跳过） */

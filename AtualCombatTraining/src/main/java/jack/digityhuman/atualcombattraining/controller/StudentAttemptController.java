@@ -6,11 +6,14 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import jack.digityhuman.atualcombattraining.common.CurrentUserService;
 import jack.digityhuman.atualcombattraining.common.JsonSupport;
 import jack.digityhuman.atualcombattraining.dto.req.AttemptCreateReq;
+import jack.digityhuman.atualcombattraining.dto.resp.AttemptMessagesResp;
 import jack.digityhuman.atualcombattraining.dto.resp.AttemptResp;
 import jack.digityhuman.atualcombattraining.dto.resp.PreflightResp;
+import jack.digityhuman.atualcombattraining.entity.ActAttemptMessage;
 import jack.digityhuman.atualcombattraining.entity.ActPracticeAttempt;
 import jack.digityhuman.atualcombattraining.entity.ActScenarioUnit;
 import jack.digityhuman.atualcombattraining.entity.ActTheme;
+import jack.digityhuman.atualcombattraining.mapper.ActAttemptMessageMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActScenarioUnitMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
 import jack.digityhuman.atualcombattraining.service.AttemptLifecycleService;
@@ -29,9 +32,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 
 /**
  * 学员端练习 attempt 接口（/api/act/student/attempts，契约 03 §7 / 04 §学生端）
@@ -51,6 +56,8 @@ public class StudentAttemptController {
     private final CurrentUserService currentUserService;
     private final ActThemeMapper themeMapper;
     private final ActScenarioUnitMapper unitMapper;
+    /** 聊天记录读取（2026-11-04 新增接口用；消息原本只由运行时服务写入） */
+    private final ActAttemptMessageMapper messageMapper;
 
     /**
      * 预检（只读）：返回是否可以开始，以及拒绝理由。
@@ -70,6 +77,13 @@ public class StudentAttemptController {
     }
 
     /** 创建 attempt（冻结快照；案例练习直接 ready，随机/自定义进入 preparing） */
+    /**
+     * 创建 attempt（冻结快照）。
+     * <p>
+     * 2026-11-04 改：脚本来源分流——case 走发布快照、random 走发布预生成<b>取档</b>（创建即 ready，
+     * 不调模型）、custom 才进 preparing 等异步生成。{@code reuseFromAttemptId} 非空表示
+     * 「再练一次」，直接沿用上次快照，不取档（保证不换脸）。
+     */
     @PostMapping
     public ApiResponse<AttemptResp> create(
             @RequestBody AttemptCreateReq req,
@@ -81,8 +95,9 @@ public class StudentAttemptController {
         int studyMode = req.getStudyMode() == null ? 1 : req.getStudyMode();
         String practiceType = req.getPracticeType() == null ? "case" : req.getPracticeType();
         ActPracticeAttempt attempt = lifecycleService.create(userId, req.getThemeId(),
-                req.getScenarioId(), studyMode, practiceType, req.getCustomConfigJson());
-        // 随机/自定义：脚本由 AIGentService 异步生成（案例练习创建即 ready，不走这里）
+                req.getScenarioId(), studyMode, practiceType, req.getCustomConfigJson(),
+                req.getReuseFromAttemptId(), req.getDifficulty());
+        // 只有自定义练习仍需要现场生成脚本（case/random 创建时已 ready）
         if ("preparing".equals(attempt.getStatus())) {
             scriptGenerationService.generateAsync(attempt.getId(), userId);
         }
@@ -96,6 +111,74 @@ public class StudentAttemptController {
             @RequestHeader(value = "Authorization", required = false) String authorization) {
         String userId = requireUser(authorization);
         return ApiResponse.success(toResp(lifecycleService.requireOwned(attemptId, userId)));
+    }
+
+    /**
+     * 消息历史（契约 04 §API-A05：`GET /student/attempts/{attemptId}/messages?afterSeq=0&limit=200`）。
+     * <p>
+     * 运行态页刷新/重连靠它恢复对话——消息一直落在 act_attempt_message（user/assistant/coach），
+     * 之前只是没暴露读接口。契约要求「先调本接口，再连接 WS」，所以同时下发**轮次状态**，
+     * 前端不必靠内存恢复进度。
+     * <p>
+     * {@code afterSeq}：只取 seq 大于它的消息（0 = 从头）；{@code limit}：单次上限（默认 200，
+     * 硬上限 500，防止一次拉爆）。归属校验经 attempt，越权一律拒绝。只读，不改 WS 帧名与事件名。
+     */
+    @GetMapping("/{attemptId}/messages")
+    public ApiResponse<AttemptMessagesResp> messages(
+            @PathVariable String attemptId,
+            @RequestParam(defaultValue = "0") long afterSeq,
+            @RequestParam(defaultValue = "200") int limit,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        String userId = requireUser(authorization);
+        // 归属校验先行：不是自己的 attempt 一律拒绝，不泄露对话内容
+        ActPracticeAttempt attempt = lifecycleService.requireOwned(attemptId, userId);
+        int effectiveLimit = Math.max(1, Math.min(limit, 500));
+
+        Long totalCount = messageMapper.selectCount(
+                new LambdaQueryWrapper<ActAttemptMessage>()
+                        .eq(ActAttemptMessage::getAttemptId, attempt.getId()));
+        List<ActAttemptMessage> rows = messageMapper.selectList(
+                new LambdaQueryWrapper<ActAttemptMessage>()
+                        .eq(ActAttemptMessage::getAttemptId, attempt.getId())
+                        .gt(ActAttemptMessage::getSeq, afterSeq)
+                        .orderByAsc(ActAttemptMessage::getSeq)
+                        .last("LIMIT " + effectiveLimit));
+
+        AttemptMessagesResp resp = new AttemptMessagesResp();
+        resp.setAttemptId(attempt.getId());
+        resp.setTotal(rows.size());
+        resp.setTotalCount(totalCount == null ? 0 : totalCount);
+        resp.setAfterSeq(afterSeq);
+        resp.setMessages(rows.stream().map(row -> {
+            AttemptMessagesResp.Message item = new AttemptMessagesResp.Message();
+            item.setId(row.getId());
+            item.setSeq(row.getSeq());
+            item.setRole(row.getRole());
+            item.setMessageType(row.getMessageType());
+            item.setTextContent(row.getTextContent());
+            // 教练点评单独标记，前端不必自己再判 role 一次
+            item.setCoach("coach".equals(row.getRole()));
+            item.setCreatedAt(row.getCreatedAt());
+            return item;
+        }).toList());
+        resp.setTurn(turnStateOf(attempt));
+        return ApiResponse.success(resp);
+    }
+
+    /** 轮次状态（契约 API-A05「返回消息和轮次状态」）：全部取自 attempt 行，不猜 */
+    private AttemptMessagesResp.TurnState turnStateOf(ActPracticeAttempt attempt) {
+        AttemptMessagesResp.TurnState turn = new AttemptMessagesResp.TurnState();
+        turn.setCurrentRound(attempt.getCurrentRound());
+        turn.setMaxRound(attempt.getMaxRound());
+        turn.setTargetProgress(attempt.getTargetProgress());
+        turn.setStatus(attempt.getStatus());
+        // 剩余秒数只在"进行中"有意义：未开始没有 deadlineAt，已结束再看剩余也是负数
+        if ("in_progress".equals(attempt.getStatus()) && attempt.getDeadlineAt() != null) {
+            long seconds = java.time.Duration.between(
+                    LocalDateTime.now(), attempt.getDeadlineAt()).getSeconds();
+            turn.setRemainingSeconds((int) Math.max(0, seconds));
+        }
+        return turn;
     }
 
     /** 正式开始（扣次数、写 deadline；幂等） */
@@ -217,6 +300,7 @@ public class StudentAttemptController {
         resp.setOpeningLine(firstText(script, script.path("scene").path("openingLine"), "scriptOpening"));
         resp.setUserRoleName(firstText(script, script.path("userRole").path("name"), null));
         resp.setUserRoleDesc(firstText(script, script.path("userRole").path("identity"), null));
+        fillRoleDetails(resp, script);
         if (resp.getBusinessGoal() == null) {
             resp.setBusinessGoal(firstText(script, script.path("goals").path("practiceGoal"), null));
         }
@@ -236,6 +320,91 @@ public class StudentAttemptController {
                 }
             }
         }
+    }
+
+    /**
+     * 角色细分字段（R6-1 背景介绍细化，2026-11-04 新增）。
+     * <p>
+     * 两种快照形态各读各的，<b>字段不互相顶替</b>：
+     * <ul>
+     *   <li><b>random/custom</b>（drill-script-v1）：userRole 有 name/identity/ageRange/background，
+     *       actor 有 name/identity/ageRange/personality[]/communicationStyle + 隐式目标/隐藏事实；</li>
+     *   <li><b>case</b>（案例正文扁平字段）：只有 actor 侧 10 个字段
+     *       （actorName/actorPosition/actorCompany/actorType/actorPersonality/actorCommunicationStyle/
+     *       scriptBackground/scriptOpening），<b>完全没有 userRole（学员角色）数据</b>——
+     *       case-gen 的 schema 就没有这个字段。所以案例练习的 userRole 系列只能为 null，
+     *       前端回落到「学员」兜底，这是数据源缺失而不是实现漏读。</li>
+     * </ul>
+     * 取不到一律留 null，不用 businessBackground/场景旁白顶替人物背景（否则会把场景描述当人物小传）。
+     */
+    private void fillRoleDetails(AttemptResp resp, ObjectNode script) {
+        // ---- 我的角色 ----
+        if (resp.getUserRoleIdentity() == null) {
+            resp.setUserRoleIdentity(firstText(script, script.path("userRole").path("identity"), null));
+        }
+        if (resp.getUserRoleAge() == null) {
+            resp.setUserRoleAge(firstText(script, script.path("userRole").path("ageRange"), null));
+        }
+        if (resp.getUserRoleBackground() == null) {
+            resp.setUserRoleBackground(firstText(script, script.path("userRole").path("background"), null));
+        }
+
+        // ---- AI 演员 ----
+        if (resp.getActorIdentity() == null) {
+            // drill-script-v1 用 identity；案例正文只有 actorPosition（岗位）
+            resp.setActorIdentity(firstText(script, script.path("actor").path("identity"), "actorPosition"));
+        }
+        if (resp.getActorAge() == null) {
+            resp.setActorAge(firstText(script, script.path("actor").path("ageRange"), null));
+        }
+        if (resp.getActorCompany() == null) {
+            // 只有案例正文有公司；drill-script-v1 的 actor 没有 company 字段
+            resp.setActorCompany(firstText(script, null, "actorCompany"));
+        }
+        if (resp.getActorPersonality() == null) {
+            // 案例是字符串；drill-script-v1 是数组，用「、」拼接成一句
+            String personality = firstText(script, null, "actorPersonality");
+            if (personality == null) {
+                personality = joinText(JsonSupport.children(JsonSupport.child(script, "actor"), "personality"));
+            }
+            resp.setActorPersonality(personality);
+        }
+        if (resp.getActorBackground() == null) {
+            resp.setActorBackground(actorBackgroundOf(script));
+        }
+    }
+
+    /**
+     * AI 演员人物背景：优先 actor.background（drill-script-v1 若有），
+     * 否则用隐式目标+隐藏事实拼成一句人物小传（这两组字段本来就是角色的"内情"）。
+     * 案例正文没有人物小传，只有 scriptBackground（场景背景）——那个已进 sceneNarration，
+     * 不再重复塞给人物背景，避免同一段文字出现两次。
+     */
+    private String actorBackgroundOf(ObjectNode script) {
+        ObjectNode actor = JsonSupport.child(script, "actor");
+        if (actor == null) {
+            return null;
+        }
+        String background = JsonSupport.text(actor, "background");
+        if (background != null && !background.isBlank()) {
+            return background;
+        }
+        List<String> parts = new ArrayList<>();
+        parts.addAll(JsonSupport.strings(JsonSupport.children(actor, "implicitGoals")));
+        parts.addAll(JsonSupport.strings(JsonSupport.children(actor, "hiddenFacts")));
+        List<String> cleaned = parts.stream()
+                .filter(text -> text != null && !text.isBlank())
+                .distinct()
+                .toList();
+        return cleaned.isEmpty() ? null : String.join("；", cleaned);
+    }
+
+    /** 字符串数组按「、」拼接（personality 这类标签用它拼成一句） */
+    private String joinText(ArrayNode array) {
+        List<String> items = JsonSupport.strings(array).stream()
+                .filter(text -> text != null && !text.isBlank())
+                .toList();
+        return items.isEmpty() ? null : String.join("、", items);
     }
 
     private void fillScenarioDetail(AttemptResp resp, ObjectNode node) {

@@ -10,10 +10,13 @@ import jack.digityhuman.atualcombattraining.entity.ActAttemptMessage;
 import jack.digityhuman.atualcombattraining.entity.ActCaseScript;
 import jack.digityhuman.atualcombattraining.entity.ActContentVersionMaterial;
 import jack.digityhuman.atualcombattraining.entity.ActCustomerProfile;
+import jack.digityhuman.atualcombattraining.entity.ActDrillScript;
 import jack.digityhuman.atualcombattraining.entity.ActEvaluationDimension;
 import jack.digityhuman.atualcombattraining.entity.ActExamQuotaAdjustment;
 import jack.digityhuman.atualcombattraining.entity.ActPracticeAttempt;
+import jack.digityhuman.atualcombattraining.entity.ActPracticeReport;
 import jack.digityhuman.atualcombattraining.entity.ActProductProfile;
+import jack.digityhuman.atualcombattraining.entity.ActReportDimension;
 import jack.digityhuman.atualcombattraining.entity.ActScenarioProductProfile;
 import jack.digityhuman.atualcombattraining.entity.ActScenarioUnit;
 import jack.digityhuman.atualcombattraining.entity.ActStudentScenarioStat;
@@ -43,8 +46,10 @@ public final class MybatisTestSupport {
         for (Class<?> entity : new Class<?>[]{
                 ActAiArtifact.class, ActAntiCheatEvent.class, ActAiMaterial.class, ActAttemptEvent.class, ActAttemptMessage.class,
                 ActCaseScript.class, ActContentVersionMaterial.class, ActCustomerProfile.class,
-                ActEvaluationDimension.class, ActExamQuotaAdjustment.class, ActPracticeAttempt.class,
-                ActProductProfile.class, ActScenarioProductProfile.class, ActScenarioUnit.class,
+                ActDrillScript.class, ActEvaluationDimension.class, ActExamQuotaAdjustment.class,
+                ActPracticeAttempt.class, ActPracticeReport.class,
+                ActProductProfile.class, ActReportDimension.class,
+                ActScenarioProductProfile.class, ActScenarioUnit.class,
                 ActStudentScenarioStat.class, ActTheme.class, ActThemeParticipant.class,
                 ActThemeSettings.class, ActThemeVersion.class}) {
             TableInfoHelper.initTableInfo(assistant, entity);

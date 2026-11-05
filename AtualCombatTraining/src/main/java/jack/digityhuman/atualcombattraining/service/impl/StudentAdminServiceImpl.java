@@ -57,9 +57,9 @@ public class StudentAdminServiceImpl implements StudentAdminService {
     private final ActExamQuotaAdjustmentMapper quotaAdjustmentMapper;
 
     @Override
-    public PageResult<Map<String, Object>> listStudents(String themeId, String keyword, String source,
-                                                        String status, Integer studyMode,
-                                                        int page, int size) {
+    public PageResult<Map<String, Object>> listStudents(String themeId, String keyword, List<String> userIds,
+                                                        String source, String status, String practiceStatus,
+                                                        Integer studyMode, int page, int size) {
         LambdaQueryWrapper<ActThemeParticipant> wrapper = new LambdaQueryWrapper<ActThemeParticipant>()
                 .eq(ActThemeParticipant::getThemeId, themeId)
                 .orderByDesc(ActThemeParticipant::getJoinedAt);
@@ -68,6 +68,35 @@ public class StudentAdminServiceImpl implements StudentAdminService {
         }
         wrapper.eq(ActThemeParticipant::getStatus,
                 status != null && !status.isBlank() ? status : PARTICIPANT_ACTIVE);
+        // 姓名/账号/工号搜索：本工程不直读 sys_*，前端先经 SM 名册解析成 userId 集合再传
+        if (userIds != null && !userIds.isEmpty()) {
+            wrapper.in(ActThemeParticipant::getUserId, userIds);
+        } else if (keyword != null && !keyword.isBlank()) {
+            // 兜底：也接受直接按 userId 模糊搜（关键词为空集合时不加条件，避免误筛成空页）
+            wrapper.like(ActThemeParticipant::getUserId, keyword.trim());
+        }
+        // 练习状态：服务端过滤，否则本地过滤后再翻页会把后面的学员漏掉
+        if (practiceStatus != null && !practiceStatus.isBlank()) {
+            List<String> activeUserIds = attemptMapper.selectList(
+                            new LambdaQueryWrapper<ActPracticeAttempt>()
+                                    .eq(ActPracticeAttempt::getThemeId, themeId)
+                                    .in(ActPracticeAttempt::getStatus, ACTIVE_ATTEMPT_STATUSES))
+                    .stream()
+                    .map(ActPracticeAttempt::getUserId)
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .toList();
+            if ("in_progress".equals(practiceStatus)) {
+                if (activeUserIds.isEmpty()) {
+                    return new PageResult<>(List.of(), 0);
+                }
+                wrapper.in(ActThemeParticipant::getUserId, activeUserIds);
+            } else if ("idle".equals(practiceStatus)) {
+                if (!activeUserIds.isEmpty()) {
+                    wrapper.notIn(ActThemeParticipant::getUserId, activeUserIds);
+                }
+            }
+        }
         Page<ActThemeParticipant> result = participantMapper.selectPage(Page.of(page, size), wrapper);
         List<ActThemeParticipant> rows = result.getRecords();
 
@@ -82,23 +111,20 @@ public class StudentAdminServiceImpl implements StudentAdminService {
                 .filter(row -> "public".equals(row.getSource())
                         && PARTICIPANT_ACTIVE.equals(row.getStatus())).count();
 
-        List<Map<String, Object>> records = new ArrayList<>();
-        for (ActThemeParticipant row : rows) {
-            if (keyword != null && !keyword.isBlank()
-                    && !row.getUserId().contains(keyword)) {
-                continue;
-            }
-            records.add(studentCard(themeId, row));
-        }
-        // keyword 过滤发生在内存（participant 行数有限），total 以过滤后为准
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("assignedCount", assignedCount);
         summary.put("publicCount", publicCount);
         summary.put("trainingCount", countFormalByMode(themeId, MODE_TRAINING));
         summary.put("examCount", countFormalByMode(themeId, MODE_EXAM));
-        records.forEach(record -> record.put("summary", summary));
 
-        return new PageResult<>(records, records.size());
+        List<Map<String, Object>> records = new ArrayList<>();
+        for (ActThemeParticipant row : rows) {
+            Map<String, Object> card = studentCard(themeId, row, studyMode);
+            card.put("summary", summary);
+            records.add(card);
+        }
+        // 分页 total 用数据库计数：过滤已在 SQL 里，翻页不会再漏人
+        return new PageResult<>(records, result.getTotal());
     }
 
     @Override
@@ -278,7 +304,14 @@ public class StudentAdminServiceImpl implements StudentAdminService {
 
     // ------------------------------------------------------------------ helpers
 
-    private Map<String, Object> studentCard(String themeId, ActThemeParticipant participant) {
+    /**
+     * 学员卡片。
+     * <p>
+     * {@code studyMode} 非空时把该模式的口径提到主字段（训考一体列表按模式切换时，
+     * 平均分/训练次数这些值要跟着变），同时保留分模式字段供前端展示"训练均分 / 考核均分"小字。
+     */
+    private Map<String, Object> studentCard(String themeId, ActThemeParticipant participant,
+                                            Integer studyMode) {
         String userId = participant.getUserId();
         List<ActPracticeReport> reports = reportMapper.selectList(
                 new LambdaQueryWrapper<ActPracticeReport>()
@@ -309,14 +342,20 @@ public class StudentAdminServiceImpl implements StudentAdminService {
         card.put("examCount", attempts.stream()
                 .filter(attempt -> Objects.equals(attempt.getStudyMode(), MODE_EXAM)
                         && Objects.equals(attempt.getQuotaDeducted(), 1)).count());
-        card.put("averageScore", averageOf(reports.stream()
-                .map(ActPracticeReport::getTotalScore).toList()));
-        card.put("trainingAverage", averageOf(reports.stream()
+        // 分模式均分（台账 R1-2/R1-3：训考一体时大号显示合计均值、小号显示两种模式均值）
+        BigDecimal trainingAverage = averageOf(reports.stream()
                 .filter(report -> Objects.equals(report.getStudyMode(), MODE_TRAINING))
-                .map(ActPracticeReport::getTotalScore).toList()));
-        card.put("examAverage", averageOf(reports.stream()
+                .map(ActPracticeReport::getTotalScore).toList());
+        BigDecimal examAverage = averageOf(reports.stream()
                 .filter(report -> Objects.equals(report.getStudyMode(), MODE_EXAM))
-                .map(ActPracticeReport::getTotalScore).toList()));
+                .map(ActPracticeReport::getTotalScore).toList());
+        card.put("trainingAverage", trainingAverage);
+        card.put("examAverage", examAverage);
+        // averageScore 默认是全部报告均值；传了 studyMode 就是该模式均值（单模式主题不会显示成 0）
+        BigDecimal overall = averageOf(reports.stream()
+                .map(ActPracticeReport::getTotalScore).toList());
+        card.put("averageScore", studyMode == null ? overall
+                : (Objects.equals(studyMode, MODE_EXAM) ? examAverage : trainingAverage));
         card.put("extraExamAttemptCount", participant.getExtraExamAttemptCount());
         card.put("lastActiveAt", attempts.isEmpty() ? null : attempts.get(0).getCreatedAt());
         return card;

@@ -20,6 +20,7 @@ import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
 import jack.digityhuman.atualcombattraining.service.ArtifactService;
 import jack.digityhuman.atualcombattraining.service.ContentVersionService;
 import jack.digityhuman.atualcombattraining.service.PublishInitService;
+import jack.digityhuman.atualcombattraining.service.RandomScriptService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -59,6 +60,8 @@ public class PublishInitServiceImpl implements PublishInitService {
     private static final String CASE_FAILED = "failed";
     /** 编译错误信息列宽 */
     private static final int LEN_COMPILE_ERROR = 500;
+    /** 首次发布固化的公开版本号（ContentVersionServiceImpl.firstPublish 固定产出 v1） */
+    private static final int FIRST_PUBLISHED_VERSION = 1;
 
     private final ActThemeMapper themeMapper;
     private final ActCaseScriptMapper caseScriptMapper;
@@ -66,6 +69,7 @@ public class PublishInitServiceImpl implements PublishInitService {
     private final ActScenarioUnitMapper unitMapper;
     private final ArtifactService artifactService;
     private final ContentVersionService contentVersionService;
+    private final RandomScriptService randomScriptService;
     private final ThreadPoolTaskExecutor publishExecutor;
 
     public PublishInitServiceImpl(ActThemeMapper themeMapper,
@@ -74,6 +78,7 @@ public class PublishInitServiceImpl implements PublishInitService {
                                   ActScenarioUnitMapper unitMapper,
                                   ArtifactService artifactService,
                                   ContentVersionService contentVersionService,
+                                  RandomScriptService randomScriptService,
                                   @Qualifier("publishExecutor") ThreadPoolTaskExecutor publishExecutor) {
         this.themeMapper = themeMapper;
         this.caseScriptMapper = caseScriptMapper;
@@ -81,6 +86,7 @@ public class PublishInitServiceImpl implements PublishInitService {
         this.unitMapper = unitMapper;
         this.artifactService = artifactService;
         this.contentVersionService = contentVersionService;
+        this.randomScriptService = randomScriptService;
         this.publishExecutor = publishExecutor;
     }
 
@@ -123,6 +129,16 @@ public class PublishInitServiceImpl implements PublishInitService {
                     finishFirstPublish(themeId, workingVersionNo);
                 } catch (Exception e) {
                     log.error("首次发布收尾失败 themeId={}", themeId, e);
+                    return;
+                }
+                // 随机脚本预生成（契约 08 §4；2026-11-04 新增）：必须在 finishFirstPublish 之后，
+                // 因为它要读 v1 的场景单元与已重挂的案例快照（"命中案例难度档复用正文"依赖后者）。
+                // 不能另起一个异步任务并行——那会和版本指针切换抢跑，读到 publishedVersionNo=null。
+                try {
+                    randomScriptService.pregenerate(themeId, FIRST_PUBLISHED_VERSION);
+                } catch (Exception e) {
+                    // 预生成失败不阻断发布：取档有降级链（其他档 / 案例正文）
+                    log.error("随机脚本预生成失败 themeId={}", themeId, e);
                 }
             }
         });
@@ -371,6 +387,13 @@ public class PublishInitServiceImpl implements PublishInitService {
             int failed = compileBatch(themeId, versionNo, caseIds);
             log.info("升版编译完成 themeId={} version={} 编译数={} 失败数={}",
                     themeId, versionNo, caseIds.size(), failed);
+            // 随机脚本同样要为新版本重建分档（契约 08 §4）：新版本有新场景单元 ID，
+            // 旧分档挂在旧单元上，不复刻的话学员端取档会取不到（降级到案例正文，随机特性丢失）。
+            try {
+                randomScriptService.pregenerate(themeId, versionNo);
+            } catch (Exception e) {
+                log.error("升版随机脚本预生成失败 themeId={} version={}", themeId, versionNo, e);
+            }
         });
     }
 

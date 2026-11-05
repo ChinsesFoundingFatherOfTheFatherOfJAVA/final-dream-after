@@ -48,6 +48,28 @@ public interface StudentQueryService {
     /** 主题详情：场景列表 + 材料 + 我的统计 */
     StudentThemeDetailResp themeDetail(String userId, String themeId);
 
+    /**
+     * 场景准备详情（契约 04 §API-S05 / 01 §F09）：F09 弹窗九类信息一次给全。
+     * <p>
+     * 与 {@link #themeDetail(String, String)} 的区别：主题详情给"所有场景的卡片摘要"，
+     * 本接口给"单个场景在发布版本下的完整描述 + 实战案例 + 产品档案 + 评估维度"，
+     * 供弹窗直接渲染，不需要前端再拼多次请求。
+     * <p>
+     * 鉴权口径与主题详情一致：学员须在该主题的有效参与关系中，且只读当前发布快照；
+     * 场景必须属于当前发布版本（否则视为已下线）。
+     */
+    jack.digityhuman.atualcombattraining.dto.resp.StudentScenarioDetailResp scenarioDetail(
+            String userId, String themeId, String scenarioId);
+
+    /**
+     * 随机练习取档（契约 08 §4 随机分支，2026-11-04 新增）。
+     * <p>
+     * 鉴权口径与 {@link #scenarioDetail} 一致（参与关系 + 当前发布版本）；只读，不创建 attempt。
+     * 「再练一次」不走本方法（走上次快照复用，保证不换脸）。
+     */
+    jack.digityhuman.atualcombattraining.dto.resp.RandomScriptResp randomScript(
+            String userId, String themeId, String scenarioId, int difficulty);
+
     /** 练习历程：分页 attempt 流水（含报告摘要） */
     PageResult<StudentHistoryResp> history(String userId, String themeId,
                                            Integer studyMode, int page, int size);

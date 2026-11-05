@@ -7,6 +7,8 @@ import jack.digityhuman.atualcombattraining.entity.ActCaseScript;
 import jack.digityhuman.atualcombattraining.entity.ActContentVersionMaterial;
 import jack.digityhuman.atualcombattraining.entity.ActCustomerProfile;
 import jack.digityhuman.atualcombattraining.entity.ActEvaluationDimension;
+import jack.digityhuman.atualcombattraining.entity.ActProductProfile;
+import jack.digityhuman.atualcombattraining.entity.ActScenarioProductProfile;
 import jack.digityhuman.atualcombattraining.entity.ActScenarioUnit;
 import jack.digityhuman.atualcombattraining.entity.ActTheme;
 import jack.digityhuman.atualcombattraining.entity.ActThemeVersion;
@@ -15,6 +17,8 @@ import jack.digityhuman.atualcombattraining.mapper.ActCaseScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActContentVersionMaterialMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActCustomerProfileMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActEvaluationDimensionMapper;
+import jack.digityhuman.atualcombattraining.mapper.ActProductProfileMapper;
+import jack.digityhuman.atualcombattraining.mapper.ActScenarioProductProfileMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActScenarioUnitMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeVersionMapper;
@@ -26,6 +30,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 内容版本服务实现
@@ -48,12 +56,16 @@ public class ContentVersionServiceImpl implements ContentVersionService {
     private final ActEvaluationDimensionMapper dimensionMapper;
     private final ActCaseScriptMapper caseScriptMapper;
     private final ActCustomerProfileMapper profileMapper;
+    private final ActProductProfileMapper productProfileMapper;
+    private final ActScenarioProductProfileMapper scenarioProductProfileMapper;
     private final ActAiMaterialMapper materialMapper;
     private final ActContentVersionMaterialMapper materialSnapshotMapper;
     private final ScenarioUnitService scenarioUnitService;
 
     /** act_ai_material.visibility：1=学员可见（契约 11 §6） */
     private static final int VISIBILITY_STUDENT = 1;
+    /** 工作区内容版本号（act_product_profile.content_version_no=0 是工作区，&gt;0 是发布快照） */
+    private static final int VERSION_WORKING = 0;
     /** 在线课堂材料 file_id 前缀（与 AssistantMaterialServiceImpl 同口径） */
     private static final String KNG_FILE_ID_PREFIX = "kng_";
 
@@ -94,6 +106,9 @@ public class ContentVersionServiceImpl implements ContentVersionService {
         scenarioUnitService.copyUnitsToVersion(themeId, working, 1);
         copyCases(themeId, working, 1);
         copyProfiles(themeId, working, 1);
+        // 产品档案：契约 09 §4.2 要求「把 content_version_no=0 的档案复制到 v1」并「复制场景关联」。
+        // 必须在 copyUnitsToVersion 之后调用：关联表靠 scenario_unit_id 归属版本，要拿新旧单元行做映射。
+        copyProductProfiles(themeId, working, 1);
         // 材料是主题级数据（不按版本存），发布时把学员可见材料固化成 v1 快照（契约 11 §8）
         copyMaterials(themeId, 1);
 
@@ -134,6 +149,9 @@ public class ContentVersionServiceImpl implements ContentVersionService {
         LocalDateTime now = LocalDateTime.now();
         // 学员端材料接口只读当前发布版本的快照，指针切换前必须先把材料固化进该版本（契约 11 §8）
         copyMaterials(themeId, versionNo);
+        // 产品档案同步固化（契约 09 §4.3）：目标版本行从"该版本自己的场景单元"与工作区 v0 对齐，
+        // 见 copyProductProfiles 注释里对两种来源的取舍说明。
+        copyProductProfiles(themeId, VERSION_WORKING, versionNo);
         versionMapper.update(null, new LambdaUpdateWrapper<ActThemeVersion>()
                 .eq(ActThemeVersion::getId, version.getId())
                 .set(ActThemeVersion::getPublishedAt, now)
@@ -233,6 +251,122 @@ public class ContentVersionServiceImpl implements ContentVersionService {
             copy.setCreatedAt(LocalDateTime.now());
             profileMapper.insert(copy);
         }
+    }
+
+    /**
+     * 产品档案 + 场景关联 → 发布版本快照（契约 09 §4.2/§4.3）。
+     * <p>
+     * <b>为什么必须有这一步</b>：act_product_profile 用 content_version_no 区分「工作区(0)」与
+     * 「发布快照(&gt;0)」，学员端只读 &gt;0 的行（ProductProfileServiceImpl.studentProfile）。
+     * 但原发布流程只复制场景/维度/案例/客户画像/材料，从未复制产品档案——结果是已发布主题的
+     * 学员端产品档案永远为空，F08/F09 的档案分区只能靠查询侧回退 v0 兜底。
+     * <p>
+     * <b>场景关联的版本归属（重要）</b>：act_scenario_product_profile 只有
+     * (scenario_unit_id, product_profile_id, sort_order)，<b>没有 content_version_no</b>，
+     * 它靠 scenario_unit_id 指向 act_scenario_unit 行来归版本——而场景单元在每次升版/发布时
+     * 都会被复制成新 ID 的行。所以"复制场景关联"= 按 sort_order 建立
+     * 「源版本单元行 → 目标版本单元行」映射，把关联从源单元 ID 重新挂到目标单元 ID 上。
+     * 这里不改表结构（现有列已能表达版本归属），符合任务约束。
+     * <p>
+     * 幂等：先删目标版本的档案行与目标单元的关联行，再插。重复发布只会得到同一份快照。
+     *
+     * @param fromVersion 源版本号（首次发布是工作区 0，AI 确认升版是工作区内容，也传 0）
+     * @param toVersion   目标发布版本号
+     */
+    private void copyProductProfiles(String themeId, int fromVersion, int toVersion) {
+        // 1. 目标版本档案行先删（uk_product_profile_version_key 是 theme+version+key，先删才不撞唯一键）
+        productProfileMapper.delete(new LambdaQueryWrapper<ActProductProfile>()
+                .eq(ActProductProfile::getThemeId, themeId)
+                .eq(ActProductProfile::getContentVersionNo, toVersion));
+
+        List<ActProductProfile> sources = productProfileMapper.selectList(
+                new LambdaQueryWrapper<ActProductProfile>()
+                        .eq(ActProductProfile::getThemeId, themeId)
+                        .eq(ActProductProfile::getContentVersionNo, fromVersion)
+                        .orderByAsc(ActProductProfile::getSortOrder));
+        if (sources.isEmpty()) {
+            // 无档案是合法状态（老主题/尚未建档案）：不再往下建关联，也不报错
+            log.info("发布无产品档案可复制 themeId={} from=v{} to=v{}", themeId, fromVersion, toVersion);
+            return;
+        }
+
+        // 2. 逐字段复制；记录「源档案 ID → 新档案 ID」，供第 3 步重挂关联
+        Map<String, String> newIdByOldId = new HashMap<>();
+        LocalDateTime now = LocalDateTime.now();
+        for (ActProductProfile source : sources) {
+            ActProductProfile copy = new ActProductProfile();
+            copy.setThemeId(themeId);
+            copy.setContentVersionNo(toVersion);
+            copy.setProfileKey(source.getProfileKey());
+            copy.setProfileName(source.getProfileName());
+            copy.setCategory(source.getCategory());
+            copy.setDescription(source.getDescription());
+            copy.setDetailMarkdown(source.getDetailMarkdown());
+            copy.setCustomFields(source.getCustomFields());
+            copy.setSourceArtifactId(source.getSourceArtifactId());
+            copy.setSourceArtifactVersion(source.getSourceArtifactVersion());
+            copy.setSortOrder(source.getSortOrder());
+            copy.setCreatedBy(source.getCreatedBy());
+            copy.setCreatedAt(now);
+            copy.setUpdatedAt(now);
+            // insert 后 MyBatis-Plus 回填新雪花 ID（与 ScenarioUnitServiceImpl 同款用法）
+            productProfileMapper.insert(copy);
+            newIdByOldId.put(source.getId(), copy.getId());
+        }
+
+        // 3. 场景关联重挂：源单元行 → 目标单元行（按 sort_order 对齐，与 PublishInitServiceImpl 同口径）
+        Map<String, String> targetUnitIdBySortOrder = new HashMap<>();
+        for (ActScenarioUnit unit : unitMapper.selectList(new LambdaQueryWrapper<ActScenarioUnit>()
+                .eq(ActScenarioUnit::getThemeId, themeId)
+                .eq(ActScenarioUnit::getVersionNo, toVersion))) {
+            targetUnitIdBySortOrder.put(String.valueOf(unit.getSortOrder()), unit.getId());
+        }
+        List<ActScenarioUnit> sourceUnits = unitMapper.selectList(new LambdaQueryWrapper<ActScenarioUnit>()
+                .eq(ActScenarioUnit::getThemeId, themeId)
+                .eq(ActScenarioUnit::getVersionNo, fromVersion));
+        if (sourceUnits.isEmpty()) {
+            log.warn("源版本无场景单元，产品档案关联无处重挂 themeId={} from=v{}", themeId, fromVersion);
+            return;
+        }
+
+        // 目标单元的旧关联先清（同一目标单元行可能被重复发布反复挂）
+        List<String> targetUnitIds = new ArrayList<>(targetUnitIdBySortOrder.values());
+        if (!targetUnitIds.isEmpty()) {
+            scenarioProductProfileMapper.delete(new LambdaQueryWrapper<ActScenarioProductProfile>()
+                    .in(ActScenarioProductProfile::getScenarioUnitId, targetUnitIds));
+        }
+        // 源关联一次批量取（按单元 ID in），再在内存按单元分组：避免每个场景单元各查一次（N+1）
+        List<String> sourceUnitIds = sourceUnits.stream().map(ActScenarioUnit::getId).toList();
+        Map<String, List<ActScenarioProductProfile>> linksBySourceUnit = new HashMap<>();
+        for (ActScenarioProductProfile link : scenarioProductProfileMapper.selectList(
+                new LambdaQueryWrapper<ActScenarioProductProfile>()
+                        .in(ActScenarioProductProfile::getScenarioUnitId, sourceUnitIds)
+                        .orderByAsc(ActScenarioProductProfile::getSortOrder))) {
+            linksBySourceUnit
+                    .computeIfAbsent(link.getScenarioUnitId(), key -> new ArrayList<>())
+                    .add(link);
+        }
+        for (ActScenarioUnit sourceUnit : sourceUnits) {
+            String targetUnitId = targetUnitIdBySortOrder.get(String.valueOf(sourceUnit.getSortOrder()));
+            if (targetUnitId == null) {
+                continue;
+            }
+            for (ActScenarioProductProfile link : linksBySourceUnit.getOrDefault(
+                    sourceUnit.getId(), List.of())) {
+                String newProfileId = newIdByOldId.get(link.getProductProfileId());
+                if (newProfileId == null) {
+                    // 关联指向的档案不在源版本里（脏数据）：跳过，不凭空造档案
+                    continue;
+                }
+                ActScenarioProductProfile copy = new ActScenarioProductProfile();
+                copy.setScenarioUnitId(targetUnitId);
+                copy.setProductProfileId(newProfileId);
+                copy.setSortOrder(link.getSortOrder());
+                scenarioProductProfileMapper.insert(copy);
+            }
+        }
+        log.info("产品档案发布快照完成 themeId={} from=v{} to=v{} 档案数={} 单元映射数={}",
+                themeId, fromVersion, toVersion, sources.size(), targetUnitIdBySortOrder.size());
     }
 
     /**

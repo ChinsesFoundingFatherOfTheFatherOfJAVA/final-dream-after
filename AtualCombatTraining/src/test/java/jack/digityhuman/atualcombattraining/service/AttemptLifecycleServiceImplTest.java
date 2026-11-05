@@ -68,6 +68,9 @@ class AttemptLifecycleServiceImplTest {
     private AttemptQuotaService quotaService;
     @Mock
     private ThemeSettingsService themeSettingsService;
+    /** 随机练习改为发布预生成取档（2026-11-04），生命周期依赖它取脚本 */
+    @Mock
+    private RandomScriptService randomScriptService;
 
     @InjectMocks
     private AttemptLifecycleServiceImpl lifecycleService;
@@ -122,19 +125,112 @@ class AttemptLifecycleServiceImplTest {
         verify(quotaService, never()).incrementFormalCount(anyString(), anyString(), anyString(), anyInt());
     }
 
+    /**
+     * 随机练习（2026-11-04 改）：走发布预生成<b>取档</b>，创建即 ready，不进 preparing、不调模型。
+     * 原写法断言"进入 preparing 等 AIGentService 生成"已被实测证伪（原平台 randomScript 是取档接口）。
+     */
     @Test
-    void 创建_随机练习_进入preparing等待脚本生成() {
+    void 创建_随机练习_取档后直接ready() {
         stubHappyPath();
-        // 随机练习不走发布快照，脚本由 AIGentService 生成（下一里程碑接入）
         when(drillScriptMapper.selectOne(any())).thenReturn(null);
+        when(randomScriptService.pick(anyString(), anyInt(), anyString(), anyInt()))
+                .thenReturn(new RandomScriptService.PickResult(
+                        JsonSupport.toJson(caseScriptJson()), 2, 2, false));
 
         ActPracticeAttempt attempt = lifecycleService.create(
                 USER_ID, THEME_ID, SCENARIO_ID, 1, "random", null);
 
+        // 取档成功即 ready：不再等异步脚本生成
+        assertEquals("ready", attempt.getStatus());
+        assertEquals("ready", attempt.getPreparationStage());
+        assertEquals(100, attempt.getPreparationPercent());
+        assertTrue(attempt.getScriptSnapshotJson().contains("drill-script-v1"));
+        verify(randomScriptService).pick(anyString(), anyInt(), anyString(), anyInt());
+        // 未扣次数（D06）
+        verify(quotaService, never()).incrementFormalCount(anyString(), anyString(), anyString(), anyInt());
+    }
+
+    /**
+     * 自定义练习是唯一仍需现场生成的类型：创建后停在 preparing，由脚本生成服务异步补齐。
+     */
+    @Test
+    void 创建_自定义练习_进入preparing等待脚本生成() {
+        stubHappyPath();
+        when(drillScriptMapper.selectOne(any())).thenReturn(null);
+
+        ActPracticeAttempt attempt = lifecycleService.create(
+                USER_ID, THEME_ID, SCENARIO_ID, 1, "custom", "{}");
+
         assertEquals("preparing", attempt.getStatus());
         assertEquals("analyze_scene", attempt.getPreparationStage());
-        // 未扣次数
+        // 自定义不走取档
+        verify(randomScriptService, never()).pick(anyString(), anyInt(), anyString(), anyInt());
         verify(quotaService, never()).incrementFormalCount(anyString(), anyString(), anyString(), anyInt());
+    }
+
+    /**
+     * 未知练习方式显式拒绝：不静默落成 preparing 让前端无限等脚本。
+     */
+    @Test
+    void 创建_未知练习方式_显式拒绝() {
+        stubHappyPath();
+
+        BizException e = assertThrows(BizException.class, () -> lifecycleService.create(
+                USER_ID, THEME_ID, SCENARIO_ID, 1, "unknown-type", null));
+        assertEquals("不支持的练习方式：unknown-type", e.getMessage());
+    }
+
+    /**
+     * 「再练一次」复用上次快照：不取档（用户拍板：同档取档不可复现，重取必然换脸）。
+     */
+    @Test
+    void 创建_再练一次_复用上次快照且不取档() {
+        stubHappyPath();
+        String previousScript = JsonSupport.toJson(caseScriptJson());
+        ActPracticeAttempt previous = new ActPracticeAttempt();
+        previous.setId("prev-attempt");
+        previous.setUserId(USER_ID);
+        previous.setScriptSnapshotJson(previousScript);
+        when(attemptMapper.selectById("prev-attempt")).thenReturn(previous);
+
+        ActPracticeAttempt attempt = lifecycleService.create(
+                USER_ID, THEME_ID, SCENARIO_ID, 1, "random", null, "prev-attempt");
+
+        assertEquals("ready", attempt.getStatus());
+        assertEquals(previousScript, attempt.getScriptSnapshotJson());
+        // 关键断言：没有走取档
+        verify(randomScriptService, never()).pick(anyString(), anyInt(), anyString(), anyInt());
+    }
+
+    /** 再练一次不能沿用别人的 attempt（越权防护不依赖前端） */
+    @Test
+    void 创建_再练一次_他人的attempt拒绝() {
+        stubHappyPath();
+        ActPracticeAttempt other = new ActPracticeAttempt();
+        other.setId("other-attempt");
+        other.setUserId("user-2");
+        other.setScriptSnapshotJson("{}");
+        when(attemptMapper.selectById("other-attempt")).thenReturn(other);
+
+        BizException e = assertThrows(BizException.class, () -> lifecycleService.create(
+                USER_ID, THEME_ID, SCENARIO_ID, 1, "random", null, "other-attempt"));
+        assertEquals("无权沿用他人的练习", e.getMessage());
+    }
+
+    /** 再练一次但上次没有脚本快照：明确报错，不静默降级成取档（否则又换脸） */
+    @Test
+    void 创建_再练一次_无快照时报错不降级() {
+        stubHappyPath();
+        ActPracticeAttempt previous = new ActPracticeAttempt();
+        previous.setId("prev-attempt");
+        previous.setUserId(USER_ID);
+        previous.setScriptSnapshotJson(null);
+        when(attemptMapper.selectById("prev-attempt")).thenReturn(previous);
+
+        BizException e = assertThrows(BizException.class, () -> lifecycleService.create(
+                USER_ID, THEME_ID, SCENARIO_ID, 1, "random", null, "prev-attempt"));
+        assertEquals("上次练习没有可沿用的脚本，请重新开始", e.getMessage());
+        verify(randomScriptService, never()).pick(anyString(), anyInt(), anyString(), anyInt());
     }
 
     @Test

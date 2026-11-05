@@ -8,6 +8,8 @@ import jack.digityhuman.atualcombattraining.mapper.ActCaseScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActContentVersionMaterialMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActCustomerProfileMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActEvaluationDimensionMapper;
+import jack.digityhuman.atualcombattraining.mapper.ActProductProfileMapper;
+import jack.digityhuman.atualcombattraining.mapper.ActScenarioProductProfileMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActScenarioUnitMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeVersionMapper;
@@ -51,6 +53,11 @@ class ContentVersionMaterialSnapshotTest {
     private ActCaseScriptMapper caseScriptMapper;
     @Mock
     private ActCustomerProfileMapper profileMapper;
+    /** 发布现在也会固化产品档案与场景关联（契约 09 §4.2/§4.3），这两个 mapper 必须存在 */
+    @Mock
+    private ActProductProfileMapper productProfileMapper;
+    @Mock
+    private ActScenarioProductProfileMapper scenarioProductProfileMapper;
     @Mock
     private ActAiMaterialMapper materialMapper;
     @Mock

@@ -6,12 +6,14 @@ import jack.digityhuman.atualcombattraining.dto.req.ThemeListReq;
 import jack.digityhuman.atualcombattraining.dto.req.ThemeSettingsSaveReq;
 import jack.digityhuman.atualcombattraining.dto.resp.RollbackResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ScenarioUnitResp;
+import jack.digityhuman.atualcombattraining.dto.resp.ThemeAnalysisResp;
 import jack.digityhuman.atualcombattraining.dto.resp.StatusResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ThemeDetailResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ThemeListResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ThemeSaveResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ThemeSettingsResp;
 import jack.digityhuman.atualcombattraining.dto.resp.VersionResp;
+import jack.digityhuman.atualcombattraining.service.ThemeAnalysisService;
 import jack.digityhuman.atualcombattraining.service.ThemeService;
 import jack.digityhuman.atualcombattraining.service.ThemeVersionService;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -37,6 +40,7 @@ public class AdminThemeController {
 
     private final ThemeService themeService;
     private final ThemeVersionService themeVersionService;
+    private final ThemeAnalysisService themeAnalysisService;
 
     /** FP-06 分页查询主题列表 */
     @GetMapping("/list")
@@ -66,6 +70,24 @@ public class AdminThemeController {
     @GetMapping("/{id}/scenario-units")
     public ApiResponse<List<ScenarioUnitResp>> scenarioUnits(@PathVariable String id) {
         return ApiResponse.success(themeService.listScenarioUnits(id));
+    }
+
+    /**
+     * FP-20 数据分析（真实统计，替换前端 mock）。
+     * <p>
+     * `sceneUnitId` 不传 = 当前版本全部场景单元合并统计；`scope` 四档
+     * （first/last/all/max，缺省 last）；`compareEnd` 两档（last/max，缺省 last，
+     * max 时终点分取个人最高分）；`studyMode` 1 训练 / 2 考核 / 不传不限。
+     */
+    @GetMapping("/{id}/analysis")
+    public ApiResponse<ThemeAnalysisResp> analysis(
+            @PathVariable String id,
+            @RequestParam(required = false) String sceneUnitId,
+            @RequestParam(required = false) String scope,
+            @RequestParam(required = false) String compareEnd,
+            @RequestParam(required = false) Integer studyMode) {
+        return ApiResponse.success(
+                themeAnalysisService.analyse(id, sceneUnitId, scope, compareEnd, studyMode));
     }
 
     /** FP-13~17 读取当前版本主题设置（五表单+内容概览） */

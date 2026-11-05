@@ -29,18 +29,27 @@ public class StudentAdminController {
 
     private final StudentAdminService studentAdminService;
 
-    /** AD01 学员列表（汇总 + 分页 + 过滤） */
+    /**
+     * AD01 学员列表（汇总 + 分页 + 过滤）。
+     * <p>
+     * 全部过滤都在服务端：keyword/userIds 是"姓名/账号/工号"搜索结果，
+     * practiceStatus 是练习状态（in_progress / idle）。前端原来只做本地过滤，
+     * 一旦分页就会出现"第 2 页才过滤"的漏人问题。
+     */
     @GetMapping
     public ApiResponse<PageResult<Map<String, Object>>> list(
             @PathVariable String themeId,
             @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) List<String> userIds,
             @RequestParam(required = false) String source,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String practiceStatus,
             @RequestParam(required = false) Integer studyMode,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ApiResponse.success(studentAdminService.listStudents(
-                themeId, keyword, source, status, studyMode, page, Math.min(size, 100)));
+                themeId, keyword, userIds, source, status, practiceStatus, studyMode,
+                page, Math.min(size, 100)));
     }
 
     /** AD02 添加学员（唯一键防重复；已移除用户恢复） */

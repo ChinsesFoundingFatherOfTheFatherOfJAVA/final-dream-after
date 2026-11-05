@@ -59,8 +59,24 @@ public class AttemptResp {
     private String actorDesc;
     /** 我的角色名 */
     private String userRoleName;
-    /** 我的角色身份摘要 */
+    /** 我的角色身份摘要（已废弃口径，保留兼容；新页面用 userRoleIdentity） */
     private String userRoleDesc;
+    /** 我的角色身份。random/custom 取脚本 userRole.identity；case 无此数据源（见类注释） */
+    private String userRoleIdentity;
+    /** 我的角色年龄段（脚本 userRole.ageRange；case 无） */
+    private String userRoleAge;
+    /** 我的人物背景长文（脚本 userRole.background；case 无）。不回退到业务背景，避免张冠李戴 */
+    private String userRoleBackground;
+    /** AI 演员身份。case 取 actorPosition；random/custom 取 actor.identity */
+    private String actorIdentity;
+    /** AI 演员年龄段（脚本 actor.ageRange；case 快照无此字段） */
+    private String actorAge;
+    /** AI 演员公司（case 取 actorCompany；random/custom 脚本无此字段） */
+    private String actorCompany;
+    /** AI 演员性格（case 取 actorPersonality；random/custom 取 actor.personality 数组拼接） */
+    private String actorPersonality;
+    /** AI 演员人物背景（random/custom 取 actor 的隐式目标/隐藏事实等描述；case 取 scriptBackground） */
+    private String actorBackground;
     /** 沟通指南（侧栏要点列表；优先脚本 goals.behaviorGuidance，缺失退回场景 behaviorGoals） */
     private List<String> behaviorGuidance;
     /** 通过分数 */

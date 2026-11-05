@@ -8,7 +8,9 @@ import jack.digityhuman.atualcombattraining.dto.resp.ReportResp;
 import jack.digityhuman.atualcombattraining.dto.resp.StudentHistoryResp;
 import jack.digityhuman.atualcombattraining.dto.resp.StudentHomeResp;
 import jack.digityhuman.atualcombattraining.dto.resp.StudentHomeSummaryResp;
+import jack.digityhuman.atualcombattraining.dto.resp.RandomScriptResp;
 import jack.digityhuman.atualcombattraining.dto.resp.StudentPracticeRecordsResp;
+import jack.digityhuman.atualcombattraining.dto.resp.StudentScenarioDetailResp;
 import jack.digityhuman.atualcombattraining.dto.resp.StudentThemeDetailResp;
 import jack.digityhuman.atualcombattraining.entity.ActPracticeAttempt;
 import jack.digityhuman.atualcombattraining.entity.ActPracticeReport;
@@ -112,6 +114,40 @@ public class StudentQueryController {
             @RequestHeader(value = "Authorization", required = false) String authorization) {
         return ApiResponse.success(
                 studentQueryService.themeDetail(requireUser(authorization), themeId));
+    }
+
+    /**
+     * 场景准备详情（契约 04 §3 API-S05 / 01 §F09）：F09 弹窗九类信息一次给全。
+     * <p>
+     * 路径与契约原文一致（`/student/themes/{themeId}/scenarios/{scenarioId}`），
+     * 本类前缀是 `/api/act`，所以完整路径为
+     * `GET /api/act/student/themes/{themeId}/scenarios/{scenarioId}`。
+     * 鉴权沿用既有口径（CurrentUserService 取当前用户 + 服务层校验参与关系与发布版本）。
+     */
+    @GetMapping("/themes/{themeId}/scenarios/{scenarioId}")
+    public ApiResponse<StudentScenarioDetailResp> scenarioDetail(
+            @PathVariable String themeId,
+            @PathVariable String scenarioId,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        return ApiResponse.success(
+                studentQueryService.scenarioDetail(requireUser(authorization), themeId, scenarioId));
+    }
+
+    /**
+     * 随机练习取档（契约 08 §4 随机分支，2026-11-04 新增）：从发布期预生成的
+     * 「场景 × 难度档」候选中随机取一份脚本，<b>不调模型</b>。
+     * <p>
+     * 与原平台一致：原平台 `randomScript?difficulty=N` 也是取档接口，产物在发布窗口内已生成。
+     * 该接口只读，不创建 attempt；「再练一次」不走这里（走快照复用，保证不换脸）。
+     */
+    @GetMapping("/themes/{themeId}/scenarios/{scenarioId}/random-script")
+    public ApiResponse<RandomScriptResp> randomScript(
+            @PathVariable String themeId,
+            @PathVariable String scenarioId,
+            @RequestParam(defaultValue = "2") int difficulty,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        return ApiResponse.success(
+                studentQueryService.randomScript(requireUser(authorization), themeId, scenarioId, difficulty));
     }
 
     /** 练习历程：attempt 流水分页（含报告摘要） */

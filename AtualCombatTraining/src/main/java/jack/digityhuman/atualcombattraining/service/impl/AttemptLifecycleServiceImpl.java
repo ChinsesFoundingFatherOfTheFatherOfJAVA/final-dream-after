@@ -19,6 +19,7 @@ import jack.digityhuman.atualcombattraining.service.AttemptLifecycleService;
 import jack.digityhuman.atualcombattraining.service.AttemptPreflightService;
 import jack.digityhuman.atualcombattraining.service.AttemptQuotaService;
 import jack.digityhuman.atualcombattraining.service.AttemptSnapshotService;
+import jack.digityhuman.atualcombattraining.service.RandomScriptService;
 import jack.digityhuman.atualcombattraining.service.ThemeSettingsService;
 import jack.digityhuman.common.api.BizException;
 import lombok.RequiredArgsConstructor;
@@ -60,6 +61,12 @@ public class AttemptLifecycleServiceImpl implements AttemptLifecycleService {
     private static final int DEFAULT_MAX_ROUNDS = 50;
     /** 案例练习 */
     private static final String PRACTICE_CASE = "case";
+    /** 随机练习（脚本走发布预生成分档，创建即 ready，不调模型） */
+    private static final String PRACTICE_RANDOM = "random";
+    /** 自定义练习（唯一仍需开练现场生成脚本的类型） */
+    private static final String PRACTICE_CUSTOM = "custom";
+    /** 主题默认难度（设置里缺省时按中等，与契约 03 §7.1 一致） */
+    private static final int DEFAULT_DIFFICULTY = 2;
     /** 结束原因：到时 */
     private static final String REASON_TIMEOUT = "timeout";
 
@@ -71,11 +78,30 @@ public class AttemptLifecycleServiceImpl implements AttemptLifecycleService {
     private final AttemptSnapshotService snapshotService;
     private final AttemptQuotaService quotaService;
     private final ThemeSettingsService themeSettingsService;
+    private final RandomScriptService randomScriptService;
+
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public ActPracticeAttempt create(String userId, String themeId, String scenarioId,
                                      int studyMode, String practiceType, String customConfigJson) {
+        return create(userId, themeId, scenarioId, studyMode, practiceType, customConfigJson, null, null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public ActPracticeAttempt create(String userId, String themeId, String scenarioId,
+                                     int studyMode, String practiceType, String customConfigJson,
+                                     String reuseFromAttemptId) {
+        return create(userId, themeId, scenarioId, studyMode, practiceType, customConfigJson,
+                reuseFromAttemptId, null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public ActPracticeAttempt create(String userId, String themeId, String scenarioId,
+                                     int studyMode, String practiceType, String customConfigJson,
+                                     String reuseFromAttemptId, Integer difficulty) {
         // 1. 再跑一遍只读预检（preflight 与 create 之间状态可能变化）
         preflightService.check(userId, themeId, scenarioId, studyMode, practiceType);
         ActTheme theme = themeMapper.selectById(themeId);
@@ -102,7 +128,9 @@ public class AttemptLifecycleServiceImpl implements AttemptLifecycleService {
                 snapshotService.productProfilesSnapshot(themeId, contentVersionNo, scenarioId));
         attempt.setMaterialsSnapshotJson(snapshotService.materialsSnapshot(themeId, contentVersionNo));
         attempt.setCustomConfigJson(customConfigJson);
-        attempt.setDifficulty(settings.getDifficulty());
+        // 难度：随机练习用请求档位（缺省落主题难度）；案例/自定义沿用主题难度口径不变
+        attempt.setDifficulty(difficulty != null ? difficulty
+                : (settings.getDifficulty() == null ? DEFAULT_DIFFICULTY : settings.getDifficulty()));
         attempt.setAgentSessionId(null);
         attempt.setPreparationStage(STAGE_ANALYZE);
         attempt.setPreparationPercent(0);
@@ -116,18 +144,36 @@ public class AttemptLifecycleServiceImpl implements AttemptLifecycleService {
         attempt.setCreatedAt(LocalDateTime.now());
         attempt.setUpdatedAt(LocalDateTime.now());
 
-        // 3. 案例练习：脚本直接取发布快照的编译产物，同步 ready，不调 LLM（契约 03 §8.1）
+        // 3. 脚本来源分流（2026-11-04 改：随机练习改为发布预生成取档，不调模型）
+        //    case   → 发布快照案例正文（发布期已生成）
+        //    random → 预生成分档取档（发布期已生成）
+        //    custom → 现场生成：参数组合无限、无法预生成（t16 实测：自定义确实会落 artifact，
+        //             但是"每次现场生成后落库"，不是发布期预生成）。保持 preparing 等异步补齐。
+        String presetScript = null;
         if (PRACTICE_CASE.equals(practiceType)) {
             ActDrillScript drill = findPublishedCaseScript(themeId, contentVersionNo, scenarioId);
             if (drill == null) {
                 throw new BizException("该场景尚未生成实战案例，请先在管理端发布");
             }
-            attempt.setScriptSnapshotJson(drill.getCompiledPayload());
+            presetScript = drill.getCompiledPayload();
+        } else if (PRACTICE_RANDOM.equals(practiceType)) {
+            // 「再练一次」：直接复用上次快照，不取档（用户拍板：同档取档不可复现，重取必然换脸）
+            presetScript = reuseFromAttemptId != null
+                    ? reusableScriptOf(userId, reuseFromAttemptId)
+                    : randomScriptService.pick(themeId, contentVersionNo, scenarioId,
+                            attempt.getDifficulty()).script();
+        } else if (!PRACTICE_CUSTOM.equals(practiceType)) {
+            // 未知练习方式：显式拒绝，不静默落成 preparing 让前端无限等
+            throw new BizException("不支持的练习方式：" + practiceType);
+        }
+
+        if (presetScript != null) {
+            attempt.setScriptSnapshotJson(presetScript);
             attempt.setStatus(STATUS_READY);
             attempt.setPreparationStage(STAGE_READY);
             attempt.setPreparationPercent(100);
             attempt.setPreparedAt(LocalDateTime.now());
-            applyRuntimeOf(attempt, drill.getCompiledPayload());
+            applyRuntimeOf(attempt, presetScript);
         }
 
         try {
@@ -266,6 +312,31 @@ public class AttemptLifecycleServiceImpl implements AttemptLifecycleService {
                 .eq(ActDrillScript::getScenarioUnitId, scenarioId)
                 .orderByDesc(ActDrillScript::getCompiledAt)
                 .last("LIMIT 1"));
+    }
+
+    /**
+     * 「再练一次」：取出上次 attempt 已冻结的脚本快照。
+     * <p>
+     * <b>为什么复用快照而不是重新取档</b>：原平台实测同档取档不可复现（场景01/难度2 在 2 个
+     * targetId 间 7:7 摆动），再练若重取必然换人换脸，与用户实测的"沿用上次"相反。
+     * <p>
+     * 归属校验：只能复用<b>自己的</b> attempt（越权防护不依赖前端）；快照为空视为不可复用，
+     * 明确报错而不是静默走取档（否则又变成换脸）。
+     */
+    private String reusableScriptOf(String userId, String reuseFromAttemptId) {
+        ActPracticeAttempt previous = attemptMapper.selectById(reuseFromAttemptId);
+        if (previous == null) {
+            throw new BizException("上次练习不存在，无法沿用");
+        }
+        if (!Objects.equals(previous.getUserId(), userId)) {
+            throw new BizException("无权沿用他人的练习");
+        }
+        String script = previous.getScriptSnapshotJson();
+        if (script == null || script.isBlank()) {
+            throw new BizException("上次练习没有可沿用的脚本，请重新开始");
+        }
+        log.info("再练一次沿用快照 attemptId={} 来源 attemptId={}", reuseFromAttemptId, reuseFromAttemptId);
+        return script;
     }
 
     /** 从脚本 runtime 段覆盖默认时长/轮次（案例快照可能是旧结构，取不到就保留默认） */

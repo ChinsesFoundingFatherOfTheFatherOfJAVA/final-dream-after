@@ -42,6 +42,22 @@ public class WorkflowContext {
         return inputs.get(name);
     }
 
+    /**
+     * 补一个输入变量（同名覆盖）。
+     * <p>
+     * 给「调用方只传契约必需字段、执行器自行派生」的场景用：对练一轮要把 script_json 里的
+     * 角色画像/行为指引拆成人可读的段落再交给模型，派生值在执行器里算好后回填，
+     * 模板就不必让模型自己去翻 JSON。契约 inputs 本身保持不变（ACT 侧无需改动）。
+     */
+    public void putInput(String name, Object value) {
+        inputs.put(name, value);
+    }
+
+    /** 是否已注入某输入变量（模板引用前先判断，避免缺变量时 render 抛错） */
+    public boolean hasInput(String name) {
+        return inputs.containsKey(name);
+    }
+
     public String render(String template) {
         if (template == null || template.isEmpty()) {
             return "";

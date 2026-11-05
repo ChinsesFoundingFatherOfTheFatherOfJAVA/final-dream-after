@@ -2,13 +2,18 @@ package jack.digityhuman.atualcombattraining.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import jack.digityhuman.atualcombattraining.dto.resp.RandomScriptResp;
 import jack.digityhuman.atualcombattraining.dto.resp.StudentHistoryResp;
 import jack.digityhuman.atualcombattraining.dto.resp.StudentHomeResp;
 import jack.digityhuman.atualcombattraining.dto.resp.StudentHomeSummaryResp;
 import jack.digityhuman.atualcombattraining.dto.resp.StudentPracticeRecordsResp;
+import jack.digityhuman.atualcombattraining.dto.resp.StudentScenarioDetailResp;
 import jack.digityhuman.atualcombattraining.dto.resp.StudentThemeDetailResp;
 import jack.digityhuman.atualcombattraining.common.JsonSupport;
+import jack.digityhuman.atualcombattraining.entity.ActCaseScript;
 import jack.digityhuman.atualcombattraining.entity.ActContentVersionMaterial;
+import jack.digityhuman.atualcombattraining.entity.ActDrillScript;
 import jack.digityhuman.atualcombattraining.entity.ActEvaluationDimension;
 import jack.digityhuman.atualcombattraining.entity.ActPracticeAttempt;
 import jack.digityhuman.atualcombattraining.entity.ActPracticeReport;
@@ -19,6 +24,8 @@ import jack.digityhuman.atualcombattraining.entity.ActTheme;
 import jack.digityhuman.atualcombattraining.entity.ActThemeParticipant;
 import jack.digityhuman.atualcombattraining.entity.ActThemeSettings;
 import jack.digityhuman.atualcombattraining.mapper.ActContentVersionMaterialMapper;
+import jack.digityhuman.atualcombattraining.mapper.ActCaseScriptMapper;
+import jack.digityhuman.atualcombattraining.mapper.ActDrillScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActPracticeAttemptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActPracticeReportMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActProductProfileMapper;
@@ -29,6 +36,7 @@ import jack.digityhuman.atualcombattraining.mapper.ActThemeParticipantMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActEvaluationDimensionMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeSettingsMapper;
 import jack.digityhuman.atualcombattraining.service.AttemptQuotaService;
+import jack.digityhuman.atualcombattraining.service.RandomScriptService;
 import jack.digityhuman.atualcombattraining.service.StudentQueryService;
 import jack.digityhuman.atualcombattraining.service.ThemeSettingsService;
 import jack.digityhuman.common.api.BizException;
@@ -85,7 +93,10 @@ public class StudentQueryServiceImpl implements StudentQueryService {
     private final ActEvaluationDimensionMapper dimensionMapper;
     private final ActProductProfileMapper productProfileMapper;
     private final ActScenarioProductProfileMapper scenarioProductProfileMapper;
+    private final ActCaseScriptMapper caseScriptMapper;
+    private final ActDrillScriptMapper drillScriptMapper;
     private final AttemptQuotaService quotaService;
+    private final RandomScriptService randomScriptService;
 
     /** 主题状态：已发布（与 AttemptPreflightServiceImpl 同口径） */
     private static final int THEME_PUBLISHED = 3;
@@ -332,22 +343,8 @@ public class StudentQueryServiceImpl implements StudentQueryService {
             });
 
             // 训练/考核动作可用性：不可用一定给出中文原因（前端直接展示，不自己编理由）
-            boolean trainingOn = Objects.equals(settings.getTrainingModeEnabled(), 1);
-            boolean examOn = Objects.equals(settings.getAssessmentModeEnabled(), 1);
-            scenario.setTrainingAction(StudentThemeDetailResp.Action.of(
-                    trainingOn && startable,
-                    !trainingOn ? "该主题未开启训练模式" : stopReason));
-            if (!examOn) {
-                scenario.setExamAction(StudentThemeDetailResp.Action.of(false, "该主题未开启考核模式"));
-            } else if (!startable) {
-                scenario.setExamAction(StudentThemeDetailResp.Action.of(false, stopReason));
-            } else {
-                Integer minTrain = settings.getMinTrainCountToUnlockExam();
-                boolean unlocked = quotaService.examUnlocked(
-                        userId, themeId, minTrain == null ? 0 : minTrain);
-                scenario.setExamAction(StudentThemeDetailResp.Action.of(unlocked,
-                        "完成 " + (minTrain == null ? 0 : minTrain) + " 次训练后解锁考核"));
-            }
+            scenario.setTrainingAction(trainingAction(settings, startable, stopReason));
+            scenario.setExamAction(examAction(settings, startable, stopReason, userId, themeId));
             scenarios.add(scenario);
         }
         resp.setScenarios(scenarios);
@@ -439,6 +436,375 @@ public class StudentQueryServiceImpl implements StudentQueryService {
         // 我的训练记录（D09：详情抽屉 10 条）
         resp.setRecentRecords(loadRecentRecords(userId, themeId));
         return resp;
+    }
+
+    /**
+     * 场景准备详情（契约 04 §API-S05 / 01 §F09）。
+     * <p>
+     * 组装顺序按"资格 → 场景 → 我的统计 → 案例/档案/维度 → 可用练习方式"：
+     * 先做参与关系与发布版本校验（与 {@link #themeDetail} 同一口径，越权一律拒绝），
+     * 再一次性把弹窗需要的九类信息取全，避免前端串行发多个请求。
+     * <p>
+     * 只读：本方法不写任何表，也不触发 attempt 创建。
+     */
+    @Override
+    public StudentScenarioDetailResp scenarioDetail(String userId, String themeId, String scenarioId) {
+        ActTheme theme = themeMapper.selectById(themeId);
+        if (theme == null) {
+            throw new BizException("主题不存在");
+        }
+        // 鉴权口径与 themeDetail 一致：必须是该主题的有效参与学员
+        ActThemeParticipant participation = participantMapper.selectOne(
+                new LambdaQueryWrapper<ActThemeParticipant>()
+                        .eq(ActThemeParticipant::getThemeId, themeId)
+                        .eq(ActThemeParticipant::getUserId, userId)
+                        .eq(ActThemeParticipant::getStatus, PARTICIPANT_ACTIVE)
+                        .last("LIMIT 1"));
+        if (participation == null) {
+            throw new BizException("你不在该主题的学员名单中");
+        }
+        Integer version = theme.getPublishedVersionNo();
+        if (version == null) {
+            throw new BizException("主题尚未发布");
+        }
+        // 场景必须属于当前发布版本：旧版本的单元行（含回滚前的内容）一律视为已下线
+        ActScenarioUnit unit = unitMapper.selectOne(new LambdaQueryWrapper<ActScenarioUnit>()
+                .eq(ActScenarioUnit::getThemeId, themeId)
+                .eq(ActScenarioUnit::getVersionNo, version)
+                .eq(ActScenarioUnit::getId, scenarioId)
+                .last("LIMIT 1"));
+        if (unit == null) {
+            throw new BizException("场景不存在或已下线");
+        }
+        ActThemeSettings settings = themeSettingsService.require(themeId);
+
+        StudentScenarioDetailResp resp = new StudentScenarioDetailResp();
+        resp.setThemeId(theme.getId());
+        resp.setThemeName(theme.getThemeName());
+        resp.setScenarioId(unit.getId());
+        resp.setSortOrder(unit.getSortOrder());
+        resp.setName(unit.getUnitName());
+        resp.setTimeLimitMinutes(unit.getTimeLimitMinutes());
+        // 与 preflight.maxDurationSeconds 同口径：限时（分钟）×60，缺省 900 秒（15 分钟）
+        resp.setMaxDurationSeconds(unit.getTimeLimitMinutes() != null
+                ? unit.getTimeLimitMinutes() * 60 : 900);
+        resp.setPassScore(unit.getPassScore());
+        resp.setAudience(splitAudienceAll(unit.getAudience()));
+
+        // 场景描述六项 + 行为目标/冰山要素（无值时给空数组，不造占位内容）
+        resp.setBusinessGoal(unit.getBusinessGoal());
+        resp.setBusinessImpact(unit.getBusinessImpact());
+        resp.setFailureCost(unit.getFailureCost());
+        resp.setCoreConflict(unit.getCoreConflict());
+        resp.setBehaviorGoals(nullSafeList(unit.getBehaviorGoals()));
+        resp.setIcebergElements(nullSafeList(unit.getIcebergElements()));
+        resp.setCommonFailureModes(nullSafeList(unit.getCommonFailureModes()));
+        resp.setDifficulties(nullSafeList(unit.getDifficulties()));
+        resp.setForbiddenBehaviors(nullSafeList(unit.getForbiddenBehaviors()));
+
+        // 我的统计（训练/考核分开计，与主题详情场景卡同口径）
+        long trainingCount = quotaService.countFormalAttempts(
+                userId, themeId, unit.getId(), MODE_TRAINING);
+        long examCount = quotaService.countFormalAttempts(
+                userId, themeId, unit.getId(), MODE_EXAM);
+        resp.setMyTrainingCount(trainingCount);
+        resp.setMyExamCount(examCount);
+        resp.setAttemptCount(trainingCount + examCount);
+        List<ActPracticeReport> trainingReports = reportsOf(userId, themeId, unit.getId(), MODE_TRAINING);
+        List<ActPracticeReport> examReports = reportsOf(userId, themeId, unit.getId(), MODE_EXAM);
+        resp.setMyHighestScore(highestOf(trainingReports));
+        resp.setMyHighestExamScore(highestOf(examReports));
+        boolean passed = anyPassed(trainingReports) || anyPassed(examReports);
+        String status = passed ? "passed" : (resp.getAttemptCount() > 0 ? "in_progress" : "not_started");
+        resp.setStatus(status);
+        resp.setStatusText(switch (status) {
+            case "passed" -> "已通过";
+            case "in_progress" -> "进行中";
+            default -> "未开始";
+        });
+
+        resp.setDifficulty(settings.getDifficulty());
+        resp.setDifficultyText(difficultyText(settings.getDifficulty()));
+
+        // 准入状态与两个动作（与主题详情同一套判定，前端不重复推导）
+        String stopReason = resolveStopReason(theme, settings);
+        resp.setStartable(stopReason == null);
+        resp.setStopReason(stopReason);
+        resp.setTrainingAction(toScenarioAction(trainingAction(settings, stopReason == null, stopReason)));
+        resp.setExamAction(toScenarioAction(examAction(settings, stopReason == null, stopReason, userId, themeId)));
+
+        // 评估维度与权重（弹窗"场景评估维度和权重"分区）
+        resp.setDimensions(dimensionMapper.selectList(
+                        new LambdaQueryWrapper<ActEvaluationDimension>()
+                                .eq(ActEvaluationDimension::getScenarioUnitId, unit.getId())
+                                .orderByAsc(ActEvaluationDimension::getSortOrder))
+                .stream().map(dimension -> {
+                    StudentScenarioDetailResp.Dimension item = new StudentScenarioDetailResp.Dimension();
+                    item.setId(dimension.getId());
+                    item.setName(dimension.getDimensionName());
+                    item.setWeight(dimension.getWeight());
+                    item.setDescription(dimension.getDimensionDesc());
+                    item.setExcellentStandard(dimension.getExcellentStandard());
+                    item.setGoodStandard(dimension.getGoodStandard());
+                    item.setImproveStandard(dimension.getImproveStandard());
+                    item.setSortOrder(dimension.getSortOrder());
+                    return item;
+                }).toList());
+
+        // 实战案例：发布快照为准（act_drill_script 每案例一行），老数据回退 act_case_script
+        resp.setCases(loadCaseSummaries(themeId, version, unit.getId()));
+        // 涉及产品档案：发布快照行 + 场景关联（无关联就是空数组）
+        resp.setProductProfiles(loadScenarioProductProfiles(themeId, version, unit.getId()));
+
+        // 可用练习方式：设置 CSV 与场景能力取交集；全不可用时说明原因（契约 F09 末尾）
+        List<String> enabledMethods = splitCsv(settings.getPracticeMethods());
+        resp.setPracticeMethods(enabledMethods);
+        if (enabledMethods.isEmpty()) {
+            resp.setUnavailableReason(resp.getStopReason() != null
+                    ? resp.getStopReason() : "该主题未开启任何练习方式");
+        } else if (!resp.isStartable()) {
+            resp.setUnavailableReason(resp.getStopReason());
+        }
+        return resp;
+    }
+
+    /**
+     * 随机练习取档（契约 08 §4 随机分支，2026-11-04 新增）。
+     * <p>
+     * 鉴权与场景准备详情完全同一套（参与关系 → 已发布 → 场景属当前版本），
+     * 因为两者都是"学员端在发布快照下查看某个场景"的读操作。
+     */
+    @Override
+    public RandomScriptResp randomScript(String userId, String themeId, String scenarioId,
+                                         int difficulty) {
+        ActTheme theme = themeMapper.selectById(themeId);
+        if (theme == null) {
+            throw new BizException("主题不存在");
+        }
+        ActThemeParticipant participation = participantMapper.selectOne(
+                new LambdaQueryWrapper<ActThemeParticipant>()
+                        .eq(ActThemeParticipant::getThemeId, themeId)
+                        .eq(ActThemeParticipant::getUserId, userId)
+                        .eq(ActThemeParticipant::getStatus, PARTICIPANT_ACTIVE)
+                        .last("LIMIT 1"));
+        if (participation == null) {
+            throw new BizException("你不在该主题的学员名单中");
+        }
+        Integer version = theme.getPublishedVersionNo();
+        if (version == null) {
+            throw new BizException("主题尚未发布");
+        }
+        ActScenarioUnit unit = unitMapper.selectOne(new LambdaQueryWrapper<ActScenarioUnit>()
+                .eq(ActScenarioUnit::getThemeId, themeId)
+                .eq(ActScenarioUnit::getVersionNo, version)
+                .eq(ActScenarioUnit::getId, scenarioId)
+                .last("LIMIT 1"));
+        if (unit == null) {
+            throw new BizException("场景不存在或已下线");
+        }
+        // 难度越界一律归一到 3 档内（前端传错不 500；越界值按最近档）
+        int normalised = difficulty <= 1 ? 1 : (difficulty >= 3 ? 3 : difficulty);
+        RandomScriptService.PickResult picked =
+                randomScriptService.pick(themeId, version, scenarioId, normalised);
+        RandomScriptResp resp = new RandomScriptResp();
+        resp.setRequestedDifficulty(picked.requestedDifficulty());
+        resp.setDifficulty(picked.actualDifficulty());
+        resp.setDegraded(picked.degraded());
+        resp.setScript(picked.script());
+        return resp;
+    }
+
+    /**
+     * 实战案例摘要（F09 弹窗"实战案例 N 个"分区）。
+     * <p>
+     * 数据源优先级：① 当前发布版本的 act_drill_script（发布快照，含生成时的案例正文原话）；
+     * ② 该版本 act_case_script 落库列（老数据/发布尚未编译时只有列）。
+     * 两者都按案例 ID 对齐，快照缺字段时逐字段回退到案例行，避免弹窗出现空白字段。
+     * <p>
+     * 顺序按案例行 sort 的等价口径：脚本表没有 sort_order，用 act_case_script 的创建顺序
+     * 对齐（先查案例行拿顺序，再按顺序填快照），保证同一场景的案例顺序稳定。
+     */
+    private List<StudentScenarioDetailResp.CaseSummary> loadCaseSummaries(
+            String themeId, Integer version, String scenarioUnitId) {
+        List<ActCaseScript> caseRows = caseScriptMapper.selectList(
+                new LambdaQueryWrapper<ActCaseScript>()
+                        .eq(ActCaseScript::getThemeId, themeId)
+                        .eq(ActCaseScript::getVersionNo, version)
+                        .eq(ActCaseScript::getScenarioUnitId, scenarioUnitId)
+                        .orderByAsc(ActCaseScript::getCreatedAt));
+        if (caseRows.isEmpty()) {
+            return List.of();
+        }
+        // 一次批量取快照，避免逐个案例查一次（案例数通常 1~4，批量仍然更稳）
+        Map<String, ActDrillScript> drillByCaseId = drillScriptMapper.selectList(
+                        new LambdaQueryWrapper<ActDrillScript>()
+                                .eq(ActDrillScript::getThemeId, themeId)
+                                .eq(ActDrillScript::getVersionNo, version)
+                                .in(ActDrillScript::getCaseScriptId,
+                                        caseRows.stream().map(ActCaseScript::getId).toList())
+                                .orderByDesc(ActDrillScript::getCompiledAt))
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        ActDrillScript::getCaseScriptId, drill -> drill, (first, second) -> first));
+        List<StudentScenarioDetailResp.CaseSummary> items = new ArrayList<>();
+        for (ActCaseScript row : caseRows) {
+            ActDrillScript drill = drillByCaseId.get(row.getId());
+            ObjectNode payload = payloadOf(drill);
+            StudentScenarioDetailResp.CaseSummary item = new StudentScenarioDetailResp.CaseSummary();
+            item.setCaseId(row.getId());
+            item.setDrillScriptId(drill == null ? null : drill.getId());
+            item.setScriptName(firstText(payload, "scriptName", row.getScriptName()));
+            Integer difficulty = payloadDifficulty(payload, row.getDifficulty());
+            item.setDifficulty(difficulty);
+            item.setDifficultyStars(difficulty);
+            item.setActorName(firstText(payload, "actorName", row.getActorName()));
+            item.setActorPosition(firstText(payload, "actorPosition", row.getActorPosition()));
+            item.setActorCompany(firstText(payload, "actorCompany", row.getActorCompany()));
+            item.setActorType(firstText(payload, "actorType", row.getActorType()));
+            item.setActorPersonality(firstText(payload, "actorPersonality", row.getActorPersonality()));
+            item.setActorCommunicationStyle(
+                    firstText(payload, "actorCommunicationStyle", row.getActorCommunicationStyle()));
+            item.setScriptBackground(firstText(payload, "scriptBackground", row.getScriptBackground()));
+            // 开场白原话：原平台弹窗逐字展示，不允许截断或重写，所以不做任何加工
+            item.setScriptOpening(firstText(payload, "scriptOpening", row.getScriptOpening()));
+            items.add(item);
+        }
+        return items;
+    }
+
+    /** 快照 payload → ObjectNode；脏数据（非对象 JSON）当作"无快照"，回退案例行 */
+    private ObjectNode payloadOf(ActDrillScript drill) {
+        if (drill == null || drill.getCompiledPayload() == null || drill.getCompiledPayload().isBlank()) {
+            return null;
+        }
+        try {
+            return JsonSupport.obj(drill.getCompiledPayload());
+        } catch (BizException e) {
+            log.warn("案例快照 JSON 非法，回退案例行 drillId={}", drill.getId());
+            return null;
+        }
+    }
+
+    private Integer payloadDifficulty(ObjectNode payload, Integer fallback) {
+        Integer value = JsonSupport.integer(payload, "difficulty");
+        return value == null ? fallback : value;
+    }
+
+    /** 快照字段优先，缺失回退案例行字段；两者都没有则保留 null（前端据此省略该行） */
+    private String firstText(ObjectNode payload, String field, String fallback) {
+        String value = JsonSupport.text(payload, field);
+        if (value == null || value.isBlank()) {
+            return fallback == null || fallback.isBlank() ? null : fallback;
+        }
+        return value;
+    }
+
+    /**
+     * 场景关联的产品档案（F09"涉及产品档案"分区）。
+     * <p>
+     * 关联关系在 act_scenario_product_profile（按 scenario_unit_id）；档案本体取发布快照行
+     * （content_version_no = 当前发布版本）。因为历史发布流程可能没有把 v0 档案复制进版本，
+     * 这里的口径是：<b>优先版本行</b>，同一 profile_key 在版本里找不到时回退到工作区行（v0），
+     * 这样老数据不会因为缺快照而让弹窗整块空白；但绝不凭空造档案。
+     * <p>
+     * <b>兜底分支的生命周期</b>：这是为兼容「发布逻辑修复（ContentVersionServiceImpl 开始复制
+     * 产品档案）之前」产生的历史数据而保留的防御性设计，成本为零。等产品档案数据回填到发布版本后
+     * 可移除此分支（见 {@code copyProductProfiles} 与该分支上的同款注释）。
+     */
+    private List<StudentScenarioDetailResp.ProductProfileBrief> loadScenarioProductProfiles(
+            String themeId, Integer version, String scenarioUnitId) {
+        List<String> linkedIds = scenarioProductProfileMapper.selectList(
+                        new LambdaQueryWrapper<ActScenarioProductProfile>()
+                                .eq(ActScenarioProductProfile::getScenarioUnitId, scenarioUnitId)
+                                .orderByAsc(ActScenarioProductProfile::getSortOrder))
+                .stream()
+                .map(ActScenarioProductProfile::getProductProfileId)
+                .toList();
+        if (linkedIds.isEmpty()) {
+            return List.of();
+        }
+        List<ActProductProfile> published = productProfileMapper.selectList(
+                new LambdaQueryWrapper<ActProductProfile>()
+                        .eq(ActProductProfile::getThemeId, themeId)
+                        .eq(ActProductProfile::getContentVersionNo, version)
+                        .in(ActProductProfile::getId, linkedIds)
+                        .orderByAsc(ActProductProfile::getSortOrder));
+        // 兜底：发布逻辑修复前的历史数据，v1 版本行是空的（当时发布不复制产品档案），
+        // 这里回退到工作区 v0 行，让老主题仍能看到档案。等产品档案数据回填到发布版本后可移除此分支。
+        List<ActProductProfile> resolved = published.isEmpty()
+                ? productProfileMapper.selectBatchIds(linkedIds) : published;
+        // 关联顺序以 act_scenario_product_profile.sort_order 为准，档案表自己的 sort_order 只作兜底
+        Map<String, Integer> linkOrder = new LinkedHashMap<>();
+        for (int i = 0; i < linkedIds.size(); i++) {
+            linkOrder.put(linkedIds.get(i), i);
+        }
+        return resolved.stream()
+                .sorted(java.util.Comparator.comparingInt(
+                        profile -> linkOrder.getOrDefault(profile.getId(), Integer.MAX_VALUE)))
+                .map(profile -> {
+                    StudentScenarioDetailResp.ProductProfileBrief brief =
+                            new StudentScenarioDetailResp.ProductProfileBrief();
+                    brief.setProfileId(profile.getId());
+                    brief.setProfileKey(profile.getProfileKey());
+                    brief.setName(profile.getProfileName());
+                    brief.setCategory(profile.getCategory());
+                    brief.setDescription(profile.getDescription());
+                    return brief;
+                }).toList();
+    }
+
+    /** 适用人群全量切分（弹窗展示全部标签，不截断到前两个） */
+    private List<String> splitAudienceAll(String audience) {
+        if (audience == null || audience.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(audience.split("[/、,，|]"))
+                .map(String::trim)
+                .filter(part -> !part.isEmpty())
+                .toList();
+    }
+
+    /** Nullable 列表 → 空列表（老数据 JSON 列为 null 时前端拿到 []，不用判空） */
+    private List<String> nullSafeList(List<String> values) {
+        return values == null ? List.of() : values;
+    }
+
+    /** 训练动作可用性（主题详情与场景准备弹窗共用同一判定，避免两处口径漂移） */
+    private StudentThemeDetailResp.Action trainingAction(ActThemeSettings settings,
+                                                         boolean startable, String stopReason) {
+        boolean trainingOn = Objects.equals(settings.getTrainingModeEnabled(), 1);
+        return StudentThemeDetailResp.Action.of(
+                trainingOn && startable,
+                !trainingOn ? "该主题未开启训练模式" : stopReason);
+    }
+
+    /** 考核动作可用性（含混合模式解锁门槛，同 themeDetail 原口径） */
+    private StudentThemeDetailResp.Action examAction(ActThemeSettings settings,
+                                                      boolean startable, String stopReason,
+                                                      String userId, String themeId) {
+        if (!Objects.equals(settings.getAssessmentModeEnabled(), 1)) {
+            return StudentThemeDetailResp.Action.of(false, "该主题未开启考核模式");
+        }
+        if (!startable) {
+            return StudentThemeDetailResp.Action.of(false, stopReason);
+        }
+        Integer minTrain = settings.getMinTrainCountToUnlockExam();
+        boolean unlocked = quotaService.examUnlocked(userId, themeId, minTrain == null ? 0 : minTrain);
+        return StudentThemeDetailResp.Action.of(unlocked,
+                "完成 " + (minTrain == null ? 0 : minTrain) + " 次训练后解锁考核");
+    }
+
+    /**
+     * 主题详情 Action → 场景准备 Action。
+     * <p>
+     * 两个 DTO 的 Action 结构完全相同（enabled + reason），但 Java 里是不同的嵌套类型；
+     * 这里做一次显式转换而不是抽公共类，是因为响应 DTO 由前端契约决定、不宜为了复用改结构。
+     */
+    private StudentScenarioDetailResp.Action toScenarioAction(StudentThemeDetailResp.Action source) {
+        if (source == null) {
+            return null;
+        }
+        return StudentScenarioDetailResp.Action.of(source.isEnabled(), source.getReason());
     }
 
     /** 计划期/主题状态的准入原因；null 表示可以开始新 attempt（与 preflight 同口径） */
