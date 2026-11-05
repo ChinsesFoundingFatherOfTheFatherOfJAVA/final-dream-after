@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -300,6 +301,73 @@ class ConfirmServiceImplTest {
         assertEquals("draft", script.getStatus());
         assertEquals("王敏", script.getActorName());
         assertEquals("运营主管", script.getActorPosition());
+    }
+
+    /**
+     * 案例 userRole 三字段（2026-11-05）：case-gen v2 给了就落库。
+     * 这里直接改 ARTIFACT_JSON 里的第一条案例，验证三列都写进了实体。
+     */
+    @Test
+    void 确认成功_案例带userRole时三列落库() {
+        stubSession();
+        stubTheme();
+        stubUnitInsertWithIds();
+        String content = ARTIFACT_JSON.replace(
+                "\"scriptOpening\":\"（拍桌）你们到底什么时候能处理？\"",
+                "\"scriptOpening\":\"（拍桌）你们到底什么时候能处理？\","
+                        + "\"userRoleName\":\"陈默\",\"userRolePosition\":\"订单专员\","
+                        + "\"userRoleBackground\":\"负责该客户全部订单录入与发货协调\"");
+        ActAiArtifact artifact = new ActAiArtifact();
+        artifact.setId("art-7");
+        artifact.setVersionNo(7);
+        artifact.setStatus(ArtifactServiceImpl.STATUS_WORKING);
+        artifact.setContent(content);
+        artifact.setContentHash("other");
+        when(artifactService.get("art-7", 7)).thenReturn(artifact);
+        when(artifactMapper.update(any(), any())).thenReturn(1);
+        when(unitMapper.selectList(any())).thenReturn(new ArrayList<>());
+        when(materialMapper.selectList(any())).thenReturn(new ArrayList<>());
+
+        confirmService.confirm("sess-1", "art-7", 7);
+
+        ArgumentCaptor<ActCaseScript> caseCaptor = ArgumentCaptor.forClass(ActCaseScript.class);
+        verify(caseScriptMapper).insert(caseCaptor.capture());
+        ActCaseScript script = caseCaptor.getValue();
+        assertEquals("陈默", script.getUserRoleName());
+        assertEquals("订单专员", script.getUserRolePosition());
+        assertEquals("负责该客户全部订单录入与发货协调", script.getUserRoleBackground());
+    }
+
+    /**
+     * 老 artifact（case-gen v1）没有 userRole：三列必须是 null。
+     * <b>尤其 userRoleBackground 不能被 scriptBackground 顶替</b>——那是场景背景，不是学员小传。
+     */
+    @Test
+    void 确认成功_案例无userRole时三列为空且不拿scriptBackground顶替() {
+        stubSession();
+        stubTheme();
+        stubUnitInsertWithIds();
+        ActAiArtifact artifact = new ActAiArtifact();
+        artifact.setId("art-8");
+        artifact.setVersionNo(8);
+        artifact.setStatus(ArtifactServiceImpl.STATUS_WORKING);
+        artifact.setContent(ARTIFACT_JSON);
+        artifact.setContentHash("other");
+        when(artifactService.get("art-8", 8)).thenReturn(artifact);
+        when(artifactMapper.update(any(), any())).thenReturn(1);
+        when(unitMapper.selectList(any())).thenReturn(new ArrayList<>());
+        when(materialMapper.selectList(any())).thenReturn(new ArrayList<>());
+
+        confirmService.confirm("sess-1", "art-8", 8);
+
+        ArgumentCaptor<ActCaseScript> caseCaptor = ArgumentCaptor.forClass(ActCaseScript.class);
+        verify(caseScriptMapper).insert(caseCaptor.capture());
+        ActCaseScript script = caseCaptor.getValue();
+        assertNull(script.getUserRoleName());
+        assertNull(script.getUserRolePosition());
+        assertNull(script.getUserRoleBackground());
+        // 反面证据：scriptBackground 确实有值，但没有被塞进 userRoleBackground
+        assertEquals("背景", script.getScriptBackground());
     }
 
     @Test

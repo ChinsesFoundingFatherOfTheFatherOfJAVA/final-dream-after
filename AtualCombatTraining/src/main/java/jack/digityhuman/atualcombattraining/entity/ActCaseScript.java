@@ -8,10 +8,14 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 案例剧本实体（表 act_case_script，列数=18，与 DDL 逐列对应）
+ * 案例剧本实体（表 act_case_script，列数=21，与 DDL 逐列对应）
  * <p>
  * 确认落库产物：artifact.scenarios[].cases 翻译而来，挂在场景单元行下（scenario_unit_id）。
  * status 由发布初始化流程更新：draft（待编译）→ compiled / failed。
+ * <p>
+ * userRole 三列（2026-11-05 新增）来自 case-gen v2 的可选字段：案例生成的 prompt 会要求模型
+ * 给出「学员角色」，但字段是可选的（先测缺失率），所以三列全部可空，取不到就留 null，
+ * 禁止用 scriptBackground/场景旁白顶替 userRoleBackground。
  */
 @Data
 @TableName("act_case_script")
@@ -35,6 +39,17 @@ public class ActCaseScript {
     private String actorCommunicationStyle;
     private String scriptBackground;
     private String scriptOpening;
+    /**
+     * 学员角色名（case-gen v2 可选字段 userRoleName；模型没给就是 null）
+     * <p>
+     * 为什么可空：案例 prompt 只是「尽量给」，本期先测缺失率、不强制；写空串会让下游
+     * 分不清"没生成"和"生成了空"，所以取不到一律 null。
+     */
+    private String userRoleName;
+    /** 学员岗位（userRolePosition）。映射到 AttemptResp.userRoleIdentity（身份摘要口径） */
+    private String userRolePosition;
+    /** 学员人物背景（userRoleBackground）。禁止用 scriptBackground 顶替 */
+    private String userRoleBackground;
     /** draft / compiled / failed */
     private String status;
     /** 编译失败原因（重试仍失败时写入） */

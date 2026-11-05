@@ -106,7 +106,12 @@ public class AssistantToolServiceImpl implements AssistantToolService {
         if (themeId == null || themeId.isBlank()) {
             ActTheme theme = buildDraftTheme(topic, description, resolvedSessionId, now);
             themeMapper.insert(theme);
-            versionMapper.insert(buildInitialVersion(theme.getId(), topic, description, now));
+            // 契约 03 §4.2：未发布主题的工作内容是隐藏 v0，首次发布时从它复制出公开 v1。
+            // 2026-11-05 修：新建主题曾只插 v1 行，导致首次发布 requireVersion(working=0) 直接抛
+            // 「内容版本不存在 version=0」，发布永远失败（端到端验证发现，与 userRole 无关）。
+            // 两行都插：v0 供 ContentVersionServiceImpl#firstPublish 取源，v1 供设置页直读。
+            versionMapper.insert(buildInitialVersion(theme.getId(), 0, topic, description, now));
+            versionMapper.insert(buildInitialVersion(theme.getId(), 1, topic, description, now));
             themeId = theme.getId();
             sessionService.bindTheme(resolvedSessionId, themeId);
             created = true;
@@ -243,11 +248,12 @@ public class AssistantToolServiceImpl implements AssistantToolService {
         return theme;
     }
 
-    /** 构造版本 1 行（默认设置，主题设置页可直接读取） */
-    private ActThemeVersion buildInitialVersion(String themeId, String topic, String description, LocalDateTime now) {
+    /** 构造版本行（默认设置，主题设置页可直接读取）；versionNo=0 是隐藏工作快照，1 是 legacy 可见行 */
+    private ActThemeVersion buildInitialVersion(String themeId, int versionNo, String topic,
+                                                String description, LocalDateTime now) {
         ActThemeVersion version = new ActThemeVersion();
         version.setThemeId(themeId);
-        version.setVersionNo(1);
+        version.setVersionNo(versionNo);
         version.setThemeName(topic);
         version.setThemeDesc(description);
         version.setOwnerUserId(OWNER_USER_ID);

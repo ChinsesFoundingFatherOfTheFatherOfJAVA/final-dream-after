@@ -246,7 +246,8 @@ public class StudentAttemptController {
      * 运行态只读上下文（契约 01 §F11 背景介绍侧栏）：全部取自 attempt 冻结快照，不读当前版本。
      * <p>
      * 脚本快照有两种形态：案例练习是 AI 案例正文的扁平字段（actorName / scriptBackground /
-     * actorPersonality），随机与自定义练习是 drill-script-v1（scene / actor / userRole / goals）。
+     * actorPersonality / userRoleName / userRolePosition / userRoleBackground，后三个是 case-gen v2
+     * 的可选字段），随机与自定义练习是 drill-script-v1（scene / actor / userRole / goals）。
      * 两种都要读，缺什么就不下发什么，页面据此显示空态而不是造假内容。
      */
     private void fillRuntimeContext(AttemptResp resp, ActPracticeAttempt attempt) {
@@ -298,8 +299,9 @@ public class StudentAttemptController {
         resp.setActorName(firstText(script, script.path("actor").path("name"), "actorName"));
         resp.setActorDesc(actorDesc(script));
         resp.setOpeningLine(firstText(script, script.path("scene").path("openingLine"), "scriptOpening"));
-        resp.setUserRoleName(firstText(script, script.path("userRole").path("name"), null));
-        resp.setUserRoleDesc(firstText(script, script.path("userRole").path("identity"), null));
+        resp.setUserRoleName(firstText(script, script.path("userRole").path("name"), "userRoleName"));
+        // userRoleDesc 是旧口径（身份摘要），新页面用 userRoleIdentity；两处都跟上案例侧的 userRolePosition
+        resp.setUserRoleDesc(firstText(script, script.path("userRole").path("identity"), "userRolePosition"));
         fillRoleDetails(resp, script);
         if (resp.getBusinessGoal() == null) {
             resp.setBusinessGoal(firstText(script, script.path("goals").path("practiceGoal"), null));
@@ -323,30 +325,36 @@ public class StudentAttemptController {
     }
 
     /**
-     * 角色细分字段（R6-1 背景介绍细化，2026-11-04 新增）。
+     * 角色细分字段（R6-1 背景介绍细化，2026-11-04 新增；2026-11-05 补案例侧 userRole）。
      * <p>
      * 两种快照形态各读各的，<b>字段不互相顶替</b>：
      * <ul>
      *   <li><b>random/custom</b>（drill-script-v1）：userRole 有 name/identity/ageRange/background，
      *       actor 有 name/identity/ageRange/personality[]/communicationStyle + 隐式目标/隐藏事实；</li>
-     *   <li><b>case</b>（案例正文扁平字段）：只有 actor 侧 10 个字段
-     *       （actorName/actorPosition/actorCompany/actorType/actorPersonality/actorCommunicationStyle/
-     *       scriptBackground/scriptOpening），<b>完全没有 userRole（学员角色）数据</b>——
-     *       case-gen 的 schema 就没有这个字段。所以案例练习的 userRole 系列只能为 null，
-     *       前端回落到「学员」兜底，这是数据源缺失而不是实现漏读。</li>
+     *   <li><b>case</b>（案例正文扁平字段）：actor 侧十个字段 + <b>case-gen v2 新增的三个可选字段</b>
+     *       userRoleName / userRolePosition / userRoleBackground。它们<b>可选</b>：模型没给就是 null，
+     *       前端回落「学员」兜底，不能因此报错或编造。</li>
      * </ul>
-     * 取不到一律留 null，不用 businessBackground/场景旁白顶替人物背景（否则会把场景描述当人物小传）。
+     * 案例侧口径映射：userRolePosition → userRoleIdentity（「身份摘要」是给页面副标题用的，
+     * 岗位正是学员读得懂的身份）；userRoleAge 案例侧无数据源，保持 null（不拿岗位顶）。
+     * <p>
+     * 取不到一律留 null，<b>不用 businessBackground/scriptBackground/场景旁白顶替 userRoleBackground</b>
+     * —— 那段已经进了 sceneNarration，顶替会让同一段场景描述变成两处「人物小传」。
      */
     private void fillRoleDetails(AttemptResp resp, ObjectNode script) {
         // ---- 我的角色 ----
         if (resp.getUserRoleIdentity() == null) {
-            resp.setUserRoleIdentity(firstText(script, script.path("userRole").path("identity"), null));
+            // drill-script-v1 用 userRole.identity；案例侧用 userRolePosition（岗位即身份摘要）
+            resp.setUserRoleIdentity(firstText(script,
+                    script.path("userRole").path("identity"), "userRolePosition"));
         }
         if (resp.getUserRoleAge() == null) {
             resp.setUserRoleAge(firstText(script, script.path("userRole").path("ageRange"), null));
         }
         if (resp.getUserRoleBackground() == null) {
-            resp.setUserRoleBackground(firstText(script, script.path("userRole").path("background"), null));
+            // 案例侧取 userRoleBackground；绝不用 scriptBackground（它就是 sceneNarration 的来源）
+            resp.setUserRoleBackground(firstText(script, script.path("userRole").path("background"),
+                    "userRoleBackground"));
         }
 
         // ---- AI 演员 ----

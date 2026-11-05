@@ -421,6 +421,11 @@ public class ContentVersionServiceImpl implements ContentVersionService {
         copy.setActorCommunicationStyle(source.getActorCommunicationStyle());
         copy.setScriptBackground(source.getScriptBackground());
         copy.setScriptOpening(source.getScriptOpening());
+        // userRole 三列随行复制（2026-11-05）：升版不能把学员角色弄丢，否则新版本案例
+        // 只剩 actor 侧字段、发布快照与运行时投影都读不到 userRole
+        copy.setUserRoleName(source.getUserRoleName());
+        copy.setUserRolePosition(source.getUserRolePosition());
+        copy.setUserRoleBackground(source.getUserRoleBackground());
         return copy;
     }
 

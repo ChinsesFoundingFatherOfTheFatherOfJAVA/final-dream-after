@@ -45,8 +45,8 @@ import static org.mockito.Mockito.when;
  * 锁三件事：
  * <ol>
  *   <li><b>随机/自定义</b>：drill-script-v1 的 userRole/actor 细分字段能读出来（身份/年龄/人物背景/性格）；</li>
- *   <li><b>案例</b>：只能读到 actor 侧（actorPosition→actorIdentity、actorCompany、actorPersonality），
- *       <b>userRole 系列必须为 null</b>——case-gen schema 里根本没有学员角色数据，不造假；</li>
+ *   <li><b>案例</b>：actor 侧总能读（actorPosition→actorIdentity、actorCompany、actorPersonality）；
+ *       userRole 三字段随 case-gen v2 可选字段（2026-11-05）——有就投影、没有就 null，不造假；</li>
  *   <li><b>聊天记录接口</b>：按 seq 升序返回，coach 单独标记，越权拒绝。</li>
  * </ol>
  */
@@ -115,7 +115,7 @@ class StudentAttemptRoleAndMessagesTest {
              "productProfileKeys":[],"generatedAt":"2026-10-30 10:00:00"}
             """;
 
-    /** 案例练习快照：case-gen 的扁平字段，只有 actor 侧，没有 userRole */
+    /** 案例练习快照：case-gen 的扁平字段，只有 actor 侧，没有 userRole（老 v1 案例） */
     private static final String CASE_SCRIPT = """
             {"scriptName":"01：首次拜访-价格异议","difficulty":"2",
              "actorName":"王总","actorPosition":"企业中层管理者","actorCompany":"成套智联",
@@ -123,6 +123,18 @@ class StudentAttemptRoleAndMessagesTest {
              "actorCommunicationStyle":"先说结论，再要数据",
              "scriptBackground":"客户刚结束生产例会，只留给你 15 分钟。",
              "scriptOpening":"你们这个平台到底能给我们降多少成本？先给个数字。"}
+            """;
+
+    /** 案例练习快照（case-gen v2，2026-11-05）：多了三个可选的 userRole 字段 */
+    private static final String CASE_SCRIPT_WITH_USER_ROLE = """
+            {"scriptName":"01：首次拜访-价格异议","difficulty":"2",
+             "actorName":"王总","actorPosition":"企业中层管理者","actorCompany":"成套智联",
+             "actorType":"决策者","actorPersonality":"严谨务实，重视数据",
+             "actorCommunicationStyle":"先说结论，再要数据",
+             "scriptBackground":"客户刚结束生产例会，只留给你 15 分钟。",
+             "scriptOpening":"你们这个平台到底能给我们降多少成本？先给个数字。",
+             "userRoleName":"陈默","userRolePosition":"大客户销售",
+             "userRoleBackground":"入职两年的销售，背着本季度回款指标"}
             """;
 
     private ActPracticeAttempt attempt(String practiceType, String userId, String scriptJson) {
@@ -218,11 +230,11 @@ class StudentAttemptRoleAndMessagesTest {
         assertEquals("让客户认可方案的降本价值", resp.getBusinessGoal());
     }
 
-    // ------------------------------------------------------------------ 案例：只有 actor 侧
+    // ------------------------------------------------------------------ 案例：actor 侧
 
     /**
-     * 案例练习：actor 侧字段能读到，<b>userRole 系列全为 null</b>
-     * ——case-gen schema 只有 10 个 actor 字段，没有任何学员角色数据源。
+     * 案例练习（老 v1 快照）：actor 侧字段能读到，<b>userRole 系列全为 null</b>
+     * ——v1 的案例 JSON 里没有学员角色字段，这就是"数据源确实缺失"的准确表达。
      */
     @Test
     void 详情_案例练习_actor侧可读且userRole为空() {
@@ -241,11 +253,59 @@ class StudentAttemptRoleAndMessagesTest {
         assertNotNull(resp.getSceneNarration());
         assertNull(resp.getActorBackground());
 
-        // 关键：案例侧没有 userRole 数据源，四个字段必须全 null，前端回落「学员」兜底
+        // 关键：v1 案例快照没有 userRole 数据源，四个字段必须全 null，前端回落「学员」兜底
         assertNull(resp.getUserRoleName());
         assertNull(resp.getUserRoleIdentity());
         assertNull(resp.getUserRoleAge());
         assertNull(resp.getUserRoleBackground());
+    }
+
+    /**
+     * 案例练习（case-gen v2 快照，2026-11-05）：三个可选字段有值时能投影出来。
+     * 口径：userRolePosition → userRoleIdentity（「身份摘要」用岗位最直观）；
+     * userRoleAge 案例侧仍无数据源 → null（不拿岗位顶）。
+     */
+    @Test
+    void 详情_案例练习_有userRole时三字段非空() {
+        stubOwned(attempt("case", USER_ID, CASE_SCRIPT_WITH_USER_ROLE));
+
+        AttemptResp resp = controller().detail(ATTEMPT_ID, "Bearer t").getData();
+
+        assertEquals("陈默", resp.getUserRoleName());
+        assertEquals("大客户销售", resp.getUserRoleIdentity());
+        assertEquals("入职两年的销售，背着本季度回款指标", resp.getUserRoleBackground());
+        // 案例侧没有年龄段数据源，不许编造、也不许用岗位顶
+        assertNull(resp.getUserRoleAge());
+        // 旧口径 userRoleDesc 与 userRoleIdentity 同源，避免新老页面出现两套说法
+        assertEquals("大客户销售", resp.getUserRoleDesc());
+        // AI 演员侧不受影响
+        assertEquals("王总", resp.getActorName());
+        assertEquals("企业中层管理者", resp.getActorIdentity());
+    }
+
+    /**
+     * 案例 v2 快照有 userRoleName 但 background 只有 scriptBackground：
+     * userRoleBackground 必须为 null，不能被场景背景顶替（t11 硬约束）。
+     */
+    @Test
+    void 详情_案例练习_学员背景不被场景背景顶替() {
+        String onlyName = """
+                {"scriptName":"01：首次拜访-价格异议","difficulty":"2",
+                 "actorName":"王总","actorPosition":"企业中层管理者",
+                 "scriptBackground":"客户刚结束生产例会，只留给你 15 分钟。",
+                 "scriptOpening":"你们这个平台到底能给我们降多少成本？先给个数字。",
+                 "userRoleName":"陈默"}
+                """;
+        stubOwned(attempt("case", USER_ID, onlyName));
+
+        AttemptResp resp = controller().detail(ATTEMPT_ID, "Bearer t").getData();
+
+        assertEquals("陈默", resp.getUserRoleName());
+        assertNull(resp.getUserRoleBackground(), "不得用 scriptBackground 顶替学员背景");
+        assertNull(resp.getUserRoleIdentity(), "没有 userRolePosition 就不给身份摘要，不拿别的凑");
+        // 场景旁白照常来自 scriptBackground（这是它该去的地方）
+        assertNotNull(resp.getSceneNarration());
+        assertTrue(resp.getSceneNarration().contains("生产例会"));
     }
 
     // ------------------------------------------------------------------ 聊天记录

@@ -231,7 +231,9 @@ public class StudentQueryController {
         // 两种都要能读，否则报告页的角色名与场景旁白会空白。
         resp.setSceneNarration(firstText(script, script.path("scene").path("narration"), "scriptBackground"));
         resp.setActorName(firstText(script, script.path("actor").path("name"), "actorName"));
-        resp.setUserRoleName(firstText(script, script.path("userRole").path("name"), null));
+        // 案例侧（case-gen v2，2026-11-05）用的是扁平键 userRoleName；没有就 null，
+        // 报告页据此回落「我」，不拿别的字段冒充说话人名
+        resp.setUserRoleName(firstText(script, script.path("userRole").path("name"), "userRoleName"));
     }
 
     /** 优先取嵌套字段（drill-script-v1），缺失时回退扁平字段（案例练习快照） */

@@ -70,6 +70,9 @@ public class ConfirmServiceImpl implements ConfirmService {
     private static final int LEN_ACTOR_COMPANY = 64;
     private static final int LEN_ACTOR_TYPE = 100;
     private static final int LEN_ACTOR_STYLE = 300;
+    /** userRole 三列列宽（2026-11-05 新增）：姓名 32 / 岗位 64 / 背景为 TEXT 不截断 */
+    private static final int LEN_USER_ROLE_NAME = 32;
+    private static final int LEN_USER_ROLE_POSITION = 64;
     private static final int LEN_MATERIAL_NAME = 200;
     private static final int LEN_FILE_TYPE = 16;
     private static final int LEN_FILE_ID = 64;
@@ -338,6 +341,14 @@ public class ConfirmServiceImpl implements ConfirmService {
                     JsonSupport.text(caseJson, "actorCommunicationStyle"), LEN_ACTOR_STYLE));
             script.setScriptBackground(JsonSupport.text(caseJson, "scriptBackground"));
             script.setScriptOpening(JsonSupport.text(caseJson, "scriptOpening"));
+            // userRole 三字段（2026-11-05）：case-gen v2 的可选字段，模型没给就留 null。
+            // 这里只做"有则落库"，绝不拿 scriptBackground/场景字段兜底——那会把场景描述
+            // 伪装成学员小传（t11 的硬约束）。写空串也不行，否则下游分不清"没生成"和"生成空"。
+            script.setUserRoleName(ArtifactSupport.truncate(
+                    JsonSupport.text(caseJson, "userRoleName"), LEN_USER_ROLE_NAME));
+            script.setUserRolePosition(ArtifactSupport.truncate(
+                    JsonSupport.text(caseJson, "userRolePosition"), LEN_USER_ROLE_POSITION));
+            script.setUserRoleBackground(JsonSupport.text(caseJson, "userRoleBackground"));
             script.setStatus("draft");
             script.setCreatedAt(now);
             script.setUpdatedAt(now);

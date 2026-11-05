@@ -57,15 +57,15 @@ public class AttemptResp {
     private String actorName;
     /** AI 演员身份与性格摘要（角色卡副标题） */
     private String actorDesc;
-    /** 我的角色名 */
+    /** 我的角色名。random/custom 取 userRole.name；case 取扁平 userRoleName（可选，可能为 null） */
     private String userRoleName;
     /** 我的角色身份摘要（已废弃口径，保留兼容；新页面用 userRoleIdentity） */
     private String userRoleDesc;
-    /** 我的角色身份。random/custom 取脚本 userRole.identity；case 无此数据源（见类注释） */
+    /** 我的角色身份。random/custom 取 userRole.identity；case 取 userRolePosition（岗位即身份摘要） */
     private String userRoleIdentity;
-    /** 我的角色年龄段（脚本 userRole.ageRange；case 无） */
+    /** 我的角色年龄段（脚本 userRole.ageRange；case 无此数据源，不用岗位顶替） */
     private String userRoleAge;
-    /** 我的人物背景长文（脚本 userRole.background；case 无）。不回退到业务背景，避免张冠李戴 */
+    /** 我的人物背景长文（脚本 userRole.background；case 取 userRoleBackground）。不回退到业务背景/场景旁白 */
     private String userRoleBackground;
     /** AI 演员身份。case 取 actorPosition；random/custom 取 actor.identity */
     private String actorIdentity;

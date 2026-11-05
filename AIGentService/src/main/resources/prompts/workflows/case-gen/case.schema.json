@@ -30,6 +30,24 @@
     },
     "scriptOpening": {
       "type": "string"
+    },
+    "userRoleBackground": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "userRoleName": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "userRolePosition": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [

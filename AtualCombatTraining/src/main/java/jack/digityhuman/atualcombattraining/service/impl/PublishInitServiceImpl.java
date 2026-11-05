@@ -285,6 +285,7 @@ public class PublishInitServiceImpl implements PublishInitService {
         if (payload == null) {
             throw new BizException("已确认内容里找不到该案例：" + caseScript.getScriptName());
         }
+        carryUserRole(payload, caseScript);
 
         // 幂等覆盖：同一案例重复发布只保留一条产物
         drillScriptMapper.delete(new LambdaQueryWrapper<ActDrillScript>()
@@ -297,6 +298,35 @@ public class PublishInitServiceImpl implements PublishInitService {
         drill.setCompiledPayload(JsonSupport.toJson(payload));
         drill.setCompiledAt(LocalDateTime.now());
         drillScriptMapper.insert(drill);
+    }
+
+    /**
+     * 把 userRole 三字段补进发布快照（2026-11-05）。
+     * <p>
+     * 快照来自已确认 artifact 的原 JSON。老 artifact（case-gen v1 生成的）没有 userRole；
+     * 新 artifact 有则已在 payload 里，无需再补。但确认落库（{@code ConfirmServiceImpl#insertScenarioCases}）
+     * 会把三字段落到 act_case_script 列——那两个来源哪个有就用哪个，避免"案例行有、快照没有"
+     * 导致运行时读到 null。
+     * <p>
+     * 只读取、不造值：两边都没有就保持 payload 原样（不放空串、不拿 scriptBackground 顶替）。
+     * <p>
+     * 包可见（非 private）只为让单测直接喂 payload 断言三种分支，不对外暴露。
+     */
+    void carryUserRole(ObjectNode payload, ActCaseScript caseScript) {
+        putIfAbsentText(payload, "userRoleName", caseScript.getUserRoleName());
+        putIfAbsentText(payload, "userRolePosition", caseScript.getUserRolePosition());
+        putIfAbsentText(payload, "userRoleBackground", caseScript.getUserRoleBackground());
+    }
+
+    /** payload 缺该字段（或无值）时才用案例行的列值补；空串视同缺值 */
+    private void putIfAbsentText(ObjectNode payload, String field, String fallback) {
+        if (fallback == null || fallback.isBlank()) {
+            return;
+        }
+        String current = JsonSupport.text(payload, field);
+        if (current == null || current.isBlank()) {
+            JsonSupport.putText(payload, field, fallback);
+        }
     }
 
     /**
