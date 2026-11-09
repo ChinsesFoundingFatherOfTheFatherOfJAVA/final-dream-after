@@ -65,6 +65,10 @@ public class CaseGenTask implements WorkflowTask {
         result.putIfAbsent("actorPosition", "");
         result.putIfAbsent("actorCompany", "");
         result.putIfAbsent("actorCommunicationStyle", "");
+        // actorGender / actorAgeRange 是 v3 DSL 新增的**可选**字段（数字人头像定图依据）：
+        // 模型没给就丢掉键（不补空串、不猜），口径与 DSL code 节点的第 6/7 步一致。
+        // 不给默认值是因为下游 AvatarMappingService 会据此走降级链，猜性别比没有更糟。
+        dropBlankOptional(result, "actorGender", "actorAgeRange");
 
         try {
             Map<String, Object> output = new LinkedHashMap<>();
@@ -80,6 +84,16 @@ public class CaseGenTask implements WorkflowTask {
             Object value = result.get(field);
             if (value == null || String.valueOf(value).isBlank()) {
                 throw new IllegalArgumentException("missing fields: " + field);
+            }
+        }
+    }
+
+    /** 可选字段规整：null 或空白一律删键（保留"模型没给"这一事实，不落空串） */
+    private void dropBlankOptional(Map<String, Object> result, String... fields) {
+        for (String field : fields) {
+            Object value = result.get(field);
+            if (value == null || String.valueOf(value).isBlank()) {
+                result.remove(field);
             }
         }
     }

@@ -1,6 +1,7 @@
 package jack.digityhuman.atualcombattraining.service;
 
 import jack.digityhuman.atualcombattraining.entity.ActAiMaterial;
+import jack.digityhuman.atualcombattraining.entity.ActCaseScript;
 import jack.digityhuman.atualcombattraining.entity.ActProductProfile;
 import jack.digityhuman.atualcombattraining.entity.ActScenarioProductProfile;
 import jack.digityhuman.atualcombattraining.entity.ActScenarioUnit;
@@ -171,6 +172,26 @@ class ContentVersionProductProfileSnapshotTest {
         material.setFileType("pdf");
         material.setVisibility(1);
         return material;
+    }
+
+    /** 工作区案例行（含形象三列，2026-11-05） */
+    private ActCaseScript caseRow(String id) {
+        ActCaseScript row = new ActCaseScript();
+        row.setId(id);
+        row.setThemeId(THEME_ID);
+        row.setVersionNo(0);
+        row.setScenarioUnitId("unit-v0-1");
+        row.setScriptName("01：首次拜访-价格异议");
+        row.setDifficulty(2);
+        row.setActorName("王总");
+        row.setActorPosition("企业中层管理者");
+        row.setActorGender("男");
+        row.setActorAgeRange("40-45岁");
+        row.setActorAvatarUrl("/avatar/admin-uploaded.png");
+        row.setUserRoleName("陈默");
+        row.setUserRolePosition("大客户销售");
+        row.setUserRoleBackground("入职两年的销售");
+        return row;
     }
 
     // ------------------------------------------------------------------ 首次发布
@@ -355,5 +376,44 @@ class ContentVersionProductProfileSnapshotTest {
         verify(scenarioProductProfileMapper, never()).insert(any(ActScenarioProductProfile.class));
         // 档案本身照常复制（脏数据只影响那一条关联）
         verify(productProfileMapper).insert(any(ActProductProfile.class));
+    }
+
+    // -------------------------------------------------- 案例形象三列（升版复制）
+
+    /**
+     * 升版复制案例行必须带上形象三列（2026-11-05）。
+     * <p>
+     * <b>这是刚踩过的坑</b>：{@code ContentVersionServiceImpl.copyOf} 是逐字段 setter 复制，
+     * 新增列不显式加一行就会静默丢失——新版本案例丢掉性别/年龄 → 定图降级到 L3/L4（换脸），
+     * 上传覆盖（L0）也随之失效。所以这里锁死三列必须逐字段相等。
+     */
+    @Test
+    void 升版复制案例行带上形象与属性三列() {
+        when(themeMapper.selectById(THEME_ID)).thenReturn(theme(null, 0));
+        when(versionMapper.selectOne(any())).thenReturn(version(0));
+        when(versionMapper.selectList(any())).thenReturn(List.of());
+        when(productProfileMapper.selectList(any())).thenReturn(List.of());
+        when(materialMapper.selectList(any())).thenReturn(List.of());
+        when(unitMapper.selectList(any())).thenReturn(
+                List.of(unit("unit-v1-1", 1, 1, "01：首次拜访")),
+                List.of(unit("unit-v0-1", 0, 1, "01：首次拜访")));
+        // copyCases 按版本取样：源 v0 行 → 目标 v1 行
+        when(caseScriptMapper.selectList(any())).thenReturn(List.of(caseRow("case-old-1")));
+
+        contentVersionService.firstPublish(THEME_ID, "admin");
+
+        ArgumentCaptor<ActCaseScript> captor = ArgumentCaptor.forClass(ActCaseScript.class);
+        verify(caseScriptMapper, times(1)).insert(captor.capture());
+        ActCaseScript copy = captor.getValue();
+        assertEquals(1, copy.getVersionNo());
+        assertEquals("draft", copy.getStatus(), "新版本案例必须重置为待编译");
+        // 形象三列逐字段相等（漏一列 = 新版本换脸 / 上传覆盖失效）
+        assertEquals("男", copy.getActorGender());
+        assertEquals("40-45岁", copy.getActorAgeRange());
+        assertEquals("/avatar/admin-uploaded.png", copy.getActorAvatarUrl());
+        // userRole 三列同样不能丢
+        assertEquals("陈默", copy.getUserRoleName());
+        assertEquals("大客户销售", copy.getUserRolePosition());
+        assertEquals("入职两年的销售", copy.getUserRoleBackground());
     }
 }

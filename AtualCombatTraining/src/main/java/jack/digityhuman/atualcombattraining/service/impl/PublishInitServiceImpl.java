@@ -18,6 +18,7 @@ import jack.digityhuman.atualcombattraining.mapper.ActDrillScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActScenarioUnitMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
 import jack.digityhuman.atualcombattraining.service.ArtifactService;
+import jack.digityhuman.atualcombattraining.service.AvatarMappingService;
 import jack.digityhuman.atualcombattraining.service.ContentVersionService;
 import jack.digityhuman.atualcombattraining.service.PublishInitService;
 import jack.digityhuman.atualcombattraining.service.RandomScriptService;
@@ -52,6 +53,8 @@ public class PublishInitServiceImpl implements PublishInitService {
     private static final int STATUS_PUBLISHING = 1;
     /** 主题状态：已发布 */
     private static final int STATUS_PUBLISHED = 3;
+    /** 主题状态：已暂停（重试完要保暂停态，不能强行放回已发布） */
+    private static final int STATUS_PAUSED = 4;
     /** 案例状态：待编译 */
     private static final String CASE_DRAFT = "draft";
     /** 案例状态：已编译 */
@@ -70,6 +73,7 @@ public class PublishInitServiceImpl implements PublishInitService {
     private final ArtifactService artifactService;
     private final ContentVersionService contentVersionService;
     private final RandomScriptService randomScriptService;
+    private final AvatarMappingService avatarMappingService;
     private final ThreadPoolTaskExecutor publishExecutor;
 
     public PublishInitServiceImpl(ActThemeMapper themeMapper,
@@ -79,6 +83,7 @@ public class PublishInitServiceImpl implements PublishInitService {
                                   ArtifactService artifactService,
                                   ContentVersionService contentVersionService,
                                   RandomScriptService randomScriptService,
+                                  AvatarMappingService avatarMappingService,
                                   @Qualifier("publishExecutor") ThreadPoolTaskExecutor publishExecutor) {
         this.themeMapper = themeMapper;
         this.caseScriptMapper = caseScriptMapper;
@@ -87,6 +92,7 @@ public class PublishInitServiceImpl implements PublishInitService {
         this.artifactService = artifactService;
         this.contentVersionService = contentVersionService;
         this.randomScriptService = randomScriptService;
+        this.avatarMappingService = avatarMappingService;
         this.publishExecutor = publishExecutor;
     }
 
@@ -232,6 +238,18 @@ public class PublishInitServiceImpl implements PublishInitService {
                 } catch (Exception e) {
                     log.error("首次发布收尾失败（重试路径）themeId={}", themeId, e);
                 }
+            } else if (failed == 0) {
+                // 已发布主题的重编译：上面把状态抢占成了"发布中(1)"，编译成功必须放回"已发布(3)"。
+                // 不补这一步的话主题会永久卡在 1：学员端一律判"未发布/不可练习"（真 bug，t4 端到端暴露）。
+                // 只有在本来就不是"已暂停(4)"时才恢复——暂停态的重试要保持暂停语义。
+                if (theme.getStatus() != STATUS_PAUSED) {
+                    themeMapper.update(null, new LambdaUpdateWrapper<ActTheme>()
+                            .eq(ActTheme::getId, themeId)
+                            .eq(ActTheme::getStatus, STATUS_PUBLISHING)
+                            .set(ActTheme::getStatus, STATUS_PUBLISHED)
+                            .set(ActTheme::getUpdatedAt, LocalDateTime.now()));
+                }
+                log.info("发布重试完成（已发布主题重编译）themeId={} version={}", themeId, versionNo);
             }
         });
         log.info("发布重试受理 themeId={} version={} 失败项={}", themeId, versionNo, caseIds.size());
@@ -286,6 +304,9 @@ public class PublishInitServiceImpl implements PublishInitService {
             throw new BizException("已确认内容里找不到该案例：" + caseScript.getScriptName());
         }
         carryUserRole(payload, caseScript);
+        // 定图（2026-11-05）：发布期算好写进 payload + 落列，运行时只读快照、零计算。
+        // 这是唯一"逐案例"的发布 hook，与 t13 的随机预生成同构。
+        String avatarUrl = resolveAvatar(payload, caseScript);
 
         // 幂等覆盖：同一案例重复发布只保留一条产物
         drillScriptMapper.delete(new LambdaQueryWrapper<ActDrillScript>()
@@ -296,8 +317,50 @@ public class PublishInitServiceImpl implements PublishInitService {
         drill.setCaseScriptId(caseScript.getId());
         drill.setScenarioUnitId(caseScript.getScenarioUnitId());
         drill.setCompiledPayload(JsonSupport.toJson(payload));
+        drill.setActorAvatarUrl(avatarUrl);
         drill.setCompiledAt(LocalDateTime.now());
         drillScriptMapper.insert(drill);
+    }
+
+    /**
+     * 发布期定图（L0→L4），返回最终 URL（可能为 null）。
+     * <p>
+     * <b>为什么在发布期算而不是运行时</b>（设计 §3.1）：
+     * 案例练习直接读发布快照、不调 LLM，发布期写入后首练自动有图；
+     * 且"重练一次"是新建 attempt 但同源快照 → 天然同图，不需要任何缓存表。
+     * <p>
+     * <b>属性来源</b>：优先脚本里已有的（v3 case-gen 会产出 actorGender/actorAgeRange），
+     * 缺失才用案例行列值补（老 artifact + 新确认落库的组合）。
+     * <b>不造假</b>：都没有就走 L3/L4，绝不按角色名猜性别；全不命中则 null，前端首字占位。
+     * <p>
+     * 包可见（非 private）让单测能直接喂 payload + 案例行断言优先级，不必伪造整条发布链路。
+     */
+    String resolveAvatar(ObjectNode payload, ActCaseScript caseScript) {
+        // 管理端上传覆盖（L0）：列值即人工指定，优先级高于任何自动映射
+        String overrideUrl = caseScript.getActorAvatarUrl();
+        AvatarMappingService.ActorProfile profile = new AvatarMappingService.ActorProfile(
+                JsonSupport.text(payload, "actorName"),
+                JsonSupport.text(payload, "actorPosition"),
+                // 脚本优先、案例行列值兜底（两边都不给才降级）
+                firstNonBlank(JsonSupport.text(payload, "actorGender"), caseScript.getActorGender()),
+                firstNonBlank(JsonSupport.text(payload, "actorAgeRange"), caseScript.getActorAgeRange()));
+        AvatarMappingService.AvatarQuery query = AvatarMappingService.query(
+                profile, overrideUrl, caseScript.getScenarioUnitId(), null);
+        AvatarMappingService.Resolved resolved = avatarMappingService.resolve(query);
+        avatarMappingService.writeAvatarUrl(payload, resolved.avatarUrl());
+        if (resolved.avatarUrl() != null) {
+            log.debug("案例定图 caseId={} 层级={} url={}", caseScript.getId(), resolved.level(),
+                    resolved.avatarUrl());
+        }
+        return resolved.avatarUrl();
+    }
+
+    /** 取第一个非空白值（脚本优先、列值兜底）；都空返回 null，不造空串 */
+    private static String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) {
+            return first;
+        }
+        return second == null || second.isBlank() ? null : second;
     }
 
     /**

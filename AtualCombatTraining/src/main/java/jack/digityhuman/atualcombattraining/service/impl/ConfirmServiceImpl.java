@@ -73,6 +73,11 @@ public class ConfirmServiceImpl implements ConfirmService {
     /** userRole 三列列宽（2026-11-05 新增）：姓名 32 / 岗位 64 / 背景为 TEXT 不截断 */
     private static final int LEN_USER_ROLE_NAME = 32;
     private static final int LEN_USER_ROLE_POSITION = 64;
+    /** 演员形象属性两列列宽（2026-11-05 追加）：性别 CHAR(1) 但模型可能给「男/女」→ 按 1 字存 */
+    private static final int LEN_ACTOR_GENDER = 1;
+    private static final int LEN_ACTOR_AGE_RANGE = 16;
+    /** 形象 URL 列宽（VARCHAR(512)，与契约 05 §9.3 对齐） */
+    private static final int LEN_ACTOR_AVATAR_URL = 512;
     private static final int LEN_MATERIAL_NAME = 200;
     private static final int LEN_FILE_TYPE = 16;
     private static final int LEN_FILE_ID = 64;
@@ -349,6 +354,18 @@ public class ConfirmServiceImpl implements ConfirmService {
             script.setUserRolePosition(ArtifactSupport.truncate(
                     JsonSupport.text(caseJson, "userRolePosition"), LEN_USER_ROLE_POSITION));
             script.setUserRoleBackground(JsonSupport.text(caseJson, "userRoleBackground"));
+            // 形象属性两列（2026-11-05 追加，case-gen v3 的可选字段）：只落"有则"，缺失留 null。
+            // 不在这里定图——定图发生在发布期 compileOne，因为管理端上传覆盖（L0）要到那时才有值。
+            script.setActorGender(ArtifactSupport.truncate(
+                    JsonSupport.text(caseJson, "actorGender"), LEN_ACTOR_GENDER));
+            script.setActorAgeRange(ArtifactSupport.truncate(
+                    JsonSupport.text(caseJson, "actorAgeRange"), LEN_ACTOR_AGE_RANGE));
+            // 形象 URL（2026-11-05，L0 上传覆盖写入侧）：管理端「换形象」同时写 artifact 与这一列，
+            // 本处<b>必须把 artifact 的值读回来</b>——因为这里是"先删后插"重建行，
+            // 不读就等于把刚上传的图删掉，表现为「管理端换完图、点一次确认图就没了」。
+            // 写入侧见 CaseAvatarServiceImpl（它同样写两处，artifact 是权威源）。
+            script.setActorAvatarUrl(ArtifactSupport.truncate(
+                    JsonSupport.text(caseJson, "actorAvatarUrl"), LEN_ACTOR_AVATAR_URL));
             script.setStatus("draft");
             script.setCreatedAt(now);
             script.setUpdatedAt(now);

@@ -308,6 +308,72 @@ class StudentAttemptRoleAndMessagesTest {
         assertTrue(resp.getSceneNarration().contains("生产例会"));
     }
 
+    // ---------------------------------------------------- 数字人形象投影（2026-11-05）
+
+    /**
+     * drill-script-v1 快照：形象从 {@code actor.avatarUrl} 投影（发布期已固化，运行时只读）。
+     * 这条链路是随机练习的形象来源。
+     */
+    @Test
+    void 详情_随机练习_形象从actor子对象投影() {
+        String script = """
+                {"schemaVersion":"drill-script-v1","attemptId":"a1","scenarioId":"sc1",
+                 "practiceType":"random","studyMode":1,"difficulty":2,
+                 "scene":{"name":"初次拜访","narration":"周一下午。","background":"b","openingLine":"你好。"},
+                 "userRole":{"name":"李明","identity":"销售","background":"b","forbiddenBehaviors":[]},
+                 "actor":{"name":"王总","identity":"生产总监","personality":["务实"],
+                          "communicationStyle":"c","explicitGoals":[],"implicitGoals":[],
+                          "hiddenFacts":[],"behaviorPatterns":[],
+                          "avatarUrl":"/avatar/m-A3-04.webp"},
+                 "goals":{"practiceGoal":"g","behaviorGuidance":["b1","b2"],"failureSignals":[]},
+                 "evaluation":{"passScore":70,"dimensions":[
+                    {"id":"d1","name":"需求挖掘","weight":100,"description":"d"}]},
+                 "runtime":{"maxDurationSeconds":900,"maxRounds":50,"targetProgressMode":"milestones"},
+                 "productProfileKeys":[]}
+                """;
+        stubOwned(attempt("random", USER_ID, script));
+
+        AttemptResp resp = controller().detail(ATTEMPT_ID, "Bearer t").getData();
+
+        assertEquals("/avatar/m-A3-04.webp", resp.getActorAvatarUrl());
+    }
+
+    /**
+     * 案例快照：形象从扁平 {@code actorAvatarUrl} 投影（与 actorName/actorPosition 同层级）。
+     * 这条链路是案例练习的形象来源。
+     */
+    @Test
+    void 详情_案例练习_形象从扁平字段投影() {
+        String script = """
+                {"scriptName":"01：首次拜访","difficulty":"2","actorName":"王总",
+                 "actorPosition":"企业中层管理者","actorGender":"男","actorAgeRange":"40-45岁",
+                 "actorAvatarUrl":"/avatar/m-A3-01.webp",
+                 "scriptBackground":"客户刚结束生产例会。","scriptOpening":"你们能降多少成本？"}
+                """;
+        stubOwned(attempt("case", USER_ID, script));
+
+        AttemptResp resp = controller().detail(ATTEMPT_ID, "Bearer t").getData();
+
+        assertEquals("/avatar/m-A3-01.webp", resp.getActorAvatarUrl());
+    }
+
+    /**
+     * 老快照（发布期尚无定图）：{@code actorAvatarUrl} 必须为 null。
+     * <p>
+     * 不造假约束：不能拿素材池现算（那会让"重练沿用同图"依赖运行时输入），
+     * 更不能拿别的图顶替；前端用「角色名首字圆形」占位。
+     */
+    @Test
+    void 详情_老快照无形象时为null不现算() {
+        stubOwned(attempt("case", USER_ID, CASE_SCRIPT));
+
+        AttemptResp resp = controller().detail(ATTEMPT_ID, "Bearer t").getData();
+
+        assertNull(resp.getActorAvatarUrl(), "老 payload 没有 image 就留 null，不得运行时现算");
+        // 其余字段照旧
+        assertEquals("王总", resp.getActorName());
+    }
+
     // ------------------------------------------------------------------ 聊天记录
 
     /** 消息按 seq 升序返回，coach 单独标记 */

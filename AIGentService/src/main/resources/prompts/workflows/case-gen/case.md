@@ -14,6 +14,8 @@
 
 ### 2. 角色设定（学员的对话对象）
 - actorName：常见中文名
+- actorGender：该角色的性别，只能是“男”或“女”。尽量给出：它是数字人头像选图的依据，省略会让形象退化成场景默认图
+- actorAgeRange：该角色的年龄区间，格式「NN-NN岁」（如“40-45岁”）。尽量给出：必须与 actorPosition 的资历相符（“生产总监”通常 38-50 岁），禁止写“中年”“资深”这类无区间描述
 - actorPosition / actorCompany：贴合业务的职位与公司名，可用“宏达科技”类虚构名，禁止使用真实企业名
 - actorType：身份一句话
 - actorPersonality：3~5 个性格词 + 一句行为化说明
@@ -56,5 +58,6 @@
 角色动机、施压点必须来自场景的 coreConflict 与 difficulties，禁止与场景无关的冲突，禁止编造材料外事实。
 
 ## 输出（仅输出 JSON）
-{"scriptName":"…","difficulty":{{#start.difficulty#}},"actorName":"…","actorPosition":"…","actorCompany":"…","actorType":"…","actorPersonality":"…","actorCommunicationStyle":"…","scriptBackground":"…","scriptOpening":"…","userRoleName":"…","userRolePosition":"…","userRoleBackground":"…"}
+{"scriptName":"…","difficulty":{{#start.difficulty#}},"actorName":"…","actorPosition":"…","actorCompany":"…","actorType":"…","actorPersonality":"…","actorCommunicationStyle":"…","scriptBackground":"…","scriptOpening":"…","actorGender":"…","actorAgeRange":"…","userRoleName":"…","userRolePosition":"…","userRoleBackground":"…"}
 userRoleName/userRolePosition/userRoleBackground 为可选字段：能确定就填，不能确定就省略这三个键，禁止编造。
+actorGender/actorAgeRange 同样为可选字段（不设 required，先测缺失率）：能确定就填，不能确定就省略这两个键；actorGender 只能是“男”或“女”，actorAgeRange 只能是「NN-NN岁」格式，禁止编造与职位资历矛盾的年龄。

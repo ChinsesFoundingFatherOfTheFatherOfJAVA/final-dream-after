@@ -69,6 +69,18 @@ public class AttemptResp {
     private String userRoleBackground;
     /** AI 演员身份。case 取 actorPosition；random/custom 取 actor.identity */
     private String actorIdentity;
+    /**
+     * AI 演员形象 URL（数字人头像，2026-11-05 新增）。
+     * <p>
+     * 来源是发布期固化进快照的定图结果（design §3.1/§9.2）：
+     * drill-script-v1 读 {@code actor.avatarUrl}，案例正文读扁平 {@code actorAvatarUrl}。
+     * <b>可能是 null</b>（无素材/无属性时按不造假约束回退 null），前端必须用
+     * 「角色名首字圆形」占位并给 {@code <img>} 加 @error 回退，不得当成必有字段。
+     * <p>
+     * 字段名与前端 {@code AttemptResp.actorAvatarUrl} 对齐（前缀 actor 与
+     * actorName/actorIdentity/actorAge 一致），避免前端再维护第二套命名。
+     */
+    private String actorAvatarUrl;
     /** AI 演员年龄段（脚本 actor.ageRange；case 快照无此字段） */
     private String actorAge;
     /** AI 演员公司（case 取 actorCompany；random/custom 脚本无此字段） */

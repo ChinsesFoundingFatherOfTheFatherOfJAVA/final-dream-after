@@ -41,7 +41,8 @@ class PublishInitServiceImplUserRoleTest {
                 mock(ActThemeMapper.class), mock(ActCaseScriptMapper.class),
                 mock(ActDrillScriptMapper.class), mock(ActScenarioUnitMapper.class),
                 mock(ArtifactService.class), mock(ContentVersionService.class),
-                mock(RandomScriptService.class), mock(ThreadPoolTaskExecutor.class));
+                mock(RandomScriptService.class), new AvatarMappingServiceImpl(),
+                mock(ThreadPoolTaskExecutor.class));
     }
 
     private ActCaseScript caseRow(String name, String position, String background) {

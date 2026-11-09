@@ -478,4 +478,79 @@ class ConfirmServiceImplTest {
                 () -> confirmService.confirm("sess-1", null, null));
         assertTrue(error.getMessage().contains("没有可确认的内容"));
     }
+
+    // ------------------------------------------- 形象抗确认冲掉（t5 关键回归断言）
+
+    /**
+     * <b>t5 的核心回归断言：管理端换完形象、再点一次确认，图不能丢。</b>
+     * <p>
+     * 病根（本任务开工前已核实）：{@code confirm()} → {@code clearCurrentVersionRows()}
+     * → {@code caseScriptMapper.delete(整版)} 然后按 artifact 重新 insert。
+     * 如果 {@code insertScenarioCases} 不读 artifact 的 {@code actorAvatarUrl}，
+     * 这条列就会被"删了重建"成 null —— 表现为「管理端换完图，点一次确认图就没了」，
+     * 不报错、单测也测不出，只有跑一轮才发现。
+     * <p>
+     * 本用例模拟完整闭环：artifact 里已带 actorAvatarUrl（由 CaseAvatarServiceImpl 写入）
+     * → 走确认落库 → 断言重建出的案例行仍带着同一个 URL。
+     */
+    @Test
+    void 案例形象经确认落库后仍在_防先删后插冲掉() {
+        stubSession();
+        stubTheme();
+        stubUnitInsertWithIds();
+        // artifact 已被管理端写入形象（模拟 CaseAvatarServiceImpl 双写后的状态）
+        String contentWithAvatar = ARTIFACT_JSON.replace(
+                "\"scriptOpening\":\"（拍桌）你们到底什么时候能处理？\"}",
+                "\"scriptOpening\":\"（拍桌）你们到底什么时候能处理？\","
+                        + "\"actorAvatarUrl\":\"/avatar/m-A3-04.webp\"}");
+        assertTrue(contentWithAvatar.contains("actorAvatarUrl"),
+                "测试前置：替换后 artifact 必须含 actorAvatarUrl，否则本用例形同虚设");
+
+        ActAiArtifact artifact = new ActAiArtifact();
+        artifact.setId("art-avatar");
+        artifact.setVersionNo(5);
+        artifact.setStatus(ArtifactServiceImpl.STATUS_WORKING);
+        artifact.setContent(contentWithAvatar);
+        artifact.setContentHash("other");
+        when(artifactService.get("art-avatar", 5)).thenReturn(artifact);
+        when(artifactMapper.update(any(), any())).thenReturn(1);
+        when(unitMapper.selectList(any())).thenReturn(new ArrayList<>());
+        when(materialMapper.selectList(any())).thenReturn(new ArrayList<>());
+
+        confirmService.confirm("sess-1", "art-avatar", 5);
+
+        ArgumentCaptor<ActCaseScript> captor = ArgumentCaptor.forClass(ActCaseScript.class);
+        verify(caseScriptMapper).insert(captor.capture());
+        // 这是本任务的核心断言：重建出来的行必须带着形象，否则图片在下次确认后消失
+        assertEquals("/avatar/m-A3-04.webp", captor.getValue().getActorAvatarUrl(),
+                "确认落库（先删后插）必须从 artifact 读回 actorAvatarUrl，否则上传的图会被冲掉");
+    }
+
+    /**
+     * 对照组：artifact 没有 actorAvatarUrl（还没人上传过）时，重建出的行必须是 null。
+     * 锁住"不造假、不乱填默认图"这条口径——自动定图是发布期的事，不是确认落库的事。
+     */
+    @Test
+    void 未上传形象时确认落库后列为null() {
+        stubSession();
+        stubTheme();
+        stubUnitInsertWithIds();
+        ActAiArtifact artifact = new ActAiArtifact();
+        artifact.setId("art-no-avatar");
+        artifact.setVersionNo(6);
+        artifact.setStatus(ArtifactServiceImpl.STATUS_WORKING);
+        artifact.setContent(ARTIFACT_JSON);
+        artifact.setContentHash("other");
+        when(artifactService.get("art-no-avatar", 6)).thenReturn(artifact);
+        when(artifactMapper.update(any(), any())).thenReturn(1);
+        when(unitMapper.selectList(any())).thenReturn(new ArrayList<>());
+        when(materialMapper.selectList(any())).thenReturn(new ArrayList<>());
+
+        confirmService.confirm("sess-1", "art-no-avatar", 6);
+
+        ArgumentCaptor<ActCaseScript> captor = ArgumentCaptor.forClass(ActCaseScript.class);
+        verify(caseScriptMapper).insert(captor.capture());
+        assertNull(captor.getValue().getActorAvatarUrl(),
+                "没人上传过就不该有值；自动定图发生在发布期，确认落库不得现算");
+    }
 }

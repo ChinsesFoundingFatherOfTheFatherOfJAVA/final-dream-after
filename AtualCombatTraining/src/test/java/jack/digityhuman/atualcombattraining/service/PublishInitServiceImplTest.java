@@ -3,7 +3,10 @@ package jack.digityhuman.atualcombattraining.service;
 import jack.digityhuman.common.api.BizException;
 import jack.digityhuman.atualcombattraining.dto.resp.PublishResp;
 import jack.digityhuman.atualcombattraining.dto.resp.ScriptProgressResp;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import jack.digityhuman.atualcombattraining.common.JsonSupport;
+import jack.digityhuman.atualcombattraining.entity.ActDrillScript;
 import jack.digityhuman.atualcombattraining.entity.ActAiArtifact;
 import jack.digityhuman.atualcombattraining.entity.ActCaseScript;
 import jack.digityhuman.atualcombattraining.entity.ActScenarioUnit;
@@ -12,11 +15,13 @@ import jack.digityhuman.atualcombattraining.mapper.ActCaseScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActDrillScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActScenarioUnitMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActThemeMapper;
+import jack.digityhuman.atualcombattraining.service.AvatarMappingService;
 import jack.digityhuman.atualcombattraining.service.impl.PublishInitServiceImpl;
 import jack.digityhuman.atualcombattraining.support.MybatisTestSupport;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -29,8 +34,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -56,6 +65,9 @@ class PublishInitServiceImplTest {
     private ContentVersionService contentVersionService;
     @Mock
     private ThreadPoolTaskExecutor publishExecutor;
+    /** t2 起 PublishInitServiceImpl 依赖定图服务；@InjectMocks 不会自动造实现，必须显式给 */
+    @Mock
+    private AvatarMappingService avatarMappingService;
 
     @InjectMocks
     private PublishInitServiceImpl publishInitService;
@@ -269,4 +281,76 @@ class PublishInitServiceImplTest {
         BizException error = assertThrows(BizException.class, () -> publishInitService.scriptProgress("missing"));
         assertTrue(error.getMessage().contains("主题不存在"));
     }
+
+    /**
+     * <b>已发布主题重试成功后必须恢复「已发布(3)」</b>（2026-11-05 t4 端到端暴露的真 bug）。
+     * <p>
+     * 病根：{@code retry()} 先把 status 抢占成「发布中(1)」，异步编译成功后只处理
+     * 「首次发布」分支（{@code publishedVersionNo == null}）。已发布主题没有对应收尾，
+     * 于是永久卡在 1 —— 学员端一律判「主题当前不可练习（已暂停或已结束）」，
+     * 表现为「重试一次发布，主题就再也进不去」。
+     * <p>
+     * 本用例直接跑同步编排：把 executor 换成同步执行，断言编译成功后状态被写回 3。
+     */
+    @Test
+    void 重试_已发布主题成功后恢复已发布状态() {
+        // 已发布主题（publishedVersionNo=1），且当前被抢占成「发布中(1)」
+        when(themeMapper.selectById("theme-1")).thenReturn(theme(1, 1));
+        List<ActCaseScript> failed = new ArrayList<>();
+        // scriptName/unitId 必须给：compileOne → confirmedCase 里调 scriptName.equals(...)，
+        // 为 null 时 NPE 会被 compileWithRetry 吞成"编译失败"，就测不到成功收尾分支
+        ActCaseScript failedRow = caseScript("c3", "failed", "unit-1");
+        failedRow.setScriptName("高压催单");
+        failed.add(failedRow);
+        when(caseScriptMapper.selectList(any())).thenReturn(failed);
+        // 抢占成功
+        when(themeMapper.update(any(), any())).thenReturn(1);
+        // 编译成功：compileOne 能取到案例、取到 payload（artifact 里有同名案例）
+        when(caseScriptMapper.selectById("c3")).thenReturn(failedRow);
+        ActScenarioUnit unit = new ActScenarioUnit();
+        unit.setId("unit-1");
+        unit.setUnitName("01：首次拜访");
+        when(unitMapper.selectById("unit-1")).thenReturn(unit);
+        ObjectNode payload = JsonSupport.obj("""
+                {"scriptName":"高压催单","actorName":"王总","actorPosition":"生产总监",
+                 "actorGender":"男","actorAgeRange":"40-45岁"}
+                """);
+        ObjectNode root = JsonSupport.obj("""
+                {"scenarios":[{"name":"01：首次拜访","cases":[
+                   {"scriptName":"高压催单","actorName":"王总","actorPosition":"生产总监",
+                    "actorGender":"男","actorAgeRange":"40-45岁"}]}]}
+                """);
+        ActAiArtifact artifact = new ActAiArtifact();
+        artifact.setId("art-1");
+        artifact.setContent(JsonSupport.toJson(root));
+        when(artifactService.findLatestConfirmed("theme-1")).thenReturn(artifact);
+        when(drillScriptMapper.insert(any(ActDrillScript.class))).thenReturn(1);
+        // 定图桩：本例只关心"编译成功后的状态收尾"，图的值不重要，给一个固定 URL 即可
+        when(avatarMappingService.resolve(any())).thenReturn(
+                new AvatarMappingService.Resolved("/avatar/m-A3-01.webp",
+                        AvatarMappingService.Level.L1_EXACT));
+
+        // executor 同步执行：让异步体在本线程跑完，才能断言状态写回
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArgument(0)).run();
+            return null;
+        }).when(publishExecutor).execute(any(Runnable.class));
+
+        publishInitService.retry("theme-1");
+
+        // 关键断言：编译成功后必须有一次把 status 从 1 改回 3 的更新
+        // 关键断言：编译成功后必须有【第二次】update 把 status 改回已发布。
+        // 第一次是 retry 开头抢占成"发布中(1)"，第二次才是本 bug 修复带来的收尾。
+        // 用次数+参数值断言，而不是解析 LambdaUpdateWrapper 的 SQL 片段——后者是 MyBatis-Plus
+        // 内部格式（status=#{ew.paramNameValuePairs.MPGENVAL1}），断言它等于在测框架实现。
+        ArgumentCaptor<LambdaUpdateWrapper<ActTheme>> captor =
+                ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(themeMapper, times(2)).update(isNull(), captor.capture());
+        LambdaUpdateWrapper<ActTheme> restore = captor.getAllValues().get(1);
+        assertTrue(restore.getParamNameValuePairs().containsValue(STATUS_PUBLISHED_VALUE),
+                "第二次 update 必须把 status 写成已发布(3)，否则主题永久卡在「发布中」");
+    }
+
+    /** 已发布状态值（与实现常量一致，避免测试里写魔法数又怕写错） */
+    private static final int STATUS_PUBLISHED_VALUE = 3;
 }

@@ -380,6 +380,13 @@ public class StudentAttemptController {
         if (resp.getActorBackground() == null) {
             resp.setActorBackground(actorBackgroundOf(script));
         }
+        if (resp.getActorAvatarUrl() == null) {
+            // 形象 URL（2026-11-05 新增）：发布期已固化进快照，运行时只读不算。
+            // drill-script-v1 读 actor.avatarUrl；案例正文读扁平 actorAvatarUrl。
+            // 取不到留 null（前端首字占位），绝不拿素材池现算——那会让"重练沿用同图"依赖运行时输入。
+            resp.setActorAvatarUrl(firstText(script,
+                    script.path("actor").path("avatarUrl"), "actorAvatarUrl"));
+        }
     }
 
     /**

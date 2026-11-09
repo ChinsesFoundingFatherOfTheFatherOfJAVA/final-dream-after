@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 案例剧本实体（表 act_case_script，列数=21，与 DDL 逐列对应）
+ * 案例剧本实体（表 act_case_script，列数=24，与 DDL 逐列对应）
  * <p>
  * 确认落库产物：artifact.scenarios[].cases 翻译而来，挂在场景单元行下（scenario_unit_id）。
  * status 由发布初始化流程更新：draft（待编译）→ compiled / failed。
@@ -16,6 +16,10 @@ import java.time.LocalDateTime;
  * userRole 三列（2026-11-05 新增）来自 case-gen v2 的可选字段：案例生成的 prompt 会要求模型
  * 给出「学员角色」，但字段是可选的（先测缺失率），所以三列全部可空，取不到就留 null，
  * 禁止用 scriptBackground/场景旁白顶替 userRoleBackground。
+ * <p>
+ * 形象三列（2026-11-05 追加，case-gen v3 / 定图链路）：
+ * {@code actor_gender}、{@code actor_age_range}（可选属性，参与定图），
+ * {@code actor_avatar_url}（定图结果 + 管理端上传覆盖的落点）。
  */
 @Data
 @TableName("act_case_script")
@@ -50,6 +54,23 @@ public class ActCaseScript {
     private String userRolePosition;
     /** 学员人物背景（userRoleBackground）。禁止用 scriptBackground 顶替 */
     private String userRoleBackground;
+    /**
+     * AI 演员性别（case-gen v3 可选字段 actorGender："男"/"女"）。
+     * <p>
+     * 为什么可空：v3 把它设为可选（required 仍是原 10 项），老 artifact 必然没有；
+     * 取不到留 null 交给定图降级链（L3 猜/L4 场景默认），<b>禁止按角色名猜</b>（设计 §3.4 勘误）。
+     */
+    private String actorGender;
+    /** AI 演员年龄段（actorAgeRange，如 "40-45岁"）。与素材年龄档区间同源；可空 */
+    private String actorAgeRange;
+    /**
+     * AI 演员形象 URL（设计 §5.1 方案 B 的「双写」列）。
+     * <p>
+     * 写入优先级：管理端上传覆盖（L0，发布时原样透传） &gt; 定图服务算出的预置素材图。
+     * 学员端读的是发布快照 {@code compiled_payload} 里的同一个值，不是这一列；
+     * 列存一份是为了后台能单换图、能统计、升版复制不必回读 payload。
+     */
+    private String actorAvatarUrl;
     /** draft / compiled / failed */
     private String status;
     /** 编译失败原因（重试仍失败时写入） */

@@ -426,6 +426,12 @@ public class ContentVersionServiceImpl implements ContentVersionService {
         copy.setUserRoleName(source.getUserRoleName());
         copy.setUserRolePosition(source.getUserRolePosition());
         copy.setUserRoleBackground(source.getUserRoleBackground());
+        // 形象三列随行复制（2026-11-05 追加，同一坑）：升版漏列 → 新版本案例丢了性别/年龄，
+        // 定图只能降级到 L3/L4（形象整个换掉）。actor_avatar_url 一并复制，保证上传覆盖（L0）
+        // 在升版后仍然生效——管理端不必为每个版本重新传图。
+        copy.setActorGender(source.getActorGender());
+        copy.setActorAgeRange(source.getActorAgeRange());
+        copy.setActorAvatarUrl(source.getActorAvatarUrl());
         return copy;
     }
 

@@ -1,11 +1,23 @@
 {
   "additionalProperties": false,
   "properties": {
+    "actorAgeRange": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "actorCommunicationStyle": {
       "type": "string"
     },
     "actorCompany": {
       "type": "string"
+    },
+    "actorGender": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "actorName": {
       "type": "string"

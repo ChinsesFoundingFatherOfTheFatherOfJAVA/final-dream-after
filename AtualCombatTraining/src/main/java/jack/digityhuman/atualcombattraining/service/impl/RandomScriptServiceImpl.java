@@ -14,6 +14,7 @@ import jack.digityhuman.atualcombattraining.mapper.ActDrillScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActRandomScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActScenarioUnitMapper;
 import jack.digityhuman.atualcombattraining.service.AttemptSnapshotService;
+import jack.digityhuman.atualcombattraining.service.AvatarMappingService;
 import jack.digityhuman.atualcombattraining.service.DrillSchemas;
 import jack.digityhuman.atualcombattraining.service.RandomScriptService;
 import jack.digityhuman.atualcombattraining.service.ThemeSettingsService;
@@ -75,6 +76,7 @@ public class RandomScriptServiceImpl implements RandomScriptService {
     private final ThemeSettingsService themeSettingsService;
     private final AttemptSnapshotService snapshotService;
     private final NativeWorkflowClient nativeWorkflowClient;
+    private final AvatarMappingService avatarMappingService;
 
     @Override
     public PickResult pick(String themeId, int versionNo, String scenarioUnitId, int difficulty) {
@@ -224,7 +226,31 @@ public class RandomScriptServiceImpl implements RandomScriptService {
             throw new BizException("脚本不是合法 JSON 对象");
         }
         DrillSchemas.validateScript(root);
-        return scriptJson;
+        // 定图（2026-11-05）：随机脚本也在发布期固化形象（设计 §3.3：图挂在档内 actor 上，
+        // 不另存"档位形象"）。同一角色被多档抽到 → 哈希输入相同 → 仍是同一张图。
+        // 只有真的定到图才重新序列化；没有可用图时原样返回模型 JSON（不写空键、不改字节）。
+        return resolveAvatar(root, scenarioUnitId) == null ? scriptJson : JsonSupport.toJson(root);
+    }
+
+    /**
+     * 随机脚本定图：属性取自脚本 actor（v3 起才有 gender；没有就按降级链走），
+     * 场景 ID 用场景单元 ID（L4 场景默认图按它对同一场景恒定）。
+     * <p>
+     * 随机链路<b>没有管理端上传覆盖</b>：上传覆盖是「案例级」的人工指定（挂在 act_case_script 上），
+     * 随机档没有对应的案例行，所以这里 overrideUrl 恒为 null，直接走 L1→L4。
+     * <p>
+     * 包可见（非 private）只为让单测直接喂脚本断言写入结果，不对外暴露。
+     */
+    String resolveAvatar(ObjectNode script, String scenarioUnitId) {
+        AvatarMappingService.ActorProfile profile = avatarMappingService.readActor(script);
+        AvatarMappingService.AvatarQuery query = AvatarMappingService.query(
+                profile, null, scenarioUnitId, "random");
+        AvatarMappingService.Resolved resolved = avatarMappingService.resolve(query);
+        avatarMappingService.writeAvatarUrl(script, resolved.avatarUrl());
+        if (resolved.avatarUrl() == null) {
+            log.debug("随机脚本无可用形象 scenario={} 层级={}", scenarioUnitId, resolved.level());
+        }
+        return resolved.avatarUrl();
     }
 
     private void insertCandidate(String themeId, int versionNo, String scenarioUnitId,

@@ -11,6 +11,7 @@ import jack.digityhuman.atualcombattraining.mapper.ActCaseScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActDrillScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActRandomScriptMapper;
 import jack.digityhuman.atualcombattraining.mapper.ActScenarioUnitMapper;
+import jack.digityhuman.atualcombattraining.service.impl.AvatarMappingServiceImpl;
 import jack.digityhuman.atualcombattraining.service.impl.RandomScriptServiceImpl;
 import jack.digityhuman.atualcombattraining.support.MybatisTestSupport;
 import jack.digityhuman.common.api.BizException;
@@ -82,9 +83,11 @@ class RandomScriptServiceImplTest {
 
     private RandomScriptServiceImpl service() {
         if (service == null) {
+            // 定图用真实实现（纯函数、无外部依赖）：预生成会把 avatarUrl 写进脚本，
+            // 用 mock 会让"脚本里到底有没有图"这件事测不到
             service = new RandomScriptServiceImpl(randomScriptMapper, drillScriptMapper,
                     caseScriptMapper, unitMapper, themeSettingsService, snapshotService,
-                    nativeWorkflowClient);
+                    nativeWorkflowClient, new AvatarMappingServiceImpl());
         }
         return service;
     }
