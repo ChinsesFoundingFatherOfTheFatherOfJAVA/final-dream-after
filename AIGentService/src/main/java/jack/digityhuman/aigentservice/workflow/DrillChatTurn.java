@@ -17,12 +17,12 @@ import java.util.Map;
 /**
  * 对练的一轮生成（契约 08 §6，AG-D02 的模型部分）。
  * <p>
- * 与 workflow task 的差异：需要带最近对话作为上下文，所以自己拼 LlmRequest（system + 历史 + 本轮 query），
- * 但结构化输出仍走同一份 schema 与解析规则。
+ * 训练模式分两次调用：先教练点评，再对方台词。考核模式不调用教练。
+ * 对外仍返回同一组字段，SSE 事件顺序不变。
  * <p>
  * 两条硬约束在这里兜底（不依赖模型自觉）：
  * <ul>
- *   <li>考核模式（study_mode=2）不产出教练点评：coachReview 强制清空；</li>
+ *   <li>考核模式（study_mode=2）不调用教练，coachReview 固定空字符串；</li>
  *   <li>targetProgress 单调不降：低于当前进度时抬到当前值（契约 08 §11）。</li>
  * </ul>
  */
@@ -30,8 +30,10 @@ public class DrillChatTurn {
 
     /** 送入模型的历史消息上限（更早的靠 transcript_summary 概括） */
     private static final int MAX_HISTORY = 20;
-    private static final String SCHEMA_RESOURCE = "prompts/workflows/drill-chat/chat-output.schema.json";
-    private static final String PROMPT_RESOURCE = "prompts/workflows/drill-chat/chat.md";
+    private static final String ACTOR_PROMPT = "prompts/workflows/drill-chat/actor.md";
+    private static final String ACTOR_SCHEMA = "prompts/workflows/drill-chat/actor.schema.json";
+    private static final String COACH_PROMPT = "prompts/workflows/drill-chat/coach.md";
+    private static final String COACH_SCHEMA = "prompts/workflows/drill-chat/coach.schema.json";
 
     private final PromptProvider prompts;
     private final ObjectMapper mapper;
@@ -50,37 +52,46 @@ public class DrillChatTurn {
      */
     public Map<String, Object> turn(WorkflowContext context, LlmClient llm) {
         // 模板里引用的角色画像/行为指引由 script_json 派生：调用方只按契约传 script_json，
-        // 让模型自己去 200 字 JSON 里翻找性格与指引既容易漏、也会把上下文挤长。
+        // 让模型自己去长 JSON 里翻找性格与指引既容易漏、也会把上下文挤长。
         ensureDerivedInputs(context);
-        String systemPrompt = context.render(prompts.load(PROMPT_RESOURCE));
-        List<LlmMessage> messages = new ArrayList<>();
-        messages.add(LlmMessage.system(systemPrompt));
-        messages.addAll(historyOf(context));
-        messages.add(LlmMessage.user(String.valueOf(context.input("query"))));
-
-        LlmResponse response = llm.complete(new LlmRequest(messages, List.of(), schema()));
-        if (response == null || response.error() != null) {
-            throw new IllegalStateException(response == null
-                    ? "对练模型无响应" : response.error());
+        boolean exam = "2".equals(String.valueOf(context.input("study_mode")));
+        String coachReview = "";
+        int progress = currentProgress(context);
+        String deltaReason = "";
+        Object behaviorHits = List.of();
+        if (!exam) {
+            Map<String, Object> coach = complete(context, llm, COACH_PROMPT, COACH_SCHEMA, "教练点评");
+            coachReview = text(coach.get("coachReview"));
+            progress = clampProgress(coach.get("targetProgress"), progress);
+            deltaReason = text(coach.get("deltaReason"));
+            Object hits = coach.get("behaviorHits");
+            behaviorHits = hits instanceof List<?> ? hits : List.of();
         }
-        Map<String, Object> parsed = parse(response.content());
-
-        String reply = text(parsed.get("reply"));
+        Map<String, Object> actor = complete(context, llm, ACTOR_PROMPT, ACTOR_SCHEMA, "对练对方");
+        String reply = text(actor.get("reply"));
         if (reply.isBlank()) {
             throw new IllegalStateException("对练模型未返回台词");
         }
-        boolean exam = "2".equals(String.valueOf(context.input("study_mode")));
-        String coachReview = exam ? "" : text(parsed.get("coachReview"));
-        int progress = clampProgress(parsed.get("targetProgress"), currentProgress(context));
-        String deltaReason = text(parsed.get("deltaReason"));
-        Object behaviorHits = parsed.get("behaviorHits");
-
         return Map.of(
                 "reply", reply,
                 "coachReview", coachReview,
                 "targetProgress", progress,
                 "deltaReason", deltaReason,
-                "behaviorHits", behaviorHits instanceof List<?> ? behaviorHits : List.of());
+                "behaviorHits", behaviorHits);
+    }
+
+    private Map<String, Object> complete(WorkflowContext context, LlmClient llm,
+                                         String promptResource, String schemaResource, String who) {
+        List<LlmMessage> messages = new ArrayList<>();
+        messages.add(LlmMessage.system(context.render(prompts.load(promptResource))));
+        messages.addAll(historyOf(context));
+        messages.add(LlmMessage.user(String.valueOf(context.input("query"))));
+        LlmResponse response = llm.complete(new LlmRequest(messages, List.of(), schema(schemaResource)));
+        if (response == null || response.error() != null) {
+            throw new IllegalStateException(response == null
+                    ? who + "模型无响应" : response.error());
+        }
+        return parse(response.content());
     }
 
     /**
@@ -274,14 +285,14 @@ public class DrillChatTurn {
         return Math.min(100, Math.max(0, progress));
     }
 
-    private Map<String, Object> schema() {
+    private Map<String, Object> schema(String resource) {
         try {
             return mapper.readValue(
-                    new org.springframework.core.io.ClassPathResource(SCHEMA_RESOURCE).getInputStream(),
+                    new org.springframework.core.io.ClassPathResource(resource).getInputStream(),
                     new TypeReference<Map<String, Object>>() {
                     });
         } catch (Exception e) {
-            throw new IllegalStateException("加载对练输出 schema 失败", e);
+            throw new IllegalStateException("加载对练输出 schema 失败：" + resource, e);
         }
     }
 

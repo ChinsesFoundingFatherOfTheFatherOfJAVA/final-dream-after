@@ -34,7 +34,7 @@ public class ActPracticeAttempt {
     private Integer studyMode;
     /** case/random/custom */
     private String practiceType;
-    /** preparing/ready/in_progress/report_generating/completed/failed/cancelled */
+    /** preparing/ready/in_progress/paused/report_generating/completed/failed/cancelled（paused 仅训练模式） */
     private String status;
     /** 活动 attempt 唯一键 themeId:userId；结束后置 null */
     private String activeKey;

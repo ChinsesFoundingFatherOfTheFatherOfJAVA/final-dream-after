@@ -108,18 +108,53 @@ public class SpeechVoiceClient {
         return response;
     }
 
-    /** ST 统一 {code,message,data}：code≠0 抛业务异常 */
+    /**
+     * 解析 ST 内部接口响应。
+     *
+     * <p>两种形状都要认：{@code /internal/voice/asr} 与 {@code /internal/voice/tts} 的 Controller
+     * 直接把 Map 作为响应体返回（裸对象 {@code {audioUrl,durationMs,cached}}），
+     * 只有异常才经 GlobalExceptionHandler 包成 {@code {code,message,data}}。
+     * 早期代码只认后者，导致合成成功也被判成 code=-1 而报「语音服务执行失败」。
+     */
     private Map<String, Object> parse(HttpResponse<String> response) {
+        ObjectNode root;
         try {
-            ObjectNode root = (ObjectNode) mapper.readTree(response.body());
-            if (root.path("code").asInt(-1) != 0) {
-                throw new BizException(root.path("message").asText("语音服务执行失败"));
-            }
-            return mapper.convertValue(root.path("data"), Map.class);
-        } catch (BizException e) {
-            throw e;
+            root = (ObjectNode) mapper.readTree(response.body());
         } catch (Exception e) {
             throw new BizException("语音服务响应解析失败");
         }
+        if (root == null || root.isNull()) {
+            throw new BizException("语音服务响应为空");
+        }
+        // 只有带 code 字段才是统一响应结构；裸对象直接当 data 用
+        if (root.has("code")) {
+            if (root.path("code").asInt(-1) != 0) {
+                // 上游可能是异常结构（没有 message 字段），此时透出原始响应体，
+                // 否则学员和排查的人都只能看到一句「语音服务执行失败」，定位不到真因
+                String message = root.path("message").asText("");
+                if (message.isBlank()) {
+                    message = "语音服务执行失败：" + abbreviate(response.body());
+                }
+                throw new BizException(message);
+            }
+            return mapper.convertValue(root.path("data"), Map.class);
+        }
+        Map<String, Object> data = mapper.convertValue(root, Map.class);
+        if (data == null) {
+            throw new BizException("语音服务响应为空");
+        }
+        return data;
+    }
+
+    /** 截断上游响应体，避免把整段 HTML/堆栈塞进前端提示 */
+    private static String abbreviate(String body) {
+        if (body == null) {
+            return "空响应";
+        }
+        String text = body.strip();
+        if (text.isEmpty()) {
+            return "空响应";
+        }
+        return text.length() <= 200 ? text : text.substring(0, 200) + "…";
     }
 }

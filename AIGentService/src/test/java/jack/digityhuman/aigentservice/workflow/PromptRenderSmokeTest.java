@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * chat.md 渲染冒烟：确认模板没有残留变量、关键约束段落还在。
+ * 对练提示词渲染冒烟：确认教练和对方两份模板都没有残留变量，关键约束还在。
  * <p>
  * 换 prompt 时最容易犯的两个错：引用了没注入的变量（render 会抛错或留空）、
  * 或者整段改写时把「锚定原话 / 可执行建议 / 字数上限」这些约束删掉。
@@ -24,15 +24,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PromptRenderSmokeTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final String PROMPT = "prompts/workflows/drill-chat/chat.md";
+    private static final String COACH = "prompts/workflows/drill-chat/coach.md";
+    private static final String ACTOR = "prompts/workflows/drill-chat/actor.md";
 
     /** 只截获系统提示词，模型输出不重要 */
     private static LlmClient capture(Object[] holder) {
         return request -> {
-            holder[0] = request.messages().get(0).content();
-            return new LlmResponse("""
-                    {"reply":"请讲","coachReview":"","targetProgress":0,"deltaReason":"d","behaviorHits":[]}
-                    """, List.of(), null);
+            holder[0] = String.valueOf(holder[0]) + request.messages().get(0).content();
+            String system = request.messages().get(0).content();
+            String body = system.contains("场边教练")
+                    ? "{\"coachReview\":\"先复述顾虑\",\"targetProgress\":0,\"deltaReason\":\"d\",\"behaviorHits\":[]}"
+                    : "{\"reply\":\"请讲\"}";
+            return new LlmResponse(body, List.of(), null);
         };
     }
 
@@ -49,7 +52,7 @@ class PromptRenderSmokeTest {
 
     @Test
     void 渲染后无残留模板变量() {
-        Object[] holder = new Object[1];
+        Object[] holder = new Object[] {""};
         new DrillChatTurn(new PromptProvider(), MAPPER).turn(context(), capture(holder));
         String system = String.valueOf(holder[0]);
 
@@ -60,8 +63,8 @@ class PromptRenderSmokeTest {
     }
 
     @Test
-    void 点评四要素在提示词里() {
-        String raw = new PromptProvider().load(PROMPT);
+    void 点评四要素在教练提示词里() {
+        String raw = new PromptProvider().load(COACH);
 
         // 1. 锚定学员原话
         assertTrue(raw.contains("锚定学员本轮原话"), "缺少「锚定原话」约束");
@@ -78,8 +81,9 @@ class PromptRenderSmokeTest {
     }
 
     @Test
-    void 考核模式仍要求空点评() {
-        String raw = new PromptProvider().load(PROMPT);
-        assertTrue(raw.contains("study_mode=2（考核）时此字段输出空字符串"), "考核模式清空点评的约束被删了");
+    void 考核模式由代码跳过教练_对方提示词禁止夹带提示() {
+        String raw = new PromptProvider().load(ACTOR);
+        assertTrue(raw.contains("禁止在台词里夹带提示"), "考核模式的对方提示词不能夹带提示");
+        assertFalse(raw.contains("coachReview"), "对方提示词不应再产出教练点评");
     }
 }

@@ -68,6 +68,7 @@
       "properties": {
         "name": { "type": "string", "minLength": 1, "maxLength": 100 },
         "identity": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "gender": { "type": ["string", "null"], "enum": ["男", "女", null] },
         "ageRange": { "type": ["string", "null"] },
         "personality": {
           "type": "array",

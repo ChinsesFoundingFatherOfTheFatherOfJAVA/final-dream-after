@@ -64,6 +64,20 @@ public interface AttemptLifecycleService {
     void start(String attemptId, String userId);
 
     /**
+     * 暂停练习：in_progress → paused，记 paused_at，计时停住（契约 03 §10.2）。
+     * <p>
+     * 考核模式禁止暂停：考核是限时测评，暂停等于给学员额外思考时间。
+     * 重复暂停视为成功（幂等），不重复累加。
+     */
+    ActPracticeAttempt pause(String attemptId, String userId);
+
+    /**
+     * 继续练习：paused → in_progress，把暂停时长累加进 paused_duration_ms，
+     * 并把 deadline_at 顺延相同长度，保证「暂停期间不计时」。
+     */
+    ActPracticeAttempt resume(String attemptId, String userId);
+
+    /**
      * 结束 attempt：in_progress → report_generating；幂等。
      *
      * @param endReason timeout/manual_exit/target_reached/round_limit/screen_violation/plan_ended/system_failed

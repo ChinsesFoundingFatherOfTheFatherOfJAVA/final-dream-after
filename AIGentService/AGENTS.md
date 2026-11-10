@@ -41,7 +41,8 @@
 - P3 文本任务：`gen-scene` / `gen-outline` / `gen-script` / `speech-score` / `report-score` / `exam-gen`；
 - 文生图：`avatar-gen` 通过 ModelScope 异步接口生成，模型 `Qwen/Qwen-Image-2.1-Turbo`；
   Dify 仍可通过 provider 切回。
-- Workflow prompt/schema 从 DSL 自动提取到 `resources/prompts/workflows/`，不得手工改写；
+- Workflow prompt/schema 最初从 DSL 提取到 `resources/prompts/workflows/`。2026-11-09 起这些 md 以手工修订稿为准：角色要写清所在产品和职责，输入在输出前面，输入输出字段要写含义。不得再用 DSL 提取覆盖。改字段名或占位符前，先核对 `WorkflowContext.render` 和调用方 inputs。DSL 本身仍不改；
+- 对练一轮拆成两次模型调用：训练模式先 `coach.md` 再 `actor.md`，考核模式只调对方。对外仍是一次 `/internal/agent/drill/chat` SSE，事件顺序不变。不要把点评和台词重新合并进同一个提示词。`avatar-gen` 输出英文生图提示词，不套 JSON schema；`free-practice` 是 ReAct 对话，也不套；
 - 长任务异步超时 `spring.mvc.async.request-timeout=610000`，千问读超时 `600000`。
 
 ## 4. 修改规则

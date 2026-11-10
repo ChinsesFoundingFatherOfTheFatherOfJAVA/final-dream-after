@@ -10,7 +10,7 @@ import jack.digityhuman.aigentservice.prompt.PromptProvider;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** 报告评分 workflow：文本 JSON 输出 + DSL parse_report 容错归一化。 */
+/** 报告评分 workflow：按 schema 结构化输出，失败时仍返回 DSL 的 success=false。 */
 public class ReportScoreTask implements WorkflowTask {
 
     public static final String NAME = "report-score";
@@ -30,10 +30,15 @@ public class ReportScoreTask implements WorkflowTask {
 
     public Map<String, Object> execute(WorkflowContext context, LlmClient llm,
                                        WorkflowProgressListener listener) {
-        String content = llmCaller.text(context, llm,
-                "prompts/workflows/report-score/report.md");
+        JsonNode root;
         try {
-            JsonNode root = mapper.readTree(extractJson(content));
+            root = mapper.valueToTree(llmCaller.structured(context, llm,
+                    "prompts/workflows/report-score/report.md",
+                    "prompts/workflows/report-score/report.schema.json"));
+        } catch (RuntimeException e) {
+            return failed(e.getMessage());
+        }
+        try {
             ArrayNode dimensions = mapper.createArrayNode();
             for (JsonNode item : root.path("dimensions")) {
                 ObjectNode normalized = dimensions.addObject();
@@ -56,33 +61,18 @@ public class ReportScoreTask implements WorkflowTask {
             output.put("success", true);
             return output;
         } catch (Exception e) {
-            Map<String, Object> output = new LinkedHashMap<>();
-            output.put("dimensions", "[]");
-            output.put("round_suggestions", "[]");
-            output.put("dimension_count", 0);
-            output.put("success", false);
-            output.put("error_message", "评分解析失败: " + e.getMessage());
-            return output;
+            return failed(e.getMessage());
         }
     }
 
-    private String extractJson(String content) {
-        String text = content == null ? "" : content.trim();
-        if (text.startsWith("```")) {
-            int firstLine = text.indexOf('\n');
-            if (firstLine >= 0) {
-                text = text.substring(firstLine + 1);
-            }
-            if (text.endsWith("```")) {
-                text = text.substring(0, text.length() - 3);
-            }
-        }
-        int start = text.indexOf('{');
-        int end = text.lastIndexOf('}');
-        if (start >= 0 && end > start) {
-            text = text.substring(start, end + 1);
-        }
-        return text.trim();
+    private Map<String, Object> failed(String message) {
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("dimensions", "[]");
+        output.put("round_suggestions", "[]");
+        output.put("dimension_count", 0);
+        output.put("success", false);
+        output.put("error_message", "评分解析失败: " + message);
+        return output;
     }
 
     private String json(Object value) throws Exception {

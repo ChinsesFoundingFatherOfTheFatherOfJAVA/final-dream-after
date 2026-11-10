@@ -1,5 +1,6 @@
 package jack.digityhuman.atualcombattraining.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -13,8 +14,10 @@ import jack.digityhuman.atualcombattraining.common.BizTypes;
 import jack.digityhuman.atualcombattraining.common.JsonSupport;
 import jack.digityhuman.atualcombattraining.dify.DifyEventTranslator;
 import jack.digityhuman.atualcombattraining.entity.ActAiArtifact;
+import jack.digityhuman.atualcombattraining.entity.ActAiMaterial;
 import jack.digityhuman.atualcombattraining.entity.ActAiMessage;
 import jack.digityhuman.atualcombattraining.entity.ActAiSession;
+import jack.digityhuman.atualcombattraining.mapper.ActAiMaterialMapper;
 import jack.digityhuman.atualcombattraining.service.ArtifactService;
 import jack.digityhuman.atualcombattraining.service.AssistantChatService;
 import jack.digityhuman.atualcombattraining.service.AssistantContextService;
@@ -79,6 +82,9 @@ public class AssistantChatServiceImpl implements AssistantChatService {
                     + "除非用户明确要求生成或修改内容；若要生成，先给出方案并等用户确认。";
     /** 纯文件消息时的 query 提示后缀 */
     private static final String FILE_ONLY_QUERY_SUFFIX = "，请解析材料并给出设计建议";
+    /** 上传接口返回后解析还在跑。等到摘要落库再回复，避免模型把空摘要说成“未解析到文件”。 */
+    private static final long PARSE_WAIT_MS = 20_000;
+    private static final long PARSE_POLL_MS = 300;
     /** 无任何可用文本时的兜底 query */
     private static final String FALLBACK_QUERY = "请继续";
 
@@ -88,6 +94,7 @@ public class AssistantChatServiceImpl implements AssistantChatService {
     private final AgentRuntimeRouter agentRuntimeRouter;
     private final ConfirmService confirmService;
     private final ArtifactService artifactService;
+    private final ActAiMaterialMapper materialMapper;
 
     /**
      * 每个会话**只受理第一次** common-session-start（方案 B，2026-09-20 用户确认）。
@@ -307,6 +314,7 @@ public class AssistantChatServiceImpl implements AssistantChatService {
      */
     private void handleAgentChat(String sessionId, String traceId, AssistantRoundContext context,
                                  ArrayNode content, String actionName) {
+        waitForUploadedMaterials(content);
         ActAiSession session = sessionService.requireSession(sessionId);
         Map<String, String> inputs = new LinkedHashMap<>(contextService.buildInputs(session));
         // 工具回调的会话定位依赖这两个值：Chatflow/工作流里都没有 sys.trace_id（实测变量列表里只有
@@ -377,6 +385,56 @@ public class AssistantChatServiceImpl implements AssistantChatService {
         boolean hasDifyConversation = session.getDifyConversationId() != null
                 && !session.getDifyConversationId().isBlank();
         return hasTheme || hasDifyConversation;
+    }
+
+    /**
+     * 上传接口返回后，前端立刻把文件块发给助手，解析还在另一个线程跑。
+     * 不等的话，这一轮读到的材料摘要是空的，模型就会说“未解析到文件”。
+     * 只等本轮文件块里的 fileId；超时仍继续，避免解析失败时对话一直转圈。
+     */
+    private void waitForUploadedMaterials(ArrayNode content) {
+        List<String> fileIds = uploadedFileIds(content);
+        if (fileIds.isEmpty()) {
+            return;
+        }
+        long deadline = System.currentTimeMillis() + PARSE_WAIT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            long ready = materialMapper.selectCount(new LambdaQueryWrapper<ActAiMaterial>()
+                    .in(ActAiMaterial::getFileId, fileIds)
+                    .isNotNull(ActAiMaterial::getSummary)
+                    .ne(ActAiMaterial::getSummary, ""));
+            if (ready >= fileIds.size()) {
+                return;
+            }
+            try {
+                Thread.sleep(PARSE_POLL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        log.warn("材料摘要未在 {}ms 内落库，仍按现有摘要回复 fileIds={}", PARSE_WAIT_MS, fileIds);
+    }
+
+    private List<String> uploadedFileIds(ArrayNode content) {
+        List<String> fileIds = new ArrayList<>();
+        if (content == null) {
+            return fileIds;
+        }
+        for (JsonNode item : content) {
+            if (item == null || !item.isObject()) {
+                continue;
+            }
+            ObjectNode block = (ObjectNode) item;
+            if (!"file".equals(JsonSupport.text(block, "type"))) {
+                continue;
+            }
+            String fileId = JsonSupport.text(JsonSupport.child(block, "file"), "uri");
+            if (fileId != null && !fileId.isBlank()) {
+                fileIds.add(fileId);
+            }
+        }
+        return fileIds;
     }
 
     /** query 组装：文本块拼接；仅文件块时给出材料提示；握手 action 按"新会话/回到已有会话"给不同 kickoff 文本 */

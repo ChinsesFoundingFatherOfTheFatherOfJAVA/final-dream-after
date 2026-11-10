@@ -75,7 +75,7 @@ public class WorkflowLlm {
         return node;
     }
 
-    /** 文本输出任务（如报告评分）：不强制 JSON schema，由后续 code 节点容错解析。 */
+    /** 纯文本任务（如文生图提示词）：不强制 JSON schema。 */
     public String text(WorkflowContext context, LlmClient llm, String promptResource) {
         String prompt = context.render(prompts.load(promptResource));
         LlmResponse response = llm.complete(new LlmRequest(

@@ -46,8 +46,12 @@ public class StudentAdminServiceImpl implements StudentAdminService {
 
     private static final String PARTICIPANT_ACTIVE = "active";
     private static final String PARTICIPANT_REMOVED = "removed";
+    /**
+     * 仍算「进行中」的 attempt 状态。含 paused：暂停即退出，但练习没结束，
+     * 管理端学员面板不能把它当成空闲。
+     */
     private static final List<String> ACTIVE_ATTEMPT_STATUSES =
-            List.of("preparing", "ready", "in_progress");
+            List.of("preparing", "ready", "in_progress", "paused");
     private static final int MODE_TRAINING = 1;
     private static final int MODE_EXAM = 2;
 

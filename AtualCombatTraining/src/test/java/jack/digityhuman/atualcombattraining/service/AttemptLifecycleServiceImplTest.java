@@ -324,6 +324,47 @@ class AttemptLifecycleServiceImplTest {
         verify(quotaService, never()).incrementFormalCount(anyString(), anyString(), anyString(), anyInt());
     }
 
+    @Test
+    void 暂停_训练中进入暂停并记pausedAt() {
+        ActPracticeAttempt attempt = attempt("in_progress");
+        ActPracticeAttempt paused = attempt("paused");
+        when(attemptMapper.selectById(attempt.getId()))
+                .thenReturn(attempt)
+                .thenReturn(paused);
+
+        ActPracticeAttempt result = lifecycleService.pause(attempt.getId(), USER_ID);
+
+        assertEquals("paused", result.getStatus());
+        verify(attemptMapper).update(isNull(), any());
+    }
+
+    @Test
+    void 暂停_考核模式拒绝() {
+        ActPracticeAttempt attempt = attempt("in_progress");
+        attempt.setStudyMode(2);
+        when(attemptMapper.selectById(attempt.getId())).thenReturn(attempt);
+
+        BizException e = assertThrows(BizException.class,
+                () -> lifecycleService.pause(attempt.getId(), USER_ID));
+        assertTrue(e.getMessage().contains("考核"));
+        // 拒绝时不得落库改状态
+        verify(attemptMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void 暂停中也能结束_不算取消() {
+        ActPracticeAttempt attempt = attempt("paused");
+        when(attemptMapper.selectById(attempt.getId()))
+                .thenReturn(attempt)
+                .thenReturn(finishedAttempt());
+
+        ActPracticeAttempt result = lifecycleService.finish(attempt.getId(), "manual_exit", false, USER_ID);
+
+        // 暂停中结束要出报告，而不是被当成"未开始"取消掉
+        assertEquals("report_generating", result.getStatus());
+        verify(attemptMapper).update(isNull(), any());
+    }
+
     private ActPracticeAttempt attempt(String status) {
         ActPracticeAttempt attempt = new ActPracticeAttempt();
         attempt.setId("attempt-1");

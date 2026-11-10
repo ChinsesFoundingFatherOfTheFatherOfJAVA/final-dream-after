@@ -101,5 +101,7 @@ public class AttemptResp {
     public static class Dimension {
         private String name;
         private BigDecimal weight;
+        /** 维度怎么评。旧快照没有时为 null，前端不补假说明。 */
+        private String description;
     }
 }

@@ -1,13 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://final-dream.local/schemas/drill-chat-turn-v1.schema.json",
-  "title": "DrillChatTurnV1",
+  "$id": "https://final-dream.local/schemas/drill-chat-coach-v1.schema.json",
+  "title": "DrillChatCoachV1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["reply", "coachReview", "targetProgress", "deltaReason", "behaviorHits"],
+  "required": ["coachReview", "targetProgress", "deltaReason", "behaviorHits"],
   "properties": {
-    "reply": { "type": "string", "minLength": 1 },
-    "coachReview": { "type": "string" },
+    "coachReview": { "type": "string", "minLength": 1 },
     "targetProgress": { "type": "integer", "minimum": 0, "maximum": 100 },
     "deltaReason": { "type": "string" },
     "behaviorHits": { "type": "array", "items": { "type": "string", "minLength": 1 } }

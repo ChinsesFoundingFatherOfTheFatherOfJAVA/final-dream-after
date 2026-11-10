@@ -1,6 +1,7 @@
 package jack.digityhuman.atualcombattraining.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import jack.digityhuman.atualcombattraining.agent.SpeechVoiceClient;
 import jack.digityhuman.atualcombattraining.common.CurrentUserService;
 import jack.digityhuman.atualcombattraining.entity.ActPracticeAttempt;
@@ -40,6 +41,11 @@ public class StudentVoiceController {
     private final CurrentUserService currentUserService;
     private final AntiCheatService antiCheatService;
     private final jack.digityhuman.atualcombattraining.service.face.FaceCheckService faceCheckService;
+    /** 按角色性别+年龄段选对手音色，避免男客户用女声 */
+    private final jack.digityhuman.atualcombattraining.service.ActorVoiceMappingService actorVoiceMappingService;
+    /** 读脚本快照用；本工程没有把 ObjectMapper 注册成 bean（AGENTS：Jackson 直接用），这里自建 */
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
     /** ASR：录音 WAV → 文本（进行中的 attempt 才可用） */
     @PostMapping("/voice/transcribe")
@@ -62,20 +68,77 @@ public class StudentVoiceController {
         }
     }
 
-    /** TTS：台词 → 音频 URL（ST 侧按"文本+声音+语速"缓存幂等） */
+    /**
+     * TTS：台词 → 音频 URL（ST 侧按"文本+声音+语速"缓存幂等）。
+     *
+     * <p>音色由服务端按本场角色的性别与年龄段决定，不让前端传：前端拿不到也不该关心
+     * 音色映射规则，否则改一次映射要连带发布前端。请求里显式给了 voiceId 时仍以其为准
+     * （管理端预览等场景需要指定音色）。
+     */
     @PostMapping("/tts")
     public ApiResponse<Map<String, Object>> tts(
             @PathVariable String attemptId,
             @RequestBody Map<String, Object> body,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
-        requireAccessible(authorization, attemptId);
+        ActPracticeAttempt attempt = requireAccessible(authorization, attemptId);
         String text = body == null ? null : (String) body.get("text");
         if (text == null || text.isBlank()) {
             throw new BizException("合成文本为空");
         }
         String voiceId = body.get("voiceId") == null ? null : body.get("voiceId").toString();
+        if (voiceId == null || voiceId.isBlank()) {
+            // 角色音色跟着形象走：同一份脚本里 males/female 与年龄段决定用哪个音色
+            voiceId = actorVoiceMappingService.resolve(
+                    actorGender(attempt), actorAgeRange(attempt));
+        }
         Integer speed = body.get("speed") instanceof Number number ? number.intValue() : 1;
         return ApiResponse.success(speechVoiceClient.synthesize(text, voiceId, speed));
+    }
+
+    /**
+     * 从本场脚本快照里取对手性别。
+     *
+     * <p>两种形态都要认：drill-script-v1 是 {@code actor.gender}，
+     * 案例快照是扁平字段 {@code actorGender}。取不到返回 null（音色走默认）。
+     */
+    private String actorGender(ActPracticeAttempt attempt) {
+        JsonNode script = snapshot(attempt);
+        if (script == null) {
+            return null;
+        }
+        JsonNode actor = script.path("actor");
+        String nested = actor.isObject() ? textOf(actor, "gender") : null;
+        return nested != null ? nested : textOf(script, "actorGender");
+    }
+
+    /** 取对手年龄段，口径同 {@link #actorGender}：actor.ageRange 或扁平 actorAgeRange */
+    private String actorAgeRange(ActPracticeAttempt attempt) {
+        JsonNode script = snapshot(attempt);
+        if (script == null) {
+            return null;
+        }
+        JsonNode actor = script.path("actor");
+        String nested = actor.isObject() ? textOf(actor, "ageRange") : null;
+        return nested != null ? nested : textOf(script, "actorAgeRange");
+    }
+
+    /** 脚本快照解析；快照缺失或非法时返回 null，由调用方回退默认音色 */
+    private JsonNode snapshot(ActPracticeAttempt attempt) {
+        String json = attempt.getScriptSnapshotJson();
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            log.warn("脚本快照解析失败，音色回退默认 attemptId={}", attempt.getId());
+            return null;
+        }
+    }
+
+    private static String textOf(JsonNode node, String field) {
+        JsonNode value = node.path(field);
+        return value.isTextual() && !value.asText().isBlank() ? value.asText() : null;
     }
 
     /** 防作弊事件上报（切屏/人脸/摄像头丢失），按规则结算切屏违规 */

@@ -20,6 +20,11 @@ AI 设计助手（Dify/native 双 provider 编排 + 主题/案例生成工作流
 - native 调用 AIGentService `/internal/**` 时携带 `X-Internal-Token`，值来自
   `AGENT_INTERNAL_TOKEN`；`GET /api/act/internal/memory/{sessionId}` 只供 L3 记忆重建，
   同样强制 token。
+- 角色音色与形象同源（2026-11-10）：TTS 的 `voiceId` 由服务端按脚本快照的
+  `actor.gender` / `actor.ageRange`（案例快照为扁平 `actorGender` / `actorAgeRange`）映射，
+  前端不传也不要传。映射规则在 `ActorVoiceMappingServiceImpl`，与 `AvatarMappingServiceImpl`
+  共用「性别 × 年龄段（A1~A5）」口径——改任一侧必须同时看另一侧，否则会出现「男性角色女声」
+  或「形象老、声音年轻」。性别缺失回退默认音色，不猜。
 
 ## 3. 铁律（违反即返工）
 

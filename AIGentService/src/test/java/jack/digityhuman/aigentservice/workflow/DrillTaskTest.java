@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 训考运行态任务单测（契约 08 §4/§5/§7/§8）
  * - 阻塞任务输出键严格对齐契约（script_schema_version/script_json/success 等）
- * - chat 一轮：考核模式清空教练点评、targetProgress 单调不降
+ * - chat 一轮：考核模式不调用教练、targetProgress 单调不降
  * - 输出不合法（版本号/缺字段/非法 JSON）直接抛错，让消费端按 §10 重试
  */
 class DrillTaskTest {
@@ -52,6 +52,20 @@ class DrillTaskTest {
 
     private static LlmClient fixed(String content) {
         return request -> new LlmResponse(content, List.of(), null);
+    }
+
+    /** 训练模式会先调教练、再调对方。按系统提示词里的职责标题分别回。 */
+    private static LlmClient split(String coachJson, String actorJson) {
+        return request -> {
+            String system = request.messages().get(0).content();
+            if (system.contains("场边教练")) {
+                return new LlmResponse(coachJson, List.of(), null);
+            }
+            if (system.contains("这场对练的对方")) {
+                return new LlmResponse(actorJson, List.of(), null);
+            }
+            return new LlmResponse("{}", List.of(), null);
+        };
     }
 
     // ---------------------------------------------------------------- script
@@ -181,9 +195,10 @@ class DrillTaskTest {
                         "query", "金总您好",
                         "recent_messages_json", "[]",
                         "progress_json", "{\"currentProgress\":10}")),
-                fixed("""
-                        {"reply":"（抬头看了一眼手表）你好，请进。","coachReview":"开场略急",
-                         "targetProgress":10,"deltaReason":"首轮寒暄","behaviorHits":[]}
+                split("""
+                        {"coachReview":"开场略急","targetProgress":10,"deltaReason":"首轮寒暄","behaviorHits":[]}
+                        """, """
+                        {"reply":"（抬头看了一眼手表）你好，请进。"}
                         """));
 
         assertEquals("（抬头看了一眼手表）你好，请进。", turn.get("reply"));
@@ -192,18 +207,25 @@ class DrillTaskTest {
     }
 
     @Test
-    void 对练_考核模式教练点评强制清空() {
+    void 对练_考核模式不调用教练() {
+        var calls = new java.util.ArrayList<String>();
+        LlmClient llm = request -> {
+            String system = request.messages().get(0).content();
+            calls.add(system.contains("场边教练") ? "coach" : "actor");
+            return new LlmResponse("{\"reply\":\"考核开始。\"}", List.of(), null);
+        };
+
         Map<String, Object> turn = chatTurn().turn(
                 context(Map.of(
                         "study_mode", "2",
                         "query", "开始考核",
                         "recent_messages_json", "[]",
                         "progress_json", "{\"currentProgress\":0}")),
-                fixed("""
-                        {"reply":"考核开始。","coachReview":"本不该有","targetProgress":0,"deltaReason":"x"}
-                        """));
+                llm);
 
+        assertEquals(List.of("actor"), calls);
         assertEquals("", turn.get("coachReview"));
+        assertEquals(0, turn.get("targetProgress"));
     }
 
     @Test
@@ -215,8 +237,10 @@ class DrillTaskTest {
                         "query", "继续",
                         "recent_messages_json", "[]",
                         "progress_json", "{\"currentProgress\":30}")),
-                fixed("""
-                        {"reply":"你说。","coachReview":"","targetProgress":5,"deltaReason":"下降"}
+                split("""
+                        {"coachReview":"这句没推进","targetProgress":5,"deltaReason":"下降","behaviorHits":[]}
+                        """, """
+                        {"reply":"你说。"}
                         """));
 
         assertEquals(30, turn.get("targetProgress"));
@@ -230,7 +254,9 @@ class DrillTaskTest {
                         "query", "你好",
                         "recent_messages_json", "[]",
                         "progress_json", "{}")),
-                fixed("{\"reply\":\"\",\"coachReview\":\"\",\"targetProgress\":0,\"deltaReason\":\"\"}")));
+                split("""
+                        {"coachReview":"开场可以更慢","targetProgress":0,"deltaReason":"","behaviorHits":[]}
+                        """, "{\"reply\":\"\"}")));
     }
 
     @Test
@@ -275,13 +301,15 @@ class DrillTaskTest {
     @Test
     void 对练_角色画像与行为指引注入系统提示词() {
         var captured = new Object() {
-            String system;
+            String system = "";
         };
         LlmClient llm = request -> {
-            captured.system = request.messages().get(0).content();
-            return new LlmResponse("""
-                    {"reply":"请讲","coachReview":"","targetProgress":0,"deltaReason":"d","behaviorHits":[]}
-                    """, List.of(), null);
+            captured.system += request.messages().get(0).content();
+            String system = request.messages().get(0).content();
+            String body = system.contains("场边教练")
+                    ? "{\"coachReview\":\"开场略急\",\"targetProgress\":0,\"deltaReason\":\"d\",\"behaviorHits\":[]}"
+                    : "{\"reply\":\"请讲\"}";
+            return new LlmResponse(body, List.of(), null);
         };
 
         String script = json(Map.of(
@@ -323,13 +351,15 @@ class DrillTaskTest {
     @Test
     void 对练_案例扁平脚本也能派生角色画像() {
         var captured = new Object() {
-            String system;
+            String system = "";
         };
         LlmClient llm = request -> {
-            captured.system = request.messages().get(0).content();
-            return new LlmResponse("""
-                    {"reply":"请讲","coachReview":"","targetProgress":0,"deltaReason":"d","behaviorHits":[]}
-                    """, List.of(), null);
+            captured.system += request.messages().get(0).content();
+            String system = request.messages().get(0).content();
+            String body = system.contains("场边教练")
+                    ? "{\"coachReview\":\"注意登记\",\"targetProgress\":0,\"deltaReason\":\"d\",\"behaviorHits\":[]}"
+                    : "{\"reply\":\"请讲\"}";
+            return new LlmResponse(body, List.of(), null);
         };
 
         String caseScript = json(Map.of(
@@ -366,8 +396,10 @@ class DrillTaskTest {
                         "recent_messages_json", "[]",
                         "progress_json", "{}",
                         "script_json", "not-json")),
-                fixed("""
-                        {"reply":"请讲","coachReview":"注意开场","targetProgress":0,"deltaReason":"d"}
+                split("""
+                        {"coachReview":"注意开场","targetProgress":0,"deltaReason":"d","behaviorHits":[]}
+                        """, """
+                        {"reply":"请讲"}
                         """));
 
         assertEquals("请讲", turn.get("reply"));

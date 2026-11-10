@@ -172,8 +172,10 @@ public class StudentAttemptController {
         turn.setMaxRound(attempt.getMaxRound());
         turn.setTargetProgress(attempt.getTargetProgress());
         turn.setStatus(attempt.getStatus());
-        // 剩余秒数只在"进行中"有意义：未开始没有 deadlineAt，已结束再看剩余也是负数
-        if ("in_progress".equals(attempt.getStatus()) && attempt.getDeadlineAt() != null) {
+        // 剩余秒数只在"进行中/暂停中"有意义：未开始没有 deadlineAt，已结束再看剩余也是负数。
+        // 暂停中照常给剩余值（deadline 已顺延），前端停表由 paused 状态决定。
+        if (("in_progress".equals(attempt.getStatus()) || "paused".equals(attempt.getStatus()))
+                && attempt.getDeadlineAt() != null) {
             long seconds = java.time.Duration.between(
                     LocalDateTime.now(), attempt.getDeadlineAt()).getSeconds();
             turn.setRemainingSeconds((int) Math.max(0, seconds));
@@ -206,6 +208,30 @@ public class StudentAttemptController {
             drillReportService.generateAsync(attemptId);
         }
         return ApiResponse.success(toResp(attempt));
+    }
+
+    /**
+     * 暂停练习（训练模式；考核模式拒绝）。
+     * <p>
+     * 暂停期间计时停住，继续时把这段时长补回 deadline（契约 03 §10.2）。
+     */
+    @PostMapping("/{attemptId}/pause")
+    public ApiResponse<AttemptResp> pause(
+            @PathVariable String attemptId,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        String userId = requireUser(authorization);
+        lifecycleService.pause(attemptId, userId);
+        return ApiResponse.success(toResp(lifecycleService.requireOwned(attemptId, userId)));
+    }
+
+    /** 继续练习：累加暂停时长并顺延 deadline */
+    @PostMapping("/{attemptId}/resume")
+    public ApiResponse<AttemptResp> resume(
+            @PathVariable String attemptId,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        String userId = requireUser(authorization);
+        lifecycleService.resume(attemptId, userId);
+        return ApiResponse.success(toResp(lifecycleService.requireOwned(attemptId, userId)));
     }
 
     private String requireUser(String authorization) {
@@ -452,6 +478,11 @@ public class StudentAttemptController {
             if (node.hasNonNull("weight")) {
                 item.setWeight(node.get("weight").decimalValue());
             }
+            String description = firstNonBlank(
+                    node.path("description").asText(null),
+                    node.path("dimensionDesc").asText(null),
+                    node.path("desc").asText(null));
+            item.setDescription(description);
             if (item.getName() != null) {
                 list.add(item);
             }
@@ -483,6 +514,16 @@ public class StudentAttemptController {
             }
         }
         return list;
+    }
+
+    /** 快照里说明字段名不统一，取第一个非空值；都没有就返回 null */
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank() && !"null".equals(value)) {
+                return value;
+            }
+        }
+        return null;
     }
 
     /** 优先取嵌套字段，缺失时回退扁平字段（案例练习快照形态） */

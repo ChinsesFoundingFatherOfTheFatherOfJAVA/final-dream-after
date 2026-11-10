@@ -78,9 +78,14 @@ public class StudentQueryServiceImpl implements StudentQueryService {
     private static final int MODE_EXAM = 2;
     /** 加入方式：2=完全公开直接加入（契约 D02） */
     private static final int JOIN_MODE_PUBLIC = 2;
-    /** 练习历程"练习中"Tab 的 attempt 状态集合（未产生最终报告的中间态） */
+    /**
+     * 练习历程"练习中"Tab 的 attempt 状态集合（未产生最终报告的中间态）。
+     * <p>
+     * 必须含 {@code paused}：暂停在产品语义上是「暂停并退出」，记录仍属练习中，
+     * 学员要从这里点「继续练习」回到对话页；漏掉它会让暂停的练习从列表里消失。
+     */
     private static final List<String> IN_PROGRESS_STATUSES =
-            List.of("preparing", "ready", "in_progress", "report_generating");
+            List.of("preparing", "ready", "in_progress", "paused", "report_generating");
 
     private final ActThemeParticipantMapper participantMapper;
     private final ActThemeMapper themeMapper;

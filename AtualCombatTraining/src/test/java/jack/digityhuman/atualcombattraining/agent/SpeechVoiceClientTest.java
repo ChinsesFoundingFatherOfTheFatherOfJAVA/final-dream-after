@@ -107,4 +107,28 @@ class SpeechVoiceClientTest {
         BizException e = assertThrows(BizException.class, () -> noToken.transcribe(new byte[]{1}, null));
         assertTrue(e.getMessage().contains("内部接口未配置令牌"));
     }
+
+    /**
+     * 真实 ST 内部接口返回的是裸对象，不是 {code,message,data}。
+     * 早期按统一响应解析会把合成成功误判成 code=-1，学员侧只看到「语音服务执行失败」。
+     */
+    @Test
+    void TTS_裸对象响应也能解析() {
+        responseBody = "{\"audioUrl\":\"/audio/tts/real.mp3\",\"durationMs\":19670,\"cached\":true}";
+
+        Map<String, Object> result = client().synthesize("这句要能播出来", null, 30);
+
+        assertEquals("/audio/tts/real.mp3", result.get("audioUrl"));
+        assertEquals(19670, result.get("durationMs"));
+        assertEquals(true, result.get("cached"));
+    }
+
+    @Test
+    void ASR_裸对象响应也能解析() {
+        responseBody = "{\"text\":\"你好\",\"durationMs\":1200}";
+
+        Map<String, Object> result = client().transcribe("wav-bytes".getBytes(), null);
+
+        assertEquals("你好", result.get("text"));
+    }
 }

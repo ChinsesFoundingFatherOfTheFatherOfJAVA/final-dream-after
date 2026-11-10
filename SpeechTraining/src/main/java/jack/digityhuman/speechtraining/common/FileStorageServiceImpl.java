@@ -8,10 +8,12 @@ import org.springframework.web.multipart.MultipartFile;
 
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -56,9 +58,53 @@ public class FileStorageServiceImpl implements FileStorageService {
             Files.createDirectories(storagePath);
             Files.createDirectories(audioPath);
             Files.createDirectories(avatarPath);
+            seedPresetAvatars();
             log.info("文件存储目录: coverImage={}, audio={}, avatar={}", storagePath, audioPath, avatarPath);
         } catch (IOException e) {
             throw new IllegalStateException("无法创建文件存储目录: " + storagePath, e);
+        }
+    }
+
+    /** 预置形象清单。文件名与 act_avatar_asset.code 绑定，改名会让已有快照 URL 失效。 */
+    private static final List<String> PRESET_AVATAR_FILES = List.of(
+            "f-A1-01.webp", "f-A1-02.webp", "f-A1-03.webp", "f-A1-04.webp", "f-A1-05.webp", "f-A1-06.webp",
+            "f-A2-01.webp", "f-A2-02.webp", "f-A2-03.webp", "f-A2-04.webp", "f-A2-05.webp", "f-A2-06.webp",
+            "f-A3-01.webp", "f-A3-02.webp", "f-A3-03.webp", "f-A3-04.webp", "f-A3-05.webp", "f-A3-06.webp",
+            "f-A4-01.webp", "f-A4-02.webp", "f-A4-03.webp", "f-A4-04.webp", "f-A4-05.webp", "f-A4-06.webp",
+            "f-A5-01.webp", "f-A5-02.webp", "f-A5-03.webp", "f-A5-04.webp", "f-A5-05.webp", "f-A5-06.webp",
+            "m-A1-01.webp", "m-A1-02.webp", "m-A1-03.webp", "m-A1-04.webp", "m-A1-05.webp", "m-A1-06.webp",
+            "m-A2-01.webp", "m-A2-02.webp", "m-A2-03.webp", "m-A2-04.webp", "m-A2-05.webp", "m-A2-06.webp",
+            "m-A3-01.webp", "m-A3-02.webp", "m-A3-03.webp", "m-A3-04.webp", "m-A3-05.webp", "m-A3-06.webp",
+            "m-A4-01.webp", "m-A4-02.webp", "m-A4-03.webp", "m-A4-04.webp", "m-A4-05.webp", "m-A4-06.webp",
+            "m-A5-01.webp", "m-A5-02.webp", "m-A5-03.webp", "m-A5-04.webp", "m-A5-05.webp", "m-A5-06.webp");
+
+    /**
+     * 预置形象不在运行时目录里，换机器部署时会静默变成首字占位。
+     * 启动时从 classpath 逐张补进 avatar 目录；已有同名文件不覆盖，避免冲掉现场替换。
+     */
+    private void seedPresetAvatars() throws IOException {
+        ClassLoader loader = getClass().getClassLoader();
+        int copied = 0;
+        int missing = 0;
+        for (String name : PRESET_AVATAR_FILES) {
+            Path target = avatarPath.resolve(name);
+            if (Files.exists(target)) {
+                continue;
+            }
+            try (InputStream input = loader.getResourceAsStream("avatar-presets/" + name)) {
+                if (input == null) {
+                    missing++;
+                    continue;
+                }
+                Files.copy(input, target);
+                copied++;
+            }
+        }
+        if (missing > 0) {
+            log.error("预置形象缺失 {} 张，对应角色会回退为首字占位", missing);
+        }
+        if (copied > 0) {
+            log.info("已补齐预置形象 {} 张到 {}", copied, avatarPath);
         }
     }
 
@@ -183,8 +229,11 @@ public class FileStorageServiceImpl implements FileStorageService {
         if (file == null || file.isEmpty()) {
             return null;
         }
-        String filename = UUID.randomUUID().toString().replace("-", "")
-                + resolveExtension(file.getOriginalFilename());
+        String extension = resolveExtension(file.getOriginalFilename());
+        if (!List.of(".png", ".jpg", ".jpeg", ".webp").contains(extension)) {
+            throw new BizException("形象图片只支持 png、jpg、webp");
+        }
+        String filename = UUID.randomUUID().toString().replace("-", "") + extension;
         try {
             Path target = avatarPath.resolve(filename);
             file.transferTo(target.toFile());

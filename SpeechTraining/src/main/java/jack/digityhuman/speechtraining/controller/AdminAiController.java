@@ -5,10 +5,12 @@ import jack.digityhuman.speechtraining.dto.req.AiScoringReq;
 import jack.digityhuman.speechtraining.dto.req.AvatarGenReq;
 import jack.digityhuman.speechtraining.dto.resp.AiScoringResp;
 import jack.digityhuman.speechtraining.dto.resp.AvatarGenResp;
+import jack.digityhuman.speechtraining.common.FileStorageService;
 import jack.digityhuman.speechtraining.dify.DifyScoringService;
 import jack.digityhuman.speechtraining.service.AvatarGenService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 管理端 AI 基础接口（评分/形象生成）。旧单步话术生成接口（generate-script/upload）已随
@@ -21,6 +23,7 @@ public class AdminAiController {
 
     private final DifyScoringService scoringService;
     private final AvatarGenService avatarGenService;
+    private final FileStorageService fileStorageService;
 
     /**
      * 旧单步生成接口下线提示（v2.0 升级 03 §4：保留 30 天提示期，之后删除）。
@@ -35,6 +38,19 @@ public class AdminAiController {
     @PostMapping("/generate-script/upload")
     public ApiResponse<Void> generateScriptWithFile() {
         return ApiResponse.error(1, "AI生成话术已升级为三步向导，请使用新版入口");
+    }
+
+    /**
+     * 换形象的本地上传。图片落到 /avatar，网关已放行 /api/avatar/**，img 可直接显示。
+     * 不再借用 ExamService，避免那边改接口时这里跟着失效。
+     */
+    @PostMapping("/avatar-upload")
+    public ApiResponse<java.util.Map<String, String>> uploadAvatar(@RequestParam("file") MultipartFile file) {
+        String url = fileStorageService.saveAvatarImage(file);
+        if (url == null) {
+            return ApiResponse.error(1, "请选择图片");
+        }
+        return ApiResponse.success(java.util.Map.of("fileUrl", url));
     }
 
     /** AI 单轮评分（标准话术 + 要点 + 学员回答）。 */

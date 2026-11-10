@@ -51,6 +51,8 @@ public class AttemptLifecycleServiceImpl implements AttemptLifecycleService {
     private static final String STATUS_READY = "ready";
     private static final String STATUS_IN_PROGRESS = "in_progress";
     private static final String STATUS_REPORT_GENERATING = "report_generating";
+    /** 暂停中：仍占着 active_key，但计时停住（契约 03 §10.2） */
+    private static final String STATUS_PAUSED = "paused";
     private static final String STATUS_FAILED = "failed";
     private static final String STATUS_CANCELLED = "cancelled";
     /** 准备阶段（契约 03 §8.4 四阶段） */
@@ -267,13 +269,84 @@ public class AttemptLifecycleServiceImpl implements AttemptLifecycleService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    public ActPracticeAttempt pause(String attemptId, String userId) {
+        ActPracticeAttempt attempt = requireOwned(attemptId, userId);
+        if (STATUS_PAUSED.equals(attempt.getStatus())) {
+            // 重复点暂停：幂等，不重复记暂停起点
+            return attempt;
+        }
+        if (!STATUS_IN_PROGRESS.equals(attempt.getStatus())) {
+            throw new BizException("练习未在进行中，不能暂停");
+        }
+        // 考核是限时测评，暂停等于额外思考时间；契约 01 F17 / 03 §10.2
+        if (Objects.equals(attempt.getStudyMode(), 2)) {
+            throw new BizException("考核模式不支持暂停");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int rows = attemptMapper.update(null, new LambdaUpdateWrapper<ActPracticeAttempt>()
+                .eq(ActPracticeAttempt::getId, attemptId)
+                .eq(ActPracticeAttempt::getStatus, STATUS_IN_PROGRESS)
+                .set(ActPracticeAttempt::getStatus, STATUS_PAUSED)
+                .set(ActPracticeAttempt::getPausedAt, now)
+                .set(ActPracticeAttempt::getUpdatedAt, now));
+        if (rows == 0) {
+            // 并发下已经停了或已结束：按幂等返回当前行
+            return require(attemptId);
+        }
+        log.info("attempt 已暂停 attemptId={} pausedAt={}", attemptId, now);
+        return require(attemptId);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public ActPracticeAttempt resume(String attemptId, String userId) {
+        ActPracticeAttempt attempt = requireOwned(attemptId, userId);
+        if (STATUS_IN_PROGRESS.equals(attempt.getStatus())) {
+            // 重复点继续：幂等
+            return attempt;
+        }
+        if (!STATUS_PAUSED.equals(attempt.getStatus())) {
+            throw new BizException("练习不在暂停中，不能继续");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        // 暂停时长 = now - paused_at；累加进 paused_duration_ms，供报告扣减实际用时
+        LocalDateTime pausedAt = attempt.getPausedAt() == null ? now : attempt.getPausedAt();
+        long pausedMs = Math.max(0, Duration.between(pausedAt, now).toMillis());
+        long totalPaused = (attempt.getPausedDurationMs() == null ? 0L : attempt.getPausedDurationMs())
+                + pausedMs;
+        // deadline 顺延同样的长度，保证暂停期间不计时；没有 deadline 的旧数据跳过
+        LocalDateTime deadline = attempt.getDeadlineAt() == null
+                ? null : attempt.getDeadlineAt().plus(Duration.ofMillis(pausedMs));
+
+        LambdaUpdateWrapper<ActPracticeAttempt> update = new LambdaUpdateWrapper<ActPracticeAttempt>()
+                .eq(ActPracticeAttempt::getId, attemptId)
+                .eq(ActPracticeAttempt::getStatus, STATUS_PAUSED)
+                .set(ActPracticeAttempt::getStatus, STATUS_IN_PROGRESS)
+                .set(ActPracticeAttempt::getPausedAt, null)
+                .set(ActPracticeAttempt::getPausedDurationMs, totalPaused)
+                .set(ActPracticeAttempt::getUpdatedAt, now);
+        if (deadline != null) {
+            update.set(ActPracticeAttempt::getDeadlineAt, deadline);
+        }
+        int rows = attemptMapper.update(null, update);
+        if (rows == 0) {
+            return require(attemptId);
+        }
+        log.info("attempt 已继续 attemptId={} 本次暂停={}ms 累计暂停={}ms deadline={}",
+                attemptId, pausedMs, totalPaused, deadline);
+        return require(attemptId);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
     public ActPracticeAttempt finish(String attemptId, String endReason, boolean bySystem, String userId) {
         ActPracticeAttempt attempt = bySystem ? require(attemptId) : requireOwned(attemptId, userId);
         if (STATUS_REPORT_GENERATING.equals(attempt.getStatus())
                 || "completed".equals(attempt.getStatus())) {
             return attempt;
         }
-        if (!STATUS_IN_PROGRESS.equals(attempt.getStatus())) {
+        if (!STATUS_IN_PROGRESS.equals(attempt.getStatus())
+                && !STATUS_PAUSED.equals(attempt.getStatus())) {
             // 未开始就结束：直接取消，不扣次数、不出报告
             attemptMapper.update(null, new LambdaUpdateWrapper<ActPracticeAttempt>()
                     .eq(ActPracticeAttempt::getId, attemptId)
@@ -287,15 +360,26 @@ public class AttemptLifecycleServiceImpl implements AttemptLifecycleService {
         }
         LocalDateTime now = LocalDateTime.now();
         boolean timedOut = REASON_TIMEOUT.equals(endReason);
-        int rows = attemptMapper.update(null, new LambdaUpdateWrapper<ActPracticeAttempt>()
+        // 在暂停中直接结束：最后一段暂停也要算进累计，否则报告里的实际用时会把暂停算成练习时间
+        Long pausedTotal = attempt.getPausedDurationMs();
+        if (STATUS_PAUSED.equals(attempt.getStatus()) && attempt.getPausedAt() != null) {
+            long lastPauseMs = Math.max(0, Duration.between(attempt.getPausedAt(), now).toMillis());
+            pausedTotal = (pausedTotal == null ? 0L : pausedTotal) + lastPauseMs;
+        }
+        LambdaUpdateWrapper<ActPracticeAttempt> finishUpdate = new LambdaUpdateWrapper<ActPracticeAttempt>()
                 .eq(ActPracticeAttempt::getId, attemptId)
-                .eq(ActPracticeAttempt::getStatus, STATUS_IN_PROGRESS)
+                .in(ActPracticeAttempt::getStatus, STATUS_IN_PROGRESS, STATUS_PAUSED)
                 .set(ActPracticeAttempt::getStatus, STATUS_REPORT_GENERATING)
                 .set(ActPracticeAttempt::getEndedAt, now)
                 .set(ActPracticeAttempt::getEndReason, endReason)
                 .set(ActPracticeAttempt::getTimedOut, timedOut ? 1 : 0)
                 .set(ActPracticeAttempt::getActiveKey, null)
-                .set(ActPracticeAttempt::getUpdatedAt, now));
+                .set(ActPracticeAttempt::getPausedAt, null)
+                .set(ActPracticeAttempt::getUpdatedAt, now);
+        if (pausedTotal != null) {
+            finishUpdate.set(ActPracticeAttempt::getPausedDurationMs, pausedTotal);
+        }
+        int rows = attemptMapper.update(null, finishUpdate);
         if (rows == 0) {
             log.info("结束练习并发竞争，回读已结束行 attemptId={}", attemptId);
         } else {

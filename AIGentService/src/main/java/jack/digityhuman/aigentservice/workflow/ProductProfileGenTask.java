@@ -37,8 +37,8 @@ public class ProductProfileGenTask implements WorkflowTask {
         Map<String, Object> result = llmCaller.structured(
                 context, llm,
                 "prompts/workflows/product-profile/generate.md",
-                "prompts/workflows/product-profile/product-profile-v1.schema.json");
-        // structured() 期望单对象；候选任务让模型包 {"profiles":[...]}，这里解包
+                "prompts/workflows/product-profile/candidates.schema.json");
+        // candidates.schema.json 约束的是 {"profiles":[...]}；这里解包成契约要求的数组字符串
         Object profiles = result.get("profiles");
         if (!(profiles instanceof List<?> list) || list.isEmpty()) {
             throw new IllegalStateException("product-profile-gen 未返回 profiles 数组");
