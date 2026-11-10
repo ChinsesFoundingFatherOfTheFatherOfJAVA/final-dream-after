@@ -32,6 +32,19 @@ public class ExamPaperQuestion {
     /** 组合题各小题分值 JSON：[{quesId,score,missScore,missScoreType}]（非组合题为空） */
     private String subScores;
 
+    /**
+     * 填空题按空得分 JSON：[{blankIndex,score}]，与答案空同序。
+     * <p>只有题库侧开启 blankScoreMark 的填空才有值；未开启时为空，按整题计分。
+     * 分值挂在试卷而不是题目上，因为同一个空在不同试卷里分值可以不同。
+     */
+    private String blankScores;
+
+    /**
+     * 多选题自定义各选项得分 JSON：[{option,score}]，仅 missScoreType=3 时有值。
+     * <p>与 missScore 并存：后者用于「统一得分」，前者用于逐选项给分。
+     */
+    private String optionScores;
+
     /** 大题 = 题型值（0单选..5组合） */
     private Integer sectionIndex;
 

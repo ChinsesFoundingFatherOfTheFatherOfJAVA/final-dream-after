@@ -46,6 +46,12 @@ public final class PaperQuesRespDtos {
         private List<SubQues> subQuestions;
         /** 组合题：各小题分值 */
         private List<SubScore> subScores;
+
+        /** 填空题每空分值（仅开启按空得分的填空有值，用于编辑页回显）。 */
+        private List<BlankScore> blankScores;
+
+        /** 多选题各选项分值（仅 missScoreType=3 时有值）。 */
+        private List<OptionScore> optionScores;
     }
 
     /** 组合题小题（带 quesId 便于单独删除与设分）。 */
@@ -72,6 +78,20 @@ public final class PaperQuesRespDtos {
         private BigDecimal score;
         private BigDecimal missScore;
         private Integer missScoreType;
+    }
+
+    /** 填空题每空分值，blankIndex 从 1 开始对应 _(n)_。 */
+    @Data
+    public static class BlankScore {
+        private Integer blankIndex;
+        private BigDecimal score;
+    }
+
+    /** 多选题每个选项的分值（自定义各选项得分）。 */
+    @Data
+    public static class OptionScore {
+        private String option;
+        private BigDecimal score;
     }
 
     @Data

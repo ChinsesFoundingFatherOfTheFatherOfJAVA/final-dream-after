@@ -55,6 +55,11 @@ public class ExamQuestion {
     private String answerKeywords;
     /** 填空题多空答案不分先后 */
     private Integer noOrderMark;
+    /**
+     * 填空题「按空得分」开关：1 = 每个空可自定义分值，判分逐空给分。
+     * <p>未开启时整题全对才拿满分；具体每空分值存在组卷侧（属于试卷级配置）。
+     */
+    private Integer blankScoreMark;
     /** 查重重复标记 */
     private Integer duplicate;
     private Long simHash;

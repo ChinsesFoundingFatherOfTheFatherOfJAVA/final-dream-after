@@ -51,6 +51,8 @@ public final class QuesDtos {
         private String answerPlay;
         private List<Keyword> answerKeywords;
         private Integer noOrderMark;
+        /** 填空题「按空得分」开关：1=开启，每空可自定义分值（具体每空分值在组卷侧配）。 */
+        private Integer blankScoreMark;
         /** 考核点（有序；第一个为主考核点）。 */
         private List<PointRef> points;
         /** 组合题（type=5）子题；子题本身不再嵌套子题，故用扁平的 SubQuesReq。 */
@@ -78,6 +80,8 @@ public final class QuesDtos {
         private String answerPlay;
         private List<Keyword> answerKeywords;
         private Integer noOrderMark;
+        /** 填空题「按空得分」开关：1=开启，每空可自定义分值（具体每空分值在组卷侧配）。 */
+        private Integer blankScoreMark;
     }
 
     @Data

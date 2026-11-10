@@ -190,10 +190,14 @@ public class PaperQuesServiceImpl implements PaperQuesService {
         rel.setId(IdWorker.getIdStr());
         rel.setPaperId(paperId);
         rel.setQuesId(quesId);
-        rel.setScore(req.getScore() == null ? BigDecimal.ZERO : req.getScore());
+        // 按空得分：各空之和与整题分值二选一模式，统一在这里收敛
+        BigDecimal finalScore = resolveScoreWithBlanks(req.getScore(), req.getBlankScores());
+        rel.setScore(finalScore);
         rel.setMissScore(req.getMissScore() == null ? BigDecimal.ZERO : req.getMissScore());
         rel.setMissScoreType(req.getMissScoreType() == null ? 0 : req.getMissScoreType());
         rel.setSubScores(writeSubScoresJson(req.getSubScores()));
+        rel.setBlankScores(writeBlankScoresJson(req.getBlankScores()));
+        rel.setOptionScores(writeOptionScoresJson(req.getOptionScores()));
         rel.setSectionIndex(req.getSectionIndex() == null ? 0 : req.getSectionIndex());
         rel.setOrderIndex(nextOrderIndex(paperId, rel.getSectionIndex()));
         rel.setDeleted(0);
@@ -256,14 +260,25 @@ public class PaperQuesServiceImpl implements PaperQuesService {
         boolean published = paper.getStatus() != null && paper.getStatus() == 4;
 
         if (!published) {
-            if (req.getScore() != null) {
-                rel.setScore(req.getScore());
+            // 按空得分：分值改动要和各空之和重新对齐（传了 blankScores 才校验）
+            if (req.getBlankScores() != null) {
+                rel.setBlankScores(writeBlankScoresJson(req.getBlankScores()));
+                rel.setScore(resolveScoreWithBlanks(req.getScore(), req.getBlankScores()));
+            } else if (req.getScore() != null) {
+                BigDecimal newScore = req.getScore();
+                // 只改整题分值时，按比例重算各空分值，避免总和与题分脱节
+                rel.setBlankScores(rescaleBlankScores(rel.getBlankScores(), newScore));
+                rel.setScore(newScore);
             }
             if (req.getMissScore() != null) {
                 rel.setMissScore(req.getMissScore());
             }
             if (req.getMissScoreType() != null) {
                 rel.setMissScoreType(req.getMissScoreType());
+            }
+            // 自定义各选项得分：整份覆盖（前端每次提交全部选项分值）
+            if (req.getOptionScores() != null) {
+                rel.setOptionScores(writeOptionScoresJson(req.getOptionScores()));
             }
             // 组合题小题分值：整份覆盖（前端每次提交全部已确认小题）
             if (req.getSubScores() != null) {
@@ -532,6 +547,8 @@ public class PaperQuesServiceImpl implements PaperQuesService {
 
         // 组合题：带上各小题（含各自分值），前端才能"逐个小小题配置 + 单独删除"
         card.setSubScores(readSubScores(rel.getSubScores()));
+        card.setBlankScores(readBlankScores(rel.getBlankScores()));
+        card.setOptionScores(readOptionScores(rel.getOptionScores()));
         if (ques.getType() != null && ques.getType() == 5) {
             card.setSubQuestions(subQuestionsOf(ques.getId()));
         } else {
@@ -573,6 +590,151 @@ public class PaperQuesServiceImpl implements PaperQuesService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * 填空题每空分值的落库 JSON。
+     *
+     * <p>口径（用户确认）：各空之和与整题分值两种模式都支持——
+     * 前端先手填了总分就传 score，这里校验各空之和必须等于它；
+     * 前端没填总分则各空分值求和即整题分值。校验在 {@link #applyBlankScores} 里做。
+     */
+    private String writeBlankScoresJson(List<PaperQuesDtos.BlankScore> scores) {
+        if (scores == null || scores.isEmpty()) {
+            return null;
+        }
+        try {
+            return OBJECT_MAPPER.writeValueAsString(scores);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String writeOptionScoresJson(List<PaperQuesDtos.OptionScore> scores) {
+        if (scores == null || scores.isEmpty()) {
+            return null;
+        }
+        try {
+            return OBJECT_MAPPER.writeValueAsString(scores);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 读回多选题各选项得分，供组卷编辑页回显。 */
+    private List<PaperQuesRespDtos.OptionScore> readOptionScores(String json) {
+        if (!StringUtils.hasText(json)) {
+            return List.of();
+        }
+        try {
+            return OBJECT_MAPPER.readValue(json, OBJECT_MAPPER.getTypeFactory()
+                    .constructCollectionType(List.class, PaperQuesRespDtos.OptionScore.class));
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    /**
+     * 按空得分校验并回填整题分值。
+     *
+     * <p>规则：开启按空得分的填空，各空分值之和即该题分值。
+     * 传入的 score 为空或 0 时直接用求和结果；传入正数时必须等于求和，否则报错，
+     * 避免「题目总分 10、三个空各 3 分」这种对不上的配置流入判分。
+     *
+     * @return 最终应落库的整题分值
+     */
+    private BigDecimal resolveScoreWithBlanks(BigDecimal requested,
+                                              List<PaperQuesDtos.BlankScore> blanks) {
+        if (blanks == null || blanks.isEmpty()) {
+            return requested == null ? BigDecimal.ZERO : requested;
+        }
+        BigDecimal sum = BigDecimal.ZERO;
+        for (PaperQuesDtos.BlankScore blank : blanks) {
+            if (blank == null) {
+                continue;
+            }
+            if (blank.getBlankIndex() == null || blank.getBlankIndex() < 1) {
+                throw new BizException("按空得分的空序号不合法");
+            }
+            BigDecimal s = blank.getScore();
+            if (s == null || s.compareTo(BigDecimal.ZERO) < 0) {
+                throw new BizException("按空得分的每空分值不能为负");
+            }
+            sum = sum.add(s);
+        }
+        if (requested == null || requested.compareTo(BigDecimal.ZERO) <= 0) {
+            // 没填总分：以各空之和为准
+            return sum;
+        }
+        if (requested.compareTo(sum) != 0) {
+            throw new BizException("各空分值之和（" + sum.stripTrailingZeros().toPlainString()
+                    + "）必须等于此题分值（" + requested.stripTrailingZeros().toPlainString() + "）");
+        }
+        return requested;
+    }
+
+    /** 读回填空题每空分值，供组卷编辑页回显。 */
+    private List<PaperQuesRespDtos.BlankScore> readBlankScores(String json) {        if (!StringUtils.hasText(json)) {
+            return List.of();
+        }
+        try {
+            return OBJECT_MAPPER.readValue(json, OBJECT_MAPPER.getTypeFactory()
+                    .constructCollectionType(List.class, PaperQuesRespDtos.BlankScore.class));
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    /**
+     * 组卷改整题分值时，按比例重算各空分值（用户确认的行为）。
+     *
+     * <p>规则：各空按「原占比 × 新题分」重算，保留两位；除不尽的零头给最后一个空，
+     * 保证重算后各空之和精确等于新题分——否则改完分数又会出现总和与题分不一致。
+     * 原本没有按空分值（未开启按空得分）时不动，保持空值语义。
+     *
+     * @return 重算后的 JSON；无按空配置时返回原值（可能为 null）
+     */
+    private String rescaleBlankScores(String json, BigDecimal newScore) {
+        List<PaperQuesRespDtos.BlankScore> current = readBlankScores(json);
+        if (current.isEmpty()) {
+            return json;
+        }
+        BigDecimal oldSum = BigDecimal.ZERO;
+        for (PaperQuesRespDtos.BlankScore bs : current) {
+            oldSum = oldSum.add(bs.getScore() == null ? BigDecimal.ZERO : bs.getScore());
+        }
+        if (oldSum.compareTo(BigDecimal.ZERO) <= 0) {
+            // 原分值为 0 无法按比例换算，改为均分新题分
+            List<BigDecimal> even = QuestionGraderImpl.evenSplit(newScore, current.size());
+            List<PaperQuesDtos.BlankScore> next = new ArrayList<>(current.size());
+            for (int i = 0; i < current.size(); i++) {
+                PaperQuesDtos.BlankScore bs = new PaperQuesDtos.BlankScore();
+                bs.setBlankIndex(current.get(i).getBlankIndex());
+                bs.setScore(even.get(i));
+                next.add(bs);
+            }
+            return writeBlankScoresJson(next);
+        }
+        List<PaperQuesDtos.BlankScore> next = new ArrayList<>(current.size());
+        BigDecimal used = BigDecimal.ZERO;
+        for (int i = 0; i < current.size(); i++) {
+            PaperQuesRespDtos.BlankScore src = current.get(i);
+            BigDecimal old = src.getScore() == null ? BigDecimal.ZERO : src.getScore();
+            BigDecimal value;
+            if (i == current.size() - 1) {
+                // 最后一空补差，保证总和恰好等于新题分
+                value = newScore.subtract(used);
+            } else {
+                value = old.multiply(newScore)
+                        .divide(oldSum, 2, java.math.RoundingMode.HALF_UP);
+                used = used.add(value);
+            }
+            PaperQuesDtos.BlankScore bs = new PaperQuesDtos.BlankScore();
+            bs.setBlankIndex(src.getBlankIndex());
+            bs.setScore(value.max(BigDecimal.ZERO));
+            next.add(bs);
+        }
+        return writeBlankScoresJson(next);
     }
 
     /** 组合题的各个小题（exam_question.parent_id = 父题 id）。 */

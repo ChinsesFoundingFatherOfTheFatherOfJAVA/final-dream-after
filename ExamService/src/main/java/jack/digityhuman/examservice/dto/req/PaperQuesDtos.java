@@ -21,6 +21,10 @@ public final class PaperQuesDtos {
         private Integer missScoreType;
         /** 组合题各小题分值（父题分值由各小题汇总） */
         private List<SubScore> subScores;
+        /** 填空题按空得分：[{blankIndex,score}]，仅题目开启「按空得分」时有意义 */
+        private List<BlankScore> blankScores;
+        /** 多选题自定义各选项得分：[{option,score}]，仅 missScoreType=3 时有意义 */
+        private List<OptionScore> optionScores;
         private String libId;
         /** 题库模块 03 §3.3 的请求态（type/content/questionItems/判断题字段/答案/考点） */
         private QuesDtos.SaveReq question;
@@ -46,6 +50,10 @@ public final class PaperQuesDtos {
         private BigDecimal missScore;
         private Integer missScoreType;
         private List<SubScore> subScores;
+        /** 填空题按空得分：[{blankIndex,score}]；为空表示按整题计分 */
+        private List<BlankScore> blankScores;
+        /** 多选题自定义各选项得分：[{option,score}]；仅 missScoreType=3 时有意义 */
+        private List<OptionScore> optionScores;
         private String libId;
         private Integer levelType;
         /** 未发布时的题目内容更新（走题库 QuesService） */
@@ -92,5 +100,25 @@ public final class PaperQuesDtos {
         private BigDecimal score;
         private BigDecimal missScore;
         private Integer missScoreType;
+    }
+
+    /**
+     * 填空题每空分值。[{blankIndex,score}]
+     * <p>blankIndex 从 1 开始，对应题干 _(1)_ _(2)_ 的第几个空。
+     */
+    @Data
+    public static class BlankScore {
+        private Integer blankIndex;
+        private BigDecimal score;
+    }
+
+    /**
+     * 多选题每个选项的分值。[{option,score}]
+     * <p>option 为选项字母 A/B/C…，只对正确选项有意义。
+     */
+    @Data
+    public static class OptionScore {
+        private String option;
+        private BigDecimal score;
     }
 }
