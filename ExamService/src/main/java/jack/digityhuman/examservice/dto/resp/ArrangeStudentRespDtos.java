@@ -44,6 +44,22 @@ public final class ArrangeStudentRespDtos {
         private Integer screenSwitchCount;
         private Integer submitType;
         private Integer retakeUsed;
+        /** 加入来源：原站 joinMethod；1 手动添加（当前只走指派添加） */
+        private Integer joinSource;
+        /** 排名：同分同名次（1,2,2,4）；0 表示未参与排名 */
+        private Integer rankNo;
+        /** 补考成绩；null 表示未补考 */
+        private BigDecimal retakeScore;
+        /** 补考通过状态；null 表示无补考记录，0 不通过 1 通过 */
+        private Integer retakePassStatus;
+        /** 参考设备：原站 deviceType（0 未知 / 1 PC / 2 移动） */
+        private Integer referDevice;
+        /** 参考次数：原站 attendCount */
+        private Integer referCount;
+        /** 是否一次通过：1 是 */
+        private Integer oncePassed;
+        /** 是否有补考：1 是（原站 existedResit） */
+        private Integer hasRetake;
         private String currentAttemptId;
         /** 是否可安排补考（未用过补考且已交卷） */
         private Boolean canRetake;

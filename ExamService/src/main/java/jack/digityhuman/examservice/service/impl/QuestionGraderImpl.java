@@ -282,10 +282,22 @@ public class QuestionGraderImpl implements QuestionGrader {
         if (text == null || text.isBlank()) {
             return List.of();
         }
-        return Arrays.stream(text.split("\\r?\\n"))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .toList();
+        // 分隔符必须与答题页 StudentAnswerServiceImpl.blankCountOf 完全一致，否则会出现
+        // 「界面 3 个输入框、判分只认 1 个空」的两套口径，学员填了也不得分（2026-11-11 实测发现）。
+        // 历史答案三种写法都认：换行（新表单逐行录入）、分号（老题库导入）、竖线（部分模板）。
+        List<String> out = new ArrayList<>();
+        for (String line : text.split("[\\r\\n]+")) {
+            if (line.isBlank()) {
+                continue;
+            }
+            for (String seg : line.split("[;；|]")) {
+                String trimmed = seg.trim();
+                if (!trimmed.isEmpty()) {
+                    out.add(trimmed);
+                }
+            }
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------ 问答

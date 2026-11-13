@@ -595,7 +595,18 @@ public class ArrangeServiceImpl implements ArrangeService {
         item.setEntryStartAt(row.getEntryStartAt() == null ? null : TIME.format(row.getEntryStartAt()));
         item.setEntryEndAt(row.getEntryEndAt() == null ? null : TIME.format(row.getEntryEndAt()));
         item.setCreateUserId(row.getCreateUserId());
-        item.setCreateFullname(row.getCreateFullname());
+        /*
+         * 创建人姓名（2026-11-13 修）：优先用 Dubbo 实时查到的真实姓名。
+         *
+         * <p>**问题**：`exam_arrange.create_fullname` 里存在历史脏数据 —— 实测
+         * admin 这条记录存的是 `?????`（HEX 3F3F3F3F3F），即当初写入时
+         * 中文被字符集转换成了问号，而 `sys_user.name` 里是正确的「超级管理员」。
+         * 直接回显该列会让页面显示一串问号，用户根本不知道创建人是谁。
+         *
+         * <p>**修法**：拿 createUserId 走 OrgQueryService 取真名；查不到才回退列值。
+         * 只改读取侧：写入侧的脏数据已存在，回填要靠数据修复脚本，不在读接口里做。
+         */
+        item.setCreateFullname(resolveCreatorName(row));
         item.setCreateUserName(row.getCreateUserName());
         item.setCreatedAt(row.getCreatedAt() == null ? null : TIME.format(row.getCreatedAt()));
         item.setOwnerUserIds(split(row.getOwnerUserIds(), ","));
@@ -714,6 +725,34 @@ public class ArrangeServiceImpl implements ArrangeService {
         } catch (Exception e) {
             return "";
         }
+    }
+
+    /**
+     * 解析创建人显示名（2026-11-13）。
+     *
+     * <p>优先走 Dubbo 用 createUserId 取实时姓名，取不到才回退 `create_fullname` 列。
+     *
+     * <p>为什么不能直接用列值：`exam_arrange.create_fullname` 存在历史脏数据，
+     * 中文在写入时被转成了问号（实测 admin 记录为 `?????`，HEX 3F3F3F3F3F），
+     * 而 `sys_user.name` 里是正确的「超级管理员」。读接口直接回显就是一串问号。
+     *
+     * <p>任何异常都吞掉并回退列值 —— 详情页不能因为查不到用户名而整页失败。
+     */
+    private String resolveCreatorName(ExamArrange row) {
+        String fallback = row.getCreateFullname();
+        try {
+            String uid = row.getCreateUserId();
+            if (!StringUtils.hasText(uid) || "0".equals(uid)) {
+                return fallback;
+            }
+            var users = orgQueryService.listUsersByIds(List.of(Long.parseLong(uid)));
+            if (users != null && !users.isEmpty() && StringUtils.hasText(users.get(0).getName())) {
+                return users.get(0).getName();
+            }
+        } catch (Exception ignored) {
+            // 查询失败/用户已删：回退到列值，不让详情页报错
+        }
+        return fallback;
     }
 
     private void log(String arrangeId, String action, String targetId) {

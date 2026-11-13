@@ -177,20 +177,24 @@ public class ExamResultServiceImpl implements ExamResultService {
             uq.setQuesType(type);
             uq.setOrderIndex(order);
             uq.setPointNames(String.join("；", pointsOf(ques.getId())));
-            uq.setSubmitContent(ans == null ? "" : formatSubmit(ans.getAnswerJson()));
+            // items 提前取：submitContent 要靠它把选项 ID 映射成字母（2026-11-13）
+            List<ExamQuestionItem> items = itemsOf(ques.getId());
+            uq.setSubmitContent(ans == null ? "" : formatSubmit(ans.getAnswerJson(), items));
             uq.setAnswerContent(correctAnswerOf(ques));
             uq.setExplainText(ques.getExplainText());
             uq.setTotalScore(rel.getScore());
             uq.setScore(ans == null ? BigDecimal.ZERO : ans.getScore());
             uq.setChecked(ans == null ? 0 : ans.getCorrectFlag());
-            List<ExamQuestionItem> items = itemsOf(ques.getId());
             if (!items.isEmpty()) {
                 List<ExamResultRespDtos.ChoiceItem> choices = new ArrayList<>();
-                Set<Integer> picked = parseAnswer(ans == null ? null : ans.getAnswerJson());
+                List<String> pickedIds = parsePickedItemIds(ans == null ? null : ans.getAnswerJson());
                 for (int i = 0; i < items.size(); i++) {
                     ExamResultRespDtos.ChoiceItem c = new ExamResultRespDtos.ChoiceItem();
                     c.setItemContent(items.get(i).getItemContent());
-                    c.setChecked(picked.contains(i));
+                    // 按 Item ID 判选中：此前用「下标集合」永远为空，
+                    // 导致考生选了哪项在结果页完全显示不出来
+                    c.setChecked(items.get(i).getId() != null
+                            && pickedIds.contains(items.get(i).getId()));
                     c.setAnswer(items.get(i).getAnswer());
                     choices.add(c);
                 }
@@ -477,64 +481,111 @@ public class ExamResultServiceImpl implements ExamResultService {
         return ques.getAnswerContent();
     }
 
-    /** 考生答案展示：选项下标转字母，其它原样。 */
-    private String formatSubmit(String raw) {
-        Set<Integer> picked = parseAnswer(raw);
-        if (!picked.isEmpty()) {
-            StringBuilder sb = new StringBuilder();
-            for (Integer i : picked) {
-                if (i >= 0 && i < 26) {
-                    sb.append((char) ('A' + i));
-                }
-            }
-            if (sb.length() > 0) {
-                return sb.toString();
-            }
+    /**
+     * 考生答案展示：选项 Item ID → 选项字母。
+     *
+     * <p>★ 2026-11-13 修：此前直接把 answer_json 当成「下标数组」解析，
+     * 而实际存储格式是 {"answer":["2109828747687329791"],"attach":[]}
+     * —— 里面是**选项 Item 的雪花 ID**，不是下标（见 03 §10B.5 / DER-15）。
+     * 于是 parseAnswer 认不出对象结构、返回空集，formatSubmit 兜底返回原始 JSON，
+     * 前端就显示出 {"answer":["2112444930953543683"],"attach":[]} 这种裸串。
+     *
+     * <p>同一个 bug 还让 choiceItems[].checked 全为 false
+     * （第 189 行同样走 parseAnswer），即「考生选了哪项」在结果页完全显示不出来
+     * —— 这比裸串更危险，因为界面上看不出异常。
+     */
+    private String formatSubmit(String raw, List<ExamQuestionItem> items) {
+        List<String> picked = parsePickedItemIds(raw);
+        if (picked.isEmpty()) {
+            return "";
         }
-        return raw == null ? "" : raw;
+        StringBuilder sb = new StringBuilder();
+        for (String itemId : picked) {
+                int idx = indexOfItem(items, itemId);
+                if (idx >= 0 && idx < 26) {
+                    sb.append((char) ('A' + idx));
+                }
+        }
+        // 选项对不上（题库改过选项）时不假装，如实给空
+        return sb.toString();
     }
 
-    private Set<Integer> parseAnswer(String raw) {
-        Set<Integer> out = new LinkedHashSet<>();
+    /** 取选项在本题里的序号；找不到返回 -1 */
+    private int indexOfItem(List<ExamQuestionItem> items, String itemId) {
+        for (int i = 0; i < items.size(); i++) {
+            if (itemId.equals(items.get(i).getId())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * 从 answer_json 里取出考生选中的**选项 Item ID 列表**。
+     *
+     * <p>存储格式（DER-15 / 03 §10B.5）：
+     * <pre>{"answer":["2109828747687329791"],"attach":[]}</pre>
+     * 注意里面是选项 Item 的雪花 ID，**不是下标、不是字母**。
+     *
+     * <p>为什么不再兼容老的「下标数组 / {"selected":[...]}」：
+     * 那是本模块早期自造的格式，从未有数据落库（实现一直只写 answer 这个键）。
+     * 保留兼容分支反而会让「到底以哪个为准」变得含糊。
+     * 但**纯字母串**（如 "AB"）仍兼容——导入题/人工排查时可能手写。
+     *
+     * <p>任何解析失败都返回空列表，绝不抛：结果页是只读展示，
+     * 一道题解析失败不该让整页 500。
+     */
+    private List<String> parsePickedItemIds(String raw) {
+        List<String> out = new ArrayList<>();
         if (!StringUtils.hasText(raw)) {
             return out;
         }
         String text = raw.trim();
         try {
             JsonNode node = JSON.readTree(text);
+            JsonNode answer = node.isObject() && node.has("answer") ? node.get("answer") : null;
+            if (answer != null && answer.isArray()) {
+                for (JsonNode n : answer) {
+                    addItemId(out, n);
+                }
+                return out;
+            }
+            // 极少数历史数据可能是裸数组
             if (node.isArray()) {
                 for (JsonNode n : node) {
-                    addNode(out, n);
+                    addItemId(out, n);
                 }
-            } else if (node.isObject() && node.has("selected")) {
-                for (JsonNode n : node.get("selected")) {
-                    addNode(out, n);
-                }
-            } else {
-                addNode(out, node);
+                return out;
             }
         } catch (Exception e) {
+            // 非 JSON：只有当整串**全是字母**时才当答案（如 "AB"）。
+            // ★ 2026-11-13 修：原先无条件扫字母，导致损坏的 JSON
+            // （如 "{not valid json"）会把里面的零星字母当成选项，
+            // 解析出根本不存在的答案。宁可返回空，也不要编造。
+            if (!text.matches("^[A-Za-z]+$")) {
+                return out;
+            }
             for (char ch : text.toUpperCase().toCharArray()) {
                 if (ch >= 'A' && ch <= 'Z') {
-                    out.add(ch - 'A');
+                    out.add(String.valueOf((char) ('A' + (ch - 'A'))));
                 }
             }
         }
         return out;
     }
 
-    private void addNode(Set<Integer> out, JsonNode n) {
+    /** 收一个 Item ID：雪花号可能是字符串也可能是数字，两者都收 */
+    private void addItemId(List<String> out, JsonNode n) {
         if (n == null || n.isNull()) {
             return;
         }
-        if (n.isInt() || n.isLong()) {
-            out.add(n.asInt());
-        } else if (n.isTextual()) {
-            for (char ch : n.asText().toUpperCase().toCharArray()) {
-                if (ch >= 'A' && ch <= 'Z') {
-                    out.add(ch - 'A');
-                }
+        if (n.isTextual()) {
+            String v = n.asText();
+            if (StringUtils.hasText(v)) {
+                out.add(v);
             }
+        } else if (n.isNumber()) {
+            out.add(n.asText());
         }
     }
 

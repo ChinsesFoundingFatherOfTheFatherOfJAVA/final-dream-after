@@ -1,4 +1,4 @@
-package jack.digityhuman.atualcombattraining.migration;
+﻿package jack.digityhuman.atualcombattraining.migration;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -47,7 +47,7 @@ public final class SchemaMigrationRunner {
     }
 
     public static void main(String[] args) throws Exception {
-        String host = env("ACT_DB_HOST", "10.100.26.200");
+        String host = env("ACT_DB_HOST", "192.168.81.10");
         String port = env("ACT_DB_PORT", "3306");
         String db = env("ACT_DB_NAME", "final_dream");
         String user = env("ACT_DB_USER", "root");

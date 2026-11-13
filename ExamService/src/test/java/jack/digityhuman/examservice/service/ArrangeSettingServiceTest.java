@@ -92,11 +92,12 @@ class ArrangeSettingServiceTest {
     }
 
     @Test
-    void 默认列设置含11列且保留列可见() {
+    void 默认列设置含26列且保留列可见() {
         when(currentUserService.userId(null)).thenReturn("13");
         when(settingMapper.selectOne(any())).thenReturn(null);
         ArrangeSettingDtos.ColumnSetting setting = service.getStudentColumns();
-        assertThat(setting.getColumns()).hasSize(11);
+        // 与原平台「列设置」面板对齐（26 项）；少一项就说明 DEFAULT_ORDER 又漂了
+        assertThat(setting.getColumns()).hasSize(26);
         assertThat(setting.getColumns().stream()
                 .filter(c -> List.of("account", "fullname", "operation").contains(c.getKey()))
                 .allMatch(ArrangeSettingDtos.Column::getVisible)).isTrue();

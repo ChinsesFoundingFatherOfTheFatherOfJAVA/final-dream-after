@@ -52,6 +52,7 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -126,6 +127,14 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
         }
         if (q.getPositionIds() != null && !q.getPositionIds().isEmpty()) {
             w.in(ExamArrangeStudent::getPositionId, q.getPositionIds());
+        // 岗位只有名称没有 ID（SysUserDTO 无 positionId，applyUser 也把 positionId 写成空串），
+        // 所以原平台「选择岗位」筛选走 position_name，否则永远筛不出人。
+        if (q.getPositionNames() != null && !q.getPositionNames().isEmpty()) {
+            w.in(ExamArrangeStudent::getPositionName, q.getPositionNames());
+        }
+        }
+        if (q.getJoinType() != null && q.getJoinType() > 0) {
+            w.eq(ExamArrangeStudent::getJoinType, q.getJoinType());
         }
         if (q.getPassStatus() != null && q.getPassStatus() >= 0) {
             if (q.getPassStatus() == 2) {
@@ -134,6 +143,15 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
             } else {
                 w.eq(ExamArrangeStudent::getPassStatus, q.getPassStatus());
             }
+        }
+        // 开考时间范围：原平台筛选叫「开考开始时间/开考结束时间」，对应 start_at
+        LocalDateTime startBegin = parseTime(q.getExamStartBegin(), false);
+        LocalDateTime startEnd = parseTime(q.getExamStartEnd(), true);
+        if (startBegin != null) {
+            w.ge(ExamArrangeStudent::getStartAt, startBegin);
+        }
+        if (startEnd != null) {
+            w.le(ExamArrangeStudent::getStartAt, startEnd);
         }
         boolean asc = "asc".equalsIgnoreCase(direction);
         w.orderBy(true, asc, "createdAt".equals(orderby) ? ExamArrangeStudent::getCreatedAt : ExamArrangeStudent::getUpdatedAt);
@@ -462,9 +480,12 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
                 .eq(ExamAttempt::getArrangeId, arrangeId));
         for (ExamAttempt attempt : all) {
             if ((attempt.getStatus() == null || attempt.getStatus() != 3) && attempt.getRankNo() != null) {
-                attempt.setRankNo(null);
-                attempt.setUpdatedAt(LocalDateTime.now());
-                attemptMapper.updateById(attempt);
+                // 不能用 entity.setRankNo(null) + updateById：MP 默认 NOT_NULL 策略下 null 不进 SET，
+                // 清名次会变成空操作，退回/作废的卷仍带着旧名次留在榜上（不报错，mock 单测测不出）。
+                attemptMapper.update(null, Wrappers.<ExamAttempt>lambdaUpdate()
+                        .set(ExamAttempt::getRankNo, null)
+                        .set(ExamAttempt::getUpdatedAt, LocalDateTime.now())
+                        .eq(ExamAttempt::getId, attempt.getId()));
             }
         }
         List<ExamAttempt> attempts = all.stream()
@@ -659,6 +680,30 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
         }
         return arrange;
     }
+    /**
+     * 宽松解析前端传来的时间筛选值。
+     *
+     * <p>前端日期选择器可能给 `yyyy-MM-dd`（只到日）或 `yyyy-MM-dd HH:mm:ss`；
+     * 只到日时，开始时间补 00:00:00、结束时间补 23:59:59，否则选同一天会筛不出东西。
+     * 解析失败一律返回 null（当没传），不报错：筛选条件是可选输入，
+     * 为格式问题挡掉整次查询没有意义。
+     */
+    private LocalDateTime parseTime(String raw, boolean endOfDay) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        String v = raw.trim();
+        try {
+            if (v.length() <= 10) {
+                LocalDate d = LocalDate.parse(v, DateTimeFormatter.ISO_LOCAL_DATE);
+                return endOfDay ? d.atTime(23, 59, 59) : d.atStartOfDay();
+            }
+            return LocalDateTime.parse(v, TIME);
+        } catch (Exception e) {
+            log.warn("考生开考时间筛选值无法解析，已忽略: {}", v);
+            return null;
+        }
+    }
 
     /** 资料回填：StaffManagement 只给 deptCode/deptName/deptPath，deptId 暂用 deptCode。 */
     private void applyUser(ExamArrangeStudent row, SysUserDTO u, String uid, Integer joinType) {
@@ -675,6 +720,10 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
         row.setJoinType(joinType == null ? 1 : joinType);
         row.setJoinMethod(1);
         row.setUserStatus(1);
+        // 参考次数：加入名单即算一次参考机会，与 exam_attempt 行数无关
+        if (row.getAttendCount() == null) {
+            row.setAttendCount(0);
+        }
         row.setUdpStatus(1);
         row.setUdpDeleted(0);
         if (row.getExamStatus() == null) {
@@ -703,6 +752,20 @@ public class ArrangeStudentServiceImpl implements ArrangeStudentService {
         it.setPositionId(row.getPositionId());
         it.setPositionName(row.getPositionName());
         it.setJoinType(row.getJoinType());
+        // 加入来源：原站 joinMethod（1 手动添加），不改 joinType 展示
+        it.setJoinSource(row.getJoinMethod());
+        // 排名写行内 ranking（批阅/分析时回写），0 与 null 都表示未上榜
+        it.setRankNo(row.getRanking());
+        // 补考成绩：库里 resit_score 为 -1 表示未补考，对外统一给 null
+        it.setRetakeScore(row.getResitScore() != null && row.getResitScore().signum() < 0
+                ? null : row.getResitScore());
+        // 补考通过状态：resit_passed 负值为未判定，对外给 null
+        it.setRetakePassStatus(row.getResitPassed() != null && row.getResitPassed() < 0
+                ? null : row.getResitPassed());
+        it.setReferDevice(row.getDeviceType());
+        it.setReferCount(row.getAttendCount());
+        it.setOncePassed(row.getOnePassed());
+        it.setHasRetake(row.getExistedResit());
         it.setExamStatus(row.getExamStatus());
         // 库里 -1 表示未知，对外统一成 2（04 §1.5 语义）
         it.setPassStatus(row.getPassStatus() == null || row.getPassStatus() < 0 ? 2 : row.getPassStatus());

@@ -23,3 +23,8 @@ graphify-out/
 # ---- OS ----
 .DS_Store
 Thumbs.db
+
+# 临时备份与调试输出
+*.bak-2026*
+.openidea
+cp.txt

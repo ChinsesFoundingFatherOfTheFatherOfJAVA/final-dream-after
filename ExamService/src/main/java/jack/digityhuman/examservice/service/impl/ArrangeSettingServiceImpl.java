@@ -34,9 +34,14 @@ public class ArrangeSettingServiceImpl implements ArrangeSettingService {
     private static final String BIZ = "arrange_student_columns";
     /** 保留列：不可隐藏（04 §9 规则） */
     private static final List<String> LOCKED = List.of("account", "fullname", "operation");
+    /** 默认列顺序：与原平台「列设置」面板一致（26 项，保留列在操作列尾部）。 */
     private static final List<String> DEFAULT_ORDER = List.of(
-            "account", "fullname", "deptName", "positionName", "examStatus", "passStatus",
-            "score", "highestScore", "attemptQty", "submitAt", "operation");
+            "account", "fullname", "accountStatus", "deptName", "positionName",
+            "joinType", "joinSource", "examStatus", "startAt", "submitAt",
+            "firstJoinAt", "ip", "durationSec", "score", "highestAttemptNo",
+            "screenSwitchCount", "submitType", "rankNo", "passStatus", "retakeScore",
+            "retakePassStatus", "referDevice", "referCount", "oncePassed", "hasRetake",
+            "operation");
 
     private final ExamUserSettingMapper settingMapper;
     private final CurrentUserService currentUserService;

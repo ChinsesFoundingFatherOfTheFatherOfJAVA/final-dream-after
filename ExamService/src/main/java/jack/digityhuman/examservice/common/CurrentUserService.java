@@ -56,6 +56,25 @@ public class CurrentUserService {
         return Boolean.TRUE.equals(flag) || "true".equalsIgnoreCase(String.valueOf(flag));
     }
 
+    /**
+     * 当前用户姓名（JWT 的 {@code name} claim）。
+     *
+     * <p><b>为什么从 token 取而不是查 sys_user</b>：本应用不拥有用户表，
+     * 直读 sys_* 违反模块数据所有权铁律；走 Dubbo `OrgQueryService` 又要为
+     * 「批阅时记一个姓名」多一次跨服务调用，且该服务未上线时会拖慢批阅提交。
+     * token 里的 name 是登录时的权威值，足够做留痕。
+     *
+     * <p>解析不出来返回空串，调用方自行回落成 userId。
+     */
+    public String realName(String authorization) {
+        Claims claims = claims(authorization);
+        if (claims == null) {
+            return "";
+        }
+        String name = claims.get("name", String.class);
+        return name == null ? "" : name.trim();
+    }
+
     private Claims claims(String authorization) {
         String header = resolveAuthorization(authorization);
         if (header == null || !header.startsWith("Bearer ")) {
