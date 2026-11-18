@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  管理端首页「平台总览」本域统计 SQL（03-接口文档 第 2.4 节）。
+  单表 act_practice_attempt，不 JOIN（后端架构总纲 第 5 节）；外部输入一律 #{} 绑定。
+
+  归属时间：COALESCE(started_at, created_at)。ready 态的 attempt 只代表"准备就绪、还没开练"，
+  没有真正的练习行为，因此计时与计数都把它排除（01-需求文档 第 2.6 节）。
+  paused 与否不影响归属，因为时长里已扣掉 paused_duration_ms。
+
+  时长口径：GREATEST(TIMESTAMPDIFF(SECOND, 起点, COALESCE(ended_at, NOW())), 0)
+  时长口径（契约 02-技术实现方案 第 2.2 节）：ended_at 为空的未结束记录按 0 计，不按「到当前时刻」计。
+  为什么：①按 NOW() 计会让同一次请求里的分桶查询与合计查询看到不同的时间点，
+  导致「桶内时长之和 ≠ 区间合计」；②未结束的练习没有确定的时长，把它算成「已练了这么久」
+  会让看板上的时长随着用户放着页面不管而持续增长，是错误口径而不是实时口径。
+
+  已结束记录的时长 = 总时长 - 暂停时长，两处都要夹 0：
+  1) 内层夹 TIMESTAMPDIFF —— 历史脏数据可能出现 ended_at 早于 started_at（时钟回拨/手改库），MySQL 直接返回负数；
+  2) 外层夹最终值 —— paused_duration_ms 理论不超过总时长，但一旦被改大，相减会得到「负的练习时长」。
+  两处都用 SQL 钳，Service 不做二次兜底，避免同一口径出现在两个地方。
+  分桶键：参数化到 CASE 里而不是拼 SQL 片段 —— granularity 来自 HTTP 入参，
+  拼字符串等于把外部输入塞进 SQL 结构；用 #{granularity} 绑定则只有三种取值能命中分支。
+  week 取该自然周的周一（WEEKDAY 0=周一），与接口文档 第 3.1 节"MM-DD（周一）"一致。
+-->
+<mapper namespace="jack.digityhuman.atualcombattraining.mapper.ActPracticeAttemptMapper">
+
+    <!-- 按粒度分桶的趋势：一次 GROUP BY 算完，禁止逐日循环查询（02-技术实现方案 第 3.2 节） -->
+    <select id="selectStatBuckets"
+            resultType="jack.digityhuman.atualcombattraining.dto.AdminStatDtos$BucketRow">
+        SELECT b.bucket_key AS bucket,
+               COUNT(DISTINCT b.user_id) AS active_users,
+               SUM(b.active_seconds) AS active_seconds
+        FROM (
+            SELECT a.user_id,
+                   CASE #{granularity}
+                       WHEN 'month' THEN DATE_FORMAT(a.eff_start, '%Y-%m')
+                       WHEN 'week'  THEN DATE_FORMAT(DATE_SUB(a.eff_start, INTERVAL WEEKDAY(a.eff_start) DAY), '%Y-%m-%d')
+                       ELSE DATE_FORMAT(a.eff_start, '%Y-%m-%d')
+                   END AS bucket_key,
+                    CASE WHEN a.ended_at IS NULL THEN 0
+                         ELSE GREATEST(
+                             GREATEST(TIMESTAMPDIFF(SECOND, a.eff_start, a.ended_at), 0)
+                             - GREATEST(COALESCE(a.paused_duration_ms, 0), 0) / 1000,
+                             0
+                         )
+                    END AS active_seconds
+            FROM (
+                SELECT user_id,
+                       ended_at,
+                       paused_duration_ms,
+                       COALESCE(started_at, created_at) AS eff_start
+                FROM act_practice_attempt
+                WHERE COALESCE(started_at, created_at) &gt;= #{from}
+                  AND COALESCE(started_at, created_at) &lt;= #{to}
+                  AND status &lt;&gt; #{readyStatus}
+            ) a
+        ) b
+        GROUP BY b.bucket_key
+        ORDER BY b.bucket_key
+    </select>
+
+    <!--
+      区间合计：人数与时长必须独立于分桶再算一次。
+      COUNT(DISTINCT user_id) 不可跨桶相加（同一人出现在多天会被重复计），
+      所以"区间去重人数"只能由这条区间聚合给出，不能拿 series 相加。
+      人次与完成人次同表同过滤条件，顺带在同一次扫描里算出，避免多次往返。
+    -->
+    <select id="selectStatTotals"
+            resultType="jack.digityhuman.atualcombattraining.dto.AdminStatDtos$TotalsRow">
+        SELECT COUNT(DISTINCT a.user_id) AS active_users,
+               SUM(a.active_seconds) AS active_seconds,
+               COUNT(*) AS practice_visits,
+               SUM(CASE WHEN a.status = #{completedStatus} THEN 1 ELSE 0 END) AS finished_visits
+        FROM (
+            SELECT user_id,
+                   status,
+                    CASE WHEN ended_at IS NULL THEN 0
+                         ELSE GREATEST(
+                             GREATEST(TIMESTAMPDIFF(SECOND, COALESCE(started_at, created_at), ended_at), 0)
+                             - GREATEST(COALESCE(paused_duration_ms, 0), 0) / 1000,
+                             0
+                         )
+                    END AS active_seconds
+            FROM act_practice_attempt
+            WHERE COALESCE(started_at, created_at) &gt;= #{from}
+              AND COALESCE(started_at, created_at) &lt;= #{to}
+              AND status &lt;&gt; #{readyStatus}
+        ) a
+    </select>
+
+</mapper>

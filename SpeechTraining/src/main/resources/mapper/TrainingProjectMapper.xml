@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="jack.digityhuman.speechtraining.mapper.TrainingProjectMapper">
+    <!-- 项目总量：全量、不限统计区间，走主键计数即可（01-需求文档.md 第 2.3 节） -->
+    <select id="countProjects" resultType="long">
+        select count(*)
+        from training_project
+    </select>
+
+    <!-- 本期新增：按 created_at 归属区间，含两端（03-接口文档.md 第 3.4 节） -->
+    <select id="countProjectsCreatedBetween" resultType="long">
+        select count(*)
+        from training_project
+        where created_at &gt;= #{from}
+          and created_at &lt;= #{to}
+    </select>
+</mapper>

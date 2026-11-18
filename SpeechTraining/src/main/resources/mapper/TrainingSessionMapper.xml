@@ -9,4 +9,39 @@
         where id = #{sessionId}
         for update
     </select>
+    <!-- 平台总览区间汇总：学习人次=记录数，完成人次=status=1，活跃人数=distinct user_id，时长=sum(duration_seconds)。
+         单表聚合不 JOIN；status 是 0/1/2 整型（03-接口文档.md 第 3.2 节），完成条件写作 status = 1 -->
+    <select id="selectSessionTotals" resultType="jack.digityhuman.speechtraining.mapper.TrainingSessionMapper$SessionTotalsRow">
+        select count(*)                                                 as session_count,
+               coalesce(sum(case when status = 1 then 1 else 0 end), 0) as finished_count,
+               count(distinct user_id)                                  as active_users,
+               coalesce(sum(duration_seconds), 0)                       as duration_seconds
+        from training_session
+        where start_time &gt;= #{from}
+          and start_time &lt;= #{to}
+    </select>
+
+    <!-- 趋势分桶：一条 GROUP BY 出全部有数据的桶，无数据的桶由 Service 按区间补零。
+         bucketUnit 只参与选择表达式，取值已在 Service 侧白名单校验；时间参数一律 #{} 绑定 -->
+    <select id="selectSessionBuckets" resultType="jack.digityhuman.speechtraining.mapper.TrainingSessionMapper$SessionBucketRow">
+        select
+        <choose>
+            <when test="bucketUnit == 'month'">
+                date_format(start_time, '%Y-%m-01') as bucket,
+            </when>
+            <when test="bucketUnit == 'week'">
+                <!-- weekday() 以周一为 0，回退该天数即得自然周周一，与 Service 的 with(MONDAY) 口径一致 -->
+                date_format(date_sub(start_time, interval weekday(start_time) day), '%Y-%m-%d') as bucket,
+            </when>
+            <otherwise>
+                date_format(start_time, '%Y-%m-%d') as bucket,
+            </otherwise>
+        </choose>
+               count(distinct user_id)            as active_users,
+               coalesce(sum(duration_seconds), 0) as duration_seconds
+        from training_session
+        where start_time &gt;= #{from}
+          and start_time &lt;= #{to}
+        group by bucket
+    </select>
 </mapper>

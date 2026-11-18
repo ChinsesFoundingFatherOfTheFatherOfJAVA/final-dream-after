@@ -2,6 +2,7 @@ package jack.digityhuman.onlineclassroom.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import jack.digityhuman.onlineclassroom.dto.KngCourseDtos;
+import jack.digityhuman.onlineclassroom.dto.KngReadDtos;
 import jack.digityhuman.onlineclassroom.entity.KngCourse;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -41,4 +42,13 @@ public interface KngCourseMapper extends BaseMapper<KngCourse> {
      * 两表各自计数，编号序列不交叉。
      */
     int countPlatformNoByPrefix(@Param("prefix") String prefix);
+
+    /**
+     * 课程总量与本期新增（kng_course 单表一次聚合，不与学习记录 JOIN）。
+     * 总量不限区间（需求文档 §2.2「课程总量」），新增按 created_at 落在区间；两个计数条件不同，
+     * 用条件求和合并成一条 SQL，避免为同一张表发两条 count。
+     */
+    KngReadDtos.CourseCountRow selectCourseCounts(
+            @Param("from") java.time.LocalDateTime from,
+            @Param("to") java.time.LocalDateTime to);
 }

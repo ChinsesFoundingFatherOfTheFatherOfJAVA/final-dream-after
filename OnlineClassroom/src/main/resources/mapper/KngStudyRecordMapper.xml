@@ -150,4 +150,44 @@
         </if>
         group by dept_id
     </select>
+
+    <!-- ==================== 管理端首页「平台总览」统计（03 §2.2） ==================== -->
+
+    <!-- 一条 GROUP BY 出全部分桶指标：count(distinct user_id) 给折线人数、sum(study_len_hours) 给时长、
+         sum(case when study_status = 1 ...) 预留完成口径。granularity 已是 Service 收敛后的三值枚举，
+         XML 用 choose 映射到固定的 date_format 表达式，不做字符串拼接。
+         week 桶起点取「本周周一」：date_sub(start_study_time, interval weekday(...) day)。 -->
+    <select id="selectStudyBuckets" resultType="jack.digityhuman.onlineclassroom.dto.KngReadDtos$StudyBucketRow">
+        select
+        <choose>
+            <when test="granularity == 'month'">
+                date_format(start_study_time, '%Y-%m') bucket_key,
+            </when>
+            <when test="granularity == 'week'">
+                date_format(date_sub(start_study_time, interval weekday(start_study_time) day), '%Y-%m-%d') bucket_key,
+            </when>
+            <otherwise>
+                date_format(start_study_time, '%Y-%m-%d') bucket_key,
+            </otherwise>
+        </choose>
+            count(distinct user_id) active_users,
+            coalesce(sum(study_len_hours), 0) active_hours
+        from kng_study_record
+        where start_study_time &gt;= #{from}
+          and start_study_time &lt;= #{to}
+        group by bucket_key
+    </select>
+
+    <!-- 区间合计。start_study_time 为空的历史脏数据不落在任何区间，故 between 等价于 >= and <=，
+         写成两段比较是为了让 04-索引增补.sql 的 idx_sr_start_user 能走范围扫描。 -->
+    <select id="selectStudyRangeTotals" resultType="jack.digityhuman.onlineclassroom.dto.KngReadDtos$StudyRangeRow">
+        select
+            count(distinct user_id) active_users,
+            count(*) study_visits,
+            coalesce(sum(study_len_hours), 0) study_hours,
+            coalesce(sum(case when study_status = 1 then 1 else 0 end), 0) finished_visits
+        from kng_study_record
+        where start_study_time &gt;= #{from}
+          and start_study_time &lt;= #{to}
+    </select>
 </mapper>

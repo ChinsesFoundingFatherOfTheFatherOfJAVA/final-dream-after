@@ -59,4 +59,23 @@ public interface KngStudyRecordMapper extends BaseMapper<KngStudyRecord> {
     List<KngReadDtos.StudyDeptCountRow> selectDeptCountsByCoursewareIds(
             @Param("coursewareIds") List<String> coursewareIds,
             @Param("deptIds") List<String> deptIds);
+
+    // ==================== 管理端首页「平台总览」统计（03 §2.2） ====================
+
+    /**
+     * 按 granularity 分桶一次算完 4 个指标（一条 GROUP BY，禁止逐日循环查询）。
+     * granularity 由 Service 收敛成 day/week/month 三个字面量分支，XML 只做 choose 映射，不进 SQL 文本。
+     */
+    List<KngReadDtos.StudyBucketRow> selectStudyBuckets(
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to,
+            @Param("granularity") String granularity);
+
+    /**
+     * 区间合计（去重人数/记录数/时长/完成记录数）。
+     * 之所以不复用上面的桶结果：distinct 不能跨桶相加，桶内去重之和会高估区间活跃人数。
+     */
+    KngReadDtos.StudyRangeRow selectStudyRangeTotals(
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
 }

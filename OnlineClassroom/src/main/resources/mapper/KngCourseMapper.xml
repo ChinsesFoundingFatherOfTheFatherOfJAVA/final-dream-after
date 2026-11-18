@@ -91,4 +91,12 @@
         from kng_course
         where platform_no like concat(#{prefix}, '%')
     </select>
+
+    <!-- 课程情况卡：总量（不限区间）与本期新增（created_at 落在区间）一条 SQL 出两个计数 -->
+    <select id="selectCourseCounts" resultType="jack.digityhuman.onlineclassroom.dto.KngReadDtos$CourseCountRow">
+        select
+            count(*) course_total,
+            coalesce(sum(case when created_at &gt;= #{from} and created_at &lt;= #{to} then 1 else 0 end), 0) course_new
+        from kng_course
+    </select>
 </mapper>

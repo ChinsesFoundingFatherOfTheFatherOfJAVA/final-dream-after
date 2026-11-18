@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="jack.digityhuman.examservice.mapper.HomeStatMapper">
+
+    <!--
+      参考记录的归属时间：考试域以交卷时间为准，没交过卷的记录退回创建时间
+      （03-接口文档.md §3.4 的 COALESCE(submit_at, created_at)）。
+      用 COALESCE 而不是只认 submit_at：历史脏数据里存在 status=2/3 但 submit_at 为空的行，
+      只认 submit_at 会把它们整段漏掉，人数与时长都会少算。
+    -->
+    <sql id="attemptTime">COALESCE(t.submit_at, t.created_at)</sql>
+
+    <!--
+      桶键（yyyy-MM-dd / yyyy-MM）：
+      - day   ：自然日
+      - week  ：以周一为起点（WEEKDAY 周一=0，所以减 WEEKDAY 天即得本周周一），
+                不用 %x-%v 是为了让「桶起始日」本身落库，Service 补零时与 Java 的 LocalDate 对得上；
+      - month ：自然月
+      三种粒度在同一条 GROUP BY 里切换，禁止逐日查询。
+    -->
+    <sql id="bucketKey">
+        <choose>
+            <when test="granularity == 'month'">
+                DATE_FORMAT(<include refid="attemptTime"/>, '%Y-%m')
+            </when>
+            <when test="granularity == 'week'">
+                DATE_FORMAT(DATE_SUB(DATE(<include refid="attemptTime"/>), INTERVAL WEEKDAY(<include refid="attemptTime"/>) DAY), '%Y-%m-%d')
+            </when>
+            <otherwise>
+                DATE_FORMAT(<include refid="attemptTime"/>, '%Y-%m-%d')
+            </otherwise>
+        </choose>
+    </sql>
+
+    <!--
+      去重人数用 user_id 而不是 student_id：
+      exam_attempt.student_id 指向 exam_arrange_student 的行主键，同一个人被重新安排/重考会换行，
+      用它去重会把同一个人数成多个；user_id 才是 sys_user.id 的用户主键，跨场次稳定。
+      本模块既有口径同样如此（StudentResultServiceImpl 查历史答卷按 user_id 过滤，
+      MarkServiceImpl/ExamResultServiceImpl 只把 student_id 当「考生档案行」用于取账号姓名）。
+    -->
+    <select id="selectAttemptBuckets" resultType="jack.digityhuman.examservice.dto.resp.HomeStatRespDtos$BucketRow">
+        select <include refid="bucketKey"/> as bucket_key,
+               count(distinct t.user_id) as active_users,
+               coalesce(sum(t.duration_sec), 0) as active_seconds
+        from exam_attempt t
+        where t.deleted = 0
+          and t.status in (2, 3)
+          and <include refid="attemptTime"/> between #{from} and #{to}
+        group by <include refid="bucketKey"/>
+        order by bucket_key
+    </select>
+
+    <!--
+      参考人次/通过人次的唯一口径（03-接口文档.md §3.3）：
+      status in (2,3) and deleted = 0（2 批阅中、3 已完成都算「已交卷」，1 考试中不算）。
+      pass_status = 1 才算通过，用 case when 而不是两个 select，省一次往返也避免两条 SQL 各自飘。
+    -->
+    <select id="selectAttemptTotals" resultType="jack.digityhuman.examservice.dto.resp.HomeStatRespDtos$AttemptTotalsRow">
+        select count(*) as attempt_visits,
+               coalesce(sum(case when t.pass_status = 1 then 1 else 0 end), 0) as passed_visits,
+               count(distinct t.user_id) as active_users,
+               coalesce(sum(t.duration_sec), 0) as active_seconds
+        from exam_attempt t
+        where t.deleted = 0
+          and t.status in (2, 3)
+          and <include refid="attemptTime"/> between #{from} and #{to}
+    </select>
+
+    <!--
+      考试总量=全量（不限区间），本期新增=created_at 落区间；两条口径在一条 SQL 里用条件聚合计出，
+      避免「总量」和「新增」各写一条 count(*) 后 AI 改错区间的常见事故。
+    -->
+    <select id="selectArrangeTotals" resultType="jack.digityhuman.examservice.dto.resp.HomeStatRespDtos$ArrangeTotalsRow">
+        select count(*) as exam_total,
+               coalesce(sum(case when a.created_at between #{from} and #{to} then 1 else 0 end), 0) as exam_new
+        from exam_arrange a
+        where a.deleted = 0
+    </select>
+
+    <!--
+      覆盖人次按「记录数」而不是 distinct user_id：口径见 01-需求文档.md §2.4
+      （反映考试安排的覆盖规模，一个人被安排在两场考试就是两人次）。
+      不限区间，所以不传时间参数。
+    -->
+    <select id="countCoveredUsers" resultType="java.lang.Long">
+        select count(*)
+        from exam_arrange_student s
+        where s.deleted = 0
+    </select>
+</mapper>
